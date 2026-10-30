@@ -69,6 +69,8 @@ class LevainPeakApp:
         self._manual_pot_roi: tuple[int, int, int, int] | None = None
         self._temperature_roi: tuple[int, int, int, int] | None = None
         self._temperature_c: float | None = None
+        self._last_known_temperature: float | None = None
+        self._temperature_filled = False
         self._preview_marker_item: int | None = None
         self._preview_marker_y: int | None = None
         self._last_container_box: tuple[int, int, int, int] | None = None
@@ -282,6 +284,12 @@ class LevainPeakApp:
                 result = self._analyzer.latest_result()
                 if result is not None:
                     _, self._measurement, self._temperature_c = result
+                    # An unread temperature repeats the last good reading.
+                    self._temperature_filled = self._temperature_c is None
+                    if self._temperature_c is not None:
+                        self._last_known_temperature = self._temperature_c
+                    else:
+                        self._temperature_c = self._last_known_temperature
                     self._update_temperature_label()
                     self._handle_container_change(self._measurement)
                     if self._measurement is not None and self._manual_marker_y is not None:
@@ -340,6 +348,11 @@ class LevainPeakApp:
             text = "Não detectada" if self._temperature_roi else "Marque a região do visor"
         else:
             text = f"{self._temperature_c:.1f} °C"
+            age = None if self._analyzer is None else self._analyzer.temperature_age_seconds()
+            if self._temperature_filled or (age is not None and age > 60):
+                text += "\núltima leitura"
+                if age is not None and age >= 60:
+                    text += f" há {int(age // 60)} min"
         self.metric_values["Temperatura"].configure(text=text)
 
     @staticmethod
@@ -939,6 +952,7 @@ class LevainPeakApp:
         canvas.delete("all")
         samples = []
         phases: list[str] = []
+        last_temperature: float | None = None
         baseline = None
         session_name = path.stem
         try:
@@ -949,7 +963,9 @@ class LevainPeakApp:
                     if row.get("initial_volume_fraction"):
                         baseline = float(row["initial_volume_fraction"])
                     raw_temperature = row.get("temperature_c", "")
-                    temperature = float(raw_temperature) if raw_temperature else None
+                    # An unread temperature repeats the last good reading.
+                    temperature = float(raw_temperature) if raw_temperature else last_temperature
+                    last_temperature = temperature
                     samples.append((timestamp, volume, temperature))
                     phases.append(row.get("phase", ""))
                     if row.get("session_name"):
@@ -1219,6 +1235,7 @@ class LevainPeakApp:
                 rows = list(csv.DictReader(source))
             first_time = datetime.fromisoformat(rows[0]["timestamp"])
             clock_origin = time.monotonic()
+            last_temperature = None
             for row in rows:
                 stamp = datetime.fromisoformat(row["timestamp"])
                 volume = float(row["volume_fraction"])
@@ -1228,7 +1245,11 @@ class LevainPeakApp:
                 elapsed = clock_origin + (stamp - first_time).total_seconds()
                 self._phase = self._phase_tracker.update(elapsed, volume, baseline)
                 temperature = row.get("temperature_c")
-                self._forecaster.add(elapsed, volume, float(temperature) if temperature else None)
+                if temperature:
+                    last_temperature = float(temperature)
+                self._forecaster.add(elapsed, volume, last_temperature)
+            if last_temperature is not None:
+                self._last_known_temperature = last_temperature
         except (KeyError, ValueError, IndexError):
             self._reset_tracking()
             self._session_baseline = None

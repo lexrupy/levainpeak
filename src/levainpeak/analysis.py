@@ -35,6 +35,7 @@ class ContainerAnalyzer:
         self._last_temperature_roi: tuple[int, int, int, int] | None = None
         self._last_temperature_read = 0.0
         self._last_temperature_success = 0.0
+        self._temperature_updated_at: float | None = None
         self._measurement_history: deque[ContainerMeasurement] = deque(maxlen=7)
         self._geometry_candidates: deque[tuple[int, int, int, int]] = deque(maxlen=5)
         self._geometry_anchor: tuple[int, int, int, int] | None = None
@@ -53,6 +54,12 @@ class ContainerAnalyzer:
 
     def stop(self) -> None:
         self._stop.set()
+
+    def temperature_age_seconds(self) -> float | None:
+        """Seconds since the temperature was last read; None if it never was."""
+        if self._temperature_updated_at is None:
+            return None
+        return time.monotonic() - self._temperature_updated_at
 
     def latest_result(
         self,
@@ -106,6 +113,7 @@ class ContainerAnalyzer:
             if temperature_roi != self._last_temperature_roi:
                 self._last_temperature_roi = temperature_roi
                 self._temperature_c = None
+                self._temperature_updated_at = None
                 self._last_temperature_read = 0.0
                 self._last_temperature_success = 0.0
                 self._temperature_gate.reset()
@@ -126,8 +134,8 @@ class ContainerAnalyzer:
                     self._last_temperature_success = now
                     if repeated and self._temperature_gate.accept(reading):
                         self._temperature_c = reading
-                elif now - self._last_temperature_success > 10.0:
-                    self._temperature_c = None
+                        self._temperature_updated_at = now
+                # When the display cannot be read, the last good reading stays.
             self._publish((frame_number, measurement, self._temperature_c))
             self._stop.wait(self.interval_seconds)
 
