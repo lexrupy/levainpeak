@@ -112,12 +112,9 @@ class LevainPeakApp:
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill="both", expand=True)
         monitor = ttk.Frame(self.notebook)
-        graph_tab = ttk.Frame(self.notebook, padding=12)
         settings_tab = ttk.Frame(self.notebook, padding=20)
         self.notebook.add(monitor, text="Monitor")
-        self.notebook.add(graph_tab, text="Gráfico")
         self.notebook.add(settings_tab, text="Configurações")
-        self._build_graph_tab(graph_tab)
         self._build_settings_tab(settings_tab)
 
         body = ttk.Frame(monitor, padding=(20, 0, 20, 16))
@@ -237,7 +234,7 @@ class LevainPeakApp:
         )
         self.resume_button = button(files, "Retomar sessão", self._resume_session, width=14)
         self.open_csv_button = button(files, "Abrir CSV", self._open_session_csv, width=10)
-        self.graph_button = button(files, "Ver gráfico", self._show_session_graph, width=11)
+        self.graph_button = button(files, "Gráfico", self._show_session_graph, width=9)
 
     def _wrap_footer_labels(self, event: tk.Event) -> None:
         wrap = max(200, event.width - 8)
@@ -771,24 +768,45 @@ class LevainPeakApp:
                 return
             path = Path(selected)
 
-        self._graph_path = path
-        self.notebook.select(1)
-        self._refresh_session_graph()
-
-    def _build_graph_tab(self, parent: ttk.Frame) -> None:
-        self._graph_path: Path | None = None
-        self._graph_canvas = tk.Canvas(parent, background="#fffefa", highlightthickness=0)
-        self._graph_canvas.pack(fill="both", expand=True)
-        self._graph_canvas.bind("<Configure>", self._draw_session_graph, add="+")
-        self._schedule_graph_refresh()
-
-    def _schedule_graph_refresh(self) -> None:
-        if self._graph_path is not None and self._graph_path == self._session_log.path:
+        existing = getattr(self, "_graph_window", None)
+        if existing is not None and existing.winfo_exists():
+            existing.lift()
+            self._graph_path = path
             self._refresh_session_graph()
-        self.root.after(10_000, self._schedule_graph_refresh)
+            return
+
+        self._graph_path = path
+        self._graph_window = tk.Toplevel(self.root, class_="Pythontkfloating")
+        self._graph_window.title(f"Evolução da sessão · {path.stem}")
+        self._graph_window.geometry("900x520")
+        self._graph_window.minsize(640, 400)
+        self._graph_window.bind("<Escape>", self._close_session_graph)
+        self._graph_canvas = tk.Canvas(
+            self._graph_window, background="#fffefa", highlightthickness=0
+        )
+        self._graph_canvas.pack(fill="both", expand=True, padx=12, pady=12)
+        self._graph_canvas.bind("<Configure>", self._draw_session_graph, add="+")
+        self._refresh_session_graph()
+        self._graph_window.after_idle(self._refresh_session_graph)
+
+        def update_graph() -> None:
+            if not self._graph_window.winfo_exists():
+                return
+            self._refresh_session_graph()
+            self._graph_window.after(10_000, update_graph)
+
+        self._graph_window.after(10_000, update_graph)
 
     def _refresh_session_graph(self) -> None:
+        if getattr(self, "_graph_canvas", None) is None:
+            return
         self._draw_session_graph()
+
+    def _close_session_graph(self, _event: tk.Event | None = None) -> str:
+        graph_window = getattr(self, "_graph_window", None)
+        if graph_window is not None and graph_window.winfo_exists():
+            graph_window.destroy()
+        return "break"
 
     def _build_settings_tab(self, parent: ttk.Frame) -> None:
         box = ttk.LabelFrame(parent, text="Registro da sessão", padding=12)
@@ -823,18 +841,11 @@ class LevainPeakApp:
             self._set_message(f"Não foi possível salvar as configurações: {exc}")
 
     def _draw_session_graph(self, _event: tk.Event | None = None) -> None:
-        canvas = self._graph_canvas
-        path = self._graph_path
-        if not canvas.winfo_exists():
+        canvas = getattr(self, "_graph_canvas", None)
+        path = getattr(self, "_graph_path", None)
+        if canvas is None or path is None or not canvas.winfo_exists():
             return
         canvas.delete("all")
-        if path is None:
-            canvas.create_text(
-                canvas.winfo_width() / 2, canvas.winfo_height() / 2,
-                text="Use ‘Ver gráfico’ no Monitor para escolher uma sessão.",
-                fill="#59645e", font=("TkDefaultFont", 11),
-            )
-            return
         samples = []
         session_name = path.stem
         try:
