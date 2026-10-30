@@ -22,6 +22,7 @@ from levainpeak.analysis import ContainerAnalyzer
 from levainpeak.config import load_camera_config
 from levainpeak.filters import despike, valid_after_recovery
 from levainpeak.forecast import DoublingForecaster
+from levainpeak.graph_phases import graph_phase_segments
 from levainpeak.stream import RtspStream
 from levainpeak.sessions import PhaseTracker, SessionLog, latest_session_csv
 from levainpeak.settings import (
@@ -1144,16 +1145,6 @@ class LevainPeakApp:
             anchor="w", fill="#202723",
         )
 
-    # The graph names the classic growth-curve phases; the CSV and the Monitor
-    # keep the finer tracker states (for example "Pico provável").
-    _GRAPH_PHASES = {
-        PhaseTracker.WAITING: "Latência",
-        PhaseTracker.RISING: "Exponencial",
-        PhaseTracker.PLATEAU: "Estacionária",
-        PhaseTracker.PEAK: "Estacionária",
-        PhaseTracker.FALL_CHECK: "Estacionária",
-        PhaseTracker.FALLING: "Decaimento",
-    }
     _GRAPH_PHASE_FILL = {
         "Latência": "#f2f0e8",
         "Exponencial": "#e6f0e8",
@@ -1165,22 +1156,12 @@ class LevainPeakApp:
         self, canvas, samples, phases, x_of, top, bottom, plot_width, duration
     ) -> None:
         """Shaded bands and dashed dividers for the growth-curve phases."""
-        if len(phases) != len(samples):
+        if len(phases) != len(samples) or not samples:
             return
-        minimum_seconds = duration * 0.03  # ignore short flickers between phases
-        segments: list[list] = []  # [phase, start_stamp, end_stamp]
-        for stamp, raw in zip((sample[0] for sample in samples), phases, strict=True):
-            phase = self._GRAPH_PHASES.get(raw)
-            if phase is None:
-                continue
-            if segments and segments[-1][0] == phase:
-                segments[-1][2] = stamp
-            elif segments and (segments[-1][2] - segments[-1][1]).total_seconds() < minimum_seconds:
-                segments[-1][0], segments[-1][2] = phase, stamp
-            else:
-                segments.append([phase, stamp, stamp])
+        stamps = [sample[0] for sample in samples]
+        segments = graph_phase_segments(stamps, phases)
         for index, (phase, start, end) in enumerate(segments):
-            left_x = x_of(start) if index else x_of(samples[0][0])
+            left_x = x_of(start) if index else x_of(stamps[0])
             right_x = x_of(segments[index + 1][1]) if index + 1 < len(segments) else x_of(end)
             band = canvas.create_rectangle(
                 left_x, top, right_x, bottom, fill=self._GRAPH_PHASE_FILL[phase], outline=""
