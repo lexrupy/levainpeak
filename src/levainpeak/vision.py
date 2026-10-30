@@ -98,14 +98,18 @@ def measure_container(
     marker_y, marker_confidence = _find_initial_marker(
         frame, left, right, inner_top, inner_bottom
     )
-    surface = _find_surface(
-        frame,
-        left,
-        right,
-        inner_top,
-        inner_bottom,
-        marker_y=marker_y if marker_confidence >= 0.2 else None,
-    )
+    surface = None
+    if marker_confidence >= 0.2:
+        surface = _find_surface_by_columns(frame, left, right, inner_top, inner_bottom, marker_y)
+    if surface is None:
+        surface = _find_surface(
+            frame,
+            left,
+            right,
+            inner_top,
+            inner_bottom,
+            marker_y=marker_y if marker_confidence >= 0.2 else None,
+        )
     if surface is None:
         return None
     surface_y, surface_confidence = surface
@@ -392,6 +396,64 @@ def _container_bounds(frame: np.ndarray, left: int, right: int) -> tuple[int, in
     if bottom <= top:
         bottom = int(height * 0.96)
     return top, bottom
+
+
+def _find_surface_by_columns(
+    frame: np.ndarray, left: int, right: int, top: int, bottom: int, marker_y: int
+) -> tuple[int, float] | None:
+    """Levain surface as the median top of the pale mass above the initial mark.
+
+    For every column the scan climbs from the dark mark while the pixel is
+    still as light as the levain and stops where the lighter-than-glass run
+    ends. The median over columns ignores foam, levain climbing one wall and
+    reflection streaks, which a gradient-based edge would lock onto. Returns
+    None when levain and empty glass are not clearly different in lightness,
+    so the caller can fall back to the edge-based search.
+    """
+    height = bottom - top
+    width = right - left
+    if height < 100 or width < 30 or marker_y - 3 <= top + int(height * 0.12):
+        return None
+    lightness = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)[:, :, 0].astype(np.float32)
+    columns = np.arange(left + int(width * 0.10), right - int(width * 0.10), 3)
+    limit = top + int(height * 0.10)
+    scan_end = marker_y - 3
+    window = lightness[limit:scan_end, columns[0]:columns[-1]]
+    levain = float(np.percentile(np.median(window, axis=1), 95))
+    glass = float(
+        np.median(
+            lightness[top + int(height * 0.15):top + int(height * 0.30), columns[0]:columns[-1]]
+        )
+    )
+    if levain - glass < 40:
+        return None
+    threshold = (levain + glass) / 2
+    tops: list[int] = []
+    for x in columns:
+        column = lightness[limit:scan_end, x - 1:x + 2].mean(axis=1)
+        row = len(column) - 1
+        # Skip the shaded rows right above the mark until the pale levain starts.
+        while row >= 0 and column[row] < threshold and len(column) - 1 - row < 45:
+            row -= 1
+        if row < 0 or column[row] < threshold:
+            continue
+        dark_rows = 0
+        while row >= 0:
+            if column[row] < threshold:
+                dark_rows += 1
+                if dark_rows >= 5:
+                    break
+            else:
+                dark_rows = 0
+            row -= 1
+        if row >= 0:
+            tops.append(limit + row + dark_rows)
+    if len(tops) < len(columns) * 0.4:
+        return None
+    found = np.asarray(tops)
+    median = float(np.median(found))
+    confidence = float(np.mean(np.abs(found - median) <= 6))
+    return int(round(median)), confidence
 
 
 def _find_surface(
