@@ -12,9 +12,13 @@ from statistics import median
 import cv2
 import numpy as np
 
+from levainpeak.filters import OutlierGate
 from levainpeak.stream import RtspStream
 from levainpeak.temperature import read_temperature
 from levainpeak.vision import ContainerMeasurement, measure_container
+
+MIN_TEMPERATURE_C = 0.0
+MAX_TEMPERATURE_C = 60.0
 
 
 class ContainerAnalyzer:
@@ -38,6 +42,9 @@ class ContainerAnalyzer:
         self._missing_measurements = 0
         self._last_pot_roi: tuple[int, int, int, int] | None = None
         self._filtered_surface_y: float | None = None
+        # Out-of-curve readings are discarded and the next frame is read again.
+        self._volume_gate = OutlierGate(max_jump=0.08, confirmations=6)
+        self._temperature_gate = OutlierGate(max_jump=3.0, confirmations=3)
         self._thread = threading.Thread(target=self._run, name="container-analyzer", daemon=True)
 
     def start(self) -> None:
@@ -87,6 +94,7 @@ class ContainerAnalyzer:
                 self._last_stable_measurement = None
                 self._missing_measurements = 0
                 self._filtered_surface_y = None
+                self._volume_gate.reset()
             try:
                 measurement = measure_container(frame, roi=self.roi)
             except cv2.error:
@@ -99,15 +107,19 @@ class ContainerAnalyzer:
                 self._temperature_c = None
                 self._last_temperature_read = 0.0
                 self._last_temperature_success = 0.0
+                self._temperature_gate.reset()
             if temperature_roi is not None and now - self._last_temperature_read >= 2.0:
                 self._last_temperature_read = now
                 try:
                     reading = read_temperature(frame, temperature_roi)
                 except cv2.error:
                     reading = None
+                if reading is not None and not MIN_TEMPERATURE_C <= reading <= MAX_TEMPERATURE_C:
+                    reading = None
                 if reading is not None:
-                    self._temperature_c = reading
                     self._last_temperature_success = now
+                    if self._temperature_gate.accept(reading):
+                        self._temperature_c = reading
                 elif now - self._last_temperature_success > 10.0:
                     self._temperature_c = None
             self._publish((frame_number, measurement, self._temperature_c))
@@ -126,9 +138,12 @@ class ContainerAnalyzer:
                 self._geometry_candidates.clear()
                 self._filtered_surface_y = None
                 self._last_stable_measurement = None
+                self._volume_gate.reset()
             return None
 
         self._missing_measurements = 0
+        if not self._volume_gate.accept(measurement.volume_fraction):
+            return self._last_stable_measurement
         geometry = (measurement.left, measurement.top, measurement.right, measurement.bottom)
         if self._geometry_anchor is None:
             self._geometry_anchor = geometry
@@ -143,6 +158,8 @@ class ContainerAnalyzer:
             self._geometry_candidates.clear()
             self._measurement_history.clear()
             self._filtered_surface_y = None
+            self._volume_gate.reset()
+            self._volume_gate.accept(measurement.volume_fraction)
         else:
             self._geometry_candidates.clear()
             self._geometry_anchor = tuple(

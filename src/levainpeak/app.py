@@ -19,8 +19,16 @@ from PIL import Image, ImageTk
 
 from levainpeak.analysis import ContainerAnalyzer
 from levainpeak.config import load_camera_config
+from levainpeak.forecast import DoublingForecaster
 from levainpeak.stream import RtspStream
 from levainpeak.sessions import PhaseTracker, SessionLog
+from levainpeak.settings import (
+    MAX_RECORD_SECONDS,
+    MIN_RECORD_SECONDS,
+    Settings,
+    load_settings,
+    save_settings,
+)
 from levainpeak.vision import (
     ContainerMeasurement,
     draw_measurement,
@@ -35,10 +43,10 @@ class LevainPeakApp:
         self.root.title("LevainPeak")
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        width = min(1180, max(600, screen_width - 80))
+        width = min(1180, max(760, screen_width - 80))
         height = min(760, max(560, screen_height - 80))
         self.root.geometry(f"{width}x{height}")
-        self.root.minsize(600, 500)
+        self.root.minsize(760, 560)
         self.root.configure(background="#f4f1e8")
 
         self._image: ImageTk.PhotoImage | None = None
@@ -71,10 +79,12 @@ class LevainPeakApp:
         self._pan_drag_start: tuple[int, int] | None = None
         self._pan_start_center = (0.5, 0.5)
         self._base_display_size: tuple[int, int] | None = None
-        self._session_log = SessionLog()
+        self._settings = load_settings()
+        self._session_log = SessionLog(sample_seconds=self._settings.record_interval_seconds)
         self._session_baseline: float | None = None
         self._session_name = ""
         self._phase_tracker = PhaseTracker()
+        self._forecaster = DoublingForecaster()
         self._phase = "Aguardando sessão"
         self._mix_time: datetime | None = None
         self._build_layout()
@@ -99,7 +109,18 @@ class LevainPeakApp:
         self.status_value = ttk.Label(header, text="Aguardando conexão", font=("TkDefaultFont", 10, "bold"))
         self.status_value.pack(side="right")
 
-        body = ttk.Frame(self.root, padding=(20, 0, 20, 16))
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill="both", expand=True)
+        monitor = ttk.Frame(self.notebook)
+        graph_tab = ttk.Frame(self.notebook, padding=12)
+        settings_tab = ttk.Frame(self.notebook, padding=20)
+        self.notebook.add(monitor, text="Monitor")
+        self.notebook.add(graph_tab, text="Gráfico")
+        self.notebook.add(settings_tab, text="Configurações")
+        self._build_graph_tab(graph_tab)
+        self._build_settings_tab(settings_tab)
+
+        body = ttk.Frame(monitor, padding=(20, 0, 20, 16))
         body.pack(fill="both", expand=True)
 
         video_panel = ttk.LabelFrame(body, text="Câmera", padding=8)
@@ -132,7 +153,7 @@ class LevainPeakApp:
         self.video.bind("<Button-5>", self._on_mouse_wheel, add="+")
         self.root.bind("<Escape>", self._cancel_marker_mode, add="+")
 
-        metrics = ttk.Frame(self.root, padding=(20, 0, 20, 12))
+        metrics = ttk.Frame(monitor, padding=(20, 0, 20, 12))
         metrics.pack(fill="x")
         self._metric_tiles = []
         self.metric_values = {}
@@ -146,81 +167,86 @@ class LevainPeakApp:
         )
         for index, (title, value) in enumerate(metric_data):
             tile = ttk.LabelFrame(metrics, text=title, padding=(10, 7))
-            tile.configure(height=84)
-            tile.pack_propagate(False)
-            label = ttk.Label(
-                tile, text=value, width=28, wraplength=245,
-                anchor="nw", justify="left",
+            label = ttk.Label(tile, text=value, anchor="nw", justify="left", wraplength=240)
+            label.pack(fill="x", anchor="w")
+            tile.bind(
+                "<Configure>",
+                lambda event, target=label: target.configure(
+                    wraplength=max(120, event.width - 28)
+                ),
+                add="+",
             )
-            label.pack(anchor="w")
             self._metric_tiles.append(tile)
             self.metric_values[title] = label
         self._metrics_container = metrics
+        for column in range(3):
+            self._metrics_container.columnconfigure(column, weight=1, uniform="metrics")
         for index, tile in enumerate(self._metric_tiles):
-            self._metrics_container.columnconfigure(index % 2, weight=1, uniform="metrics")
-            tile.grid(row=index // 2, column=index % 2, sticky="ew", padx=4, pady=4)
+            tile.grid(row=index // 3, column=index % 3, sticky="nsew", padx=4, pady=4)
 
-        footer = ttk.Frame(self.root, padding=(20, 0, 20, 14))
+        footer = ttk.Frame(monitor, padding=(20, 0, 20, 14))
         footer.pack(fill="x")
-        instruction_area = ttk.Frame(footer, height=38)
-        instruction_area.pack(fill="x", pady=(0, 3))
-        instruction_area.pack_propagate(False)
-        ttk.Label(
-            instruction_area,
+        self.instructions = ttk.Label(
+            footer,
             text="Ative ‘Marcar início’, passe o mouse para pré-visualizar e clique para confirmar.",
-            wraplength=900, anchor="w",
-        ).pack(fill="both", expand=True)
-        message_area = ttk.Frame(footer, height=38)
-        message_area.pack(fill="x", pady=(0, 5))
-        message_area.pack_propagate(False)
-        self.message = ttk.Label(message_area, text="", wraplength=900, anchor="w")
-        self.message.pack(fill="both", expand=True)
-        roi_row = ttk.Frame(footer)
-        roi_row.pack(fill="x", pady=(0, 3))
-        actions_row = ttk.Frame(footer)
-        actions_row.pack(fill="x")
-        files_row = ttk.Frame(footer)
-        files_row.pack(fill="x", pady=(3, 0))
-        self.marker_button = ttk.Button(
-            actions_row,
-            text="Marcar início",
-            command=self._toggle_marker_mode,
-            width=20,
+            anchor="w", justify="left",
         )
-        self.marker_button.pack(side="right", padx=(12, 0))
-        self.session_button = ttk.Button(
-            actions_row, text="Iniciar sessão", command=self._toggle_session, width=18
+        self.instructions.pack(fill="x", pady=(0, 2))
+        self.message = ttk.Label(footer, text="", anchor="w", justify="left")
+        self.message.pack(fill="x", pady=(0, 6))
+        footer.bind("<Configure>", self._wrap_footer_labels, add="+")
+
+        buttons = ttk.Frame(footer)
+        buttons.pack(fill="x")
+
+        def group(title: str, row: int, column: int, columnspan: int = 1) -> ttk.LabelFrame:
+            frame = ttk.LabelFrame(buttons, text=title, padding=(8, 4))
+            frame.grid(
+                row=row, column=column, columnspan=columnspan,
+                sticky="w", padx=(0, 8), pady=(0, 4),
+            )
+            return frame
+
+        def button(frame, text, command, width=None, state="normal"):
+            widget = ttk.Button(frame, text=text, command=command, width=width, state=state)
+            widget.pack(side="left", padx=(0, 6))
+            return widget
+
+        regions = group("Regiões", 0, 0)
+        level = group("Nível inicial", 0, 1)
+        session = group("Sessão", 1, 0)
+        files = group("Arquivos", 1, 1)
+        self.draw_pot_button = button(
+            regions, "Marcar pote", lambda: self._toggle_roi_mode("pot"), width=13
         )
-        self.session_button.pack(side="right", padx=(12, 0))
-        self.mix_time_button = ttk.Button(
-            actions_row, text="Hora da mistura", command=self._set_mix_time, width=23
+        self.draw_thermometer_button = button(
+            regions, "Marcar termômetro", lambda: self._toggle_roi_mode("thermometer"), width=18
         )
-        self.mix_time_button.pack(side="right", padx=(12, 0))
-        self.resume_button = ttk.Button(files_row, text="Retomar sessão", command=self._resume_session, width=20)
-        self.resume_button.pack(side="right", padx=(12, 0))
-        self.open_csv_button = ttk.Button(files_row, text="Abrir CSV", command=self._open_session_csv, width=20)
-        self.open_csv_button.pack(side="right", padx=(12, 0))
-        self.graph_button = ttk.Button(files_row, text="Gráfico", command=self._show_session_graph, width=14)
-        self.graph_button.pack(side="right", padx=(12, 0))
-        self.draw_pot_button = ttk.Button(
-            roi_row, text="Marcar pote", command=lambda: self._toggle_roi_mode("pot"), width=20
-        )
-        self.draw_pot_button.pack(side="right", padx=(12, 0))
-        self.draw_thermometer_button = ttk.Button(
-            roi_row,
-            text="Marcar termômetro",
-            command=lambda: self._toggle_roi_mode("thermometer"),
-            width=20,
-        )
-        self.draw_thermometer_button.pack(side="right", padx=(12, 0))
-        self.auto_pot_button = ttk.Button(
-            roi_row,
-            text="Detecção automática",
-            command=self._use_automatic_detection,
+        self.auto_pot_button = button(
+            regions, "Detecção automática", self._use_automatic_detection, width=19,
             state="disabled",
-            width=20,
         )
-        self.auto_pot_button.pack(side="right", padx=(12, 0))
+        self.marker_button = button(
+            level, "Marcar início", self._toggle_marker_mode, width=13
+        )
+        self.mix_time_button = button(
+            session, "Hora da mistura", self._set_mix_time, width=21
+        )
+        self.session_button = button(
+            session, "Iniciar sessão", self._toggle_session, width=15
+        )
+        self.resume_button = button(files, "Retomar sessão", self._resume_session, width=14)
+        self.open_csv_button = button(files, "Abrir CSV", self._open_session_csv, width=10)
+        self.graph_button = button(files, "Ver gráfico", self._show_session_graph, width=11)
+
+    def _wrap_footer_labels(self, event: tk.Event) -> None:
+        wrap = max(200, event.width - 8)
+        self.instructions.configure(wraplength=wrap)
+        self.message.configure(wraplength=wrap)
+
+    def _reset_tracking(self, baseline: float | None = None) -> None:
+        self._phase_tracker.reset(baseline)
+        self._forecaster.reset()
 
     def _set_message(self, message: str) -> None:
         self.message.configure(text=message)
@@ -254,7 +280,7 @@ class LevainPeakApp:
                                 if self._measurement.initial_volume_fraction is not None
                                 else self._measurement.volume_fraction
                             )
-                            self._phase_tracker.reset(self._session_baseline)
+                            self._reset_tracking(self._session_baseline)
                         self._measurement = set_initial_volume_reference(
                             self._measurement, self._session_baseline
                         )
@@ -436,7 +462,7 @@ class LevainPeakApp:
             self._measurement = None
             if self._session_log.active:
                 self._session_baseline = None
-                self._phase_tracker.reset()
+                self._reset_tracking()
                 self._session_log.save_regions(self._manual_pot_roi, self._temperature_roi)
             self.auto_pot_button.configure(state="normal")
             message = "Área de busca do pote definida."
@@ -463,7 +489,7 @@ class LevainPeakApp:
         self.draw_pot_button.configure(text="Marcar pote")
         if self._session_log.active:
             self._session_baseline = None
-            self._phase_tracker.reset()
+            self._reset_tracking()
             self._session_log.save_regions(None, self._temperature_roi)
         self._set_message("Detecção automática ativada.")
 
@@ -533,7 +559,7 @@ class LevainPeakApp:
             now = time.monotonic()
             baseline = self._measurement.initial_volume_fraction
             self._session_baseline = baseline
-            self._phase_tracker.reset(baseline)
+            self._reset_tracking(baseline)
             self._phase = self._phase_tracker.update(
                 now, self._measurement.volume_fraction, baseline
             )
@@ -706,7 +732,7 @@ class LevainPeakApp:
         )
         self._session_baseline = baseline
         self._measurement = set_initial_volume_reference(self._measurement, baseline)
-        self._phase_tracker.reset(baseline)
+        self._reset_tracking(baseline)
         self._phase = PhaseTracker.WAITING
         self.session_button.configure(text="Encerrar sessão")
         self.mix_time_button.configure(
@@ -745,52 +771,70 @@ class LevainPeakApp:
                 return
             path = Path(selected)
 
-        existing = getattr(self, "_graph_window", None)
-        if existing is not None and existing.winfo_exists():
-            existing.lift()
-            self._graph_path = path
-            self._refresh_session_graph()
-            return
-
         self._graph_path = path
-        self._graph_window = tk.Toplevel(self.root, class_="Pythontkfloating")
-        self._graph_window.title(f"Evolução da sessão · {path.stem}")
-        self._graph_window.geometry("900x520")
-        self._graph_window.minsize(640, 400)
-        self._graph_window.bind("<Escape>", self._close_session_graph)
-        self._graph_canvas = tk.Canvas(
-            self._graph_window, background="#fffefa", highlightthickness=0
-        )
-        self._graph_canvas.pack(fill="both", expand=True, padx=12, pady=12)
-        self._graph_canvas.bind("<Configure>", self._draw_session_graph, add="+")
+        self.notebook.select(1)
         self._refresh_session_graph()
-        self._graph_window.after_idle(self._refresh_session_graph)
 
-        def update_graph() -> None:
-            if not self._graph_window.winfo_exists():
-                return
+    def _build_graph_tab(self, parent: ttk.Frame) -> None:
+        self._graph_path: Path | None = None
+        self._graph_canvas = tk.Canvas(parent, background="#fffefa", highlightthickness=0)
+        self._graph_canvas.pack(fill="both", expand=True)
+        self._graph_canvas.bind("<Configure>", self._draw_session_graph, add="+")
+        self._schedule_graph_refresh()
+
+    def _schedule_graph_refresh(self) -> None:
+        if self._graph_path is not None and self._graph_path == self._session_log.path:
             self._refresh_session_graph()
-            self._graph_window.after(10_000, update_graph)
-
-        self._graph_window.after(10_000, update_graph)
+        self.root.after(10_000, self._schedule_graph_refresh)
 
     def _refresh_session_graph(self) -> None:
-        if getattr(self, "_graph_canvas", None) is None:
-            return
         self._draw_session_graph()
 
-    def _close_session_graph(self, _event: tk.Event | None = None) -> str:
-        graph_window = getattr(self, "_graph_window", None)
-        if graph_window is not None and graph_window.winfo_exists():
-            graph_window.destroy()
-        return "break"
+    def _build_settings_tab(self, parent: ttk.Frame) -> None:
+        box = ttk.LabelFrame(parent, text="Registro da sessão", padding=12)
+        box.pack(fill="x")
+        ttk.Label(box, text="Gravar uma medição no CSV a cada").grid(row=0, column=0, sticky="w")
+        self._interval_var = tk.StringVar(value=str(self._settings.record_interval_seconds))
+        spinbox = ttk.Spinbox(
+            box, from_=MIN_RECORD_SECONDS, to=MAX_RECORD_SECONDS, increment=5, width=5,
+            textvariable=self._interval_var, command=self._apply_settings,
+        )
+        spinbox.grid(row=0, column=1, padx=6)
+        spinbox.bind("<Return>", lambda _e: self._apply_settings(), add="+")
+        spinbox.bind("<FocusOut>", lambda _e: self._apply_settings(), add="+")
+        ttk.Label(box, text="segundos").grid(row=0, column=2, sticky="w")
+        self._settings_note = ttk.Label(
+            box, text=f"Entre {MIN_RECORD_SECONDS} e {MAX_RECORD_SECONDS} s. Vale já na sessão ativa.",
+            foreground="#59645e",
+        )
+        self._settings_note.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
+    def _apply_settings(self) -> None:
+        try:
+            seconds = int(float(self._interval_var.get()))
+        except ValueError:
+            seconds = self._settings.record_interval_seconds
+        self._settings = Settings(record_interval_seconds=seconds).clamped()
+        self._interval_var.set(str(self._settings.record_interval_seconds))
+        self._session_log.sample_seconds = self._settings.record_interval_seconds
+        try:
+            save_settings(self._settings)
+        except OSError as exc:
+            self._set_message(f"Não foi possível salvar as configurações: {exc}")
 
     def _draw_session_graph(self, _event: tk.Event | None = None) -> None:
-        canvas = getattr(self, "_graph_canvas", None)
-        path = getattr(self, "_graph_path", None)
-        if canvas is None or path is None or not canvas.winfo_exists():
+        canvas = self._graph_canvas
+        path = self._graph_path
+        if not canvas.winfo_exists():
             return
         canvas.delete("all")
+        if path is None:
+            canvas.create_text(
+                canvas.winfo_width() / 2, canvas.winfo_height() / 2,
+                text="Use ‘Ver gráfico’ no Monitor para escolher uma sessão.",
+                fill="#59645e", font=("TkDefaultFont", 11),
+            )
+            return
         samples = []
         session_name = path.stem
         try:
@@ -952,7 +996,7 @@ class LevainPeakApp:
             self._analyzer.roi = self._manual_pot_roi
             self._analyzer.temperature_roi = self._temperature_roi
         self._mix_time = self._session_log.mix_time
-        self._phase_tracker.reset()
+        self._reset_tracking()
         self._session_baseline = None
         try:
             with Path(selected).open("r", newline="", encoding="utf-8") as source:
@@ -965,11 +1009,12 @@ class LevainPeakApp:
                 baseline = float(row["initial_volume_fraction"]) if row.get("initial_volume_fraction") else None
                 if self._session_baseline is None:
                     self._session_baseline = baseline if baseline is not None else volume
-                self._phase = self._phase_tracker.update(
-                    clock_origin + (stamp - first_time).total_seconds(), volume, baseline
-                )
+                elapsed = clock_origin + (stamp - first_time).total_seconds()
+                self._phase = self._phase_tracker.update(elapsed, volume, baseline)
+                temperature = row.get("temperature_c")
+                self._forecaster.add(elapsed, volume, float(temperature) if temperature else None)
         except (KeyError, ValueError, IndexError):
-            self._phase_tracker.reset()
+            self._reset_tracking()
             self._session_baseline = None
         self.session_button.configure(text="Encerrar sessão")
         self.metric_values["Sessão"].configure(
@@ -989,6 +1034,7 @@ class LevainPeakApp:
         self._phase = self._phase_tracker.update(
             now, measurement.volume_fraction, measurement.initial_volume_fraction
         )
+        self._forecaster.add(now, measurement.volume_fraction, self._temperature_c)
         self.metric_values["Estado do levain"].configure(text=self._phase)
         self._update_double_forecast(now)
         self._record_session(now)
@@ -998,28 +1044,23 @@ class LevainPeakApp:
         if not self._session_log.active:
             label.configure(text="Inicie uma sessão para estimar")
             return
-        rate = self._phase_tracker.growth_rate_per_minute(monotonic_time)
-        if rate is None:
+        if self._forecaster.rate_per_thermal_minute() is None:
             label.configure(text="Calculando tendência; aguarde ao menos 2 minutos")
-            return
-        if rate <= 0.00005:
-            label.configure(text="Sem crescimento sustentado para estimar")
             return
         if self._measurement is None:
             label.configure(text="Aguardando medição do pote")
             return
         now = datetime.now().astimezone()
         current = self._measurement.volume_fraction
-        if self._measurement.initial_volume_fraction is not None:
-            mix_volume = self._measurement.initial_volume_fraction
-            basis = "nível inicial marcado"
-        else:
-            elapsed_since_mix = max(0.0, (now - (self._mix_time or now)).total_seconds() / 60)
-            mix_volume = current - rate * elapsed_since_mix
-            basis = "tendência desde a mistura"
-            if mix_volume <= 0.01:
-                label.configure(text="Sem dados suficientes para estimar o volume na mistura")
-                return
+        mix_volume = self._measurement.initial_volume_fraction or self._session_baseline
+        if mix_volume is None or mix_volume <= 0.01:
+            label.configure(text="Sem nível inicial para estimar o dobro")
+            return
+        basis = (
+            "nível inicial marcado"
+            if self._measurement.marker_y is not None
+            else "primeira leitura"
+        )
         target = mix_volume * 2
         if target > 1.0:
             label.configure(text="O dobro estimado excede a capacidade do pote")
@@ -1027,7 +1068,13 @@ class LevainPeakApp:
         if current >= target:
             label.configure(text="O dobro do volume inicial da mistura já foi alcançado")
             return
-        minutes = (target - current) / rate
+        forecast = self._forecaster.minutes_until(current, target)
+        if forecast is None:
+            label.configure(text="Sem crescimento sustentado para estimar")
+            return
+        minutes = forecast.minutes
+        if forecast.uses_temperature:
+            basis += f" + temperatura ({forecast.model})"
         if minutes > 10080:
             label.configure(text="Projeção muito distante; aguardando mais crescimento")
             return
