@@ -22,7 +22,13 @@ from levainpeak.analysis import ContainerAnalyzer
 from levainpeak.config import load_camera_config
 from levainpeak.filters import despike, valid_after_recovery
 from levainpeak.forecast import DoublingForecaster
-from levainpeak.graph_phases import graph_phase_segments
+from levainpeak.graph_phases import (
+    DECLINE,
+    EXPONENTIAL,
+    LATENCY,
+    STATIONARY,
+    graph_phase_segments,
+)
 from levainpeak.stream import RtspStream
 from levainpeak.sessions import PhaseTracker, SessionLog, latest_session_csv
 from levainpeak.settings import (
@@ -1146,10 +1152,10 @@ class LevainPeakApp:
         )
 
     _GRAPH_PHASE_FILL = {
-        "Latência": "#f2f0e8",
-        "Exponencial": "#e6f0e8",
-        "Estacionária": "#f7efd9",
-        "Decaimento": "#f3e3de",
+        LATENCY: "#f2f0e8",
+        EXPONENTIAL: "#e6f0e8",
+        STATIONARY: "#f7efd9",
+        DECLINE: "#f3e3de",
     }
 
     def _draw_phase_markers(

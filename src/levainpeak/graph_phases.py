@@ -6,10 +6,10 @@ from datetime import datetime
 
 from levainpeak.sessions import PhaseTracker
 
-LATENCY = "Latência"
-EXPONENTIAL = "Exponencial"
-STATIONARY = "Estacionária"
-DECLINE = "Decaimento"
+LATENCY = "Fase inicial"
+EXPONENTIAL = "Crescimento"
+STATIONARY = "Pico"
+DECLINE = "Declínio"
 
 _PLATEAU = "_plateau"
 _GROUPS = {
@@ -28,12 +28,12 @@ def graph_phase_segments(
     *,
     flicker_fraction: float = 0.03,
 ) -> list[tuple[str, datetime, datetime]]:
-    """Segments (phase, start, end) named after the classic growth curve.
+    """Segments (phase, start, end): initial phase, growth, peak and decline.
 
-    The stationary phase is the level stretch at the peak, right before the
+    The peak is the level stretch at the top, right before the
     volume starts to fall. A flat stretch that is followed by growth again was
     only a pause, and a flat stretch that never reached a confirmed peak is
-    not a stationary phase either, so both are drawn as exponential growth.
+    not a peak either, so both are drawn as growth.
     """
     if not stamps:
         return []
