@@ -398,17 +398,24 @@ def _container_bounds(frame: np.ndarray, left: int, right: int) -> tuple[int, in
     return top, bottom
 
 
-def _find_surface_by_columns(
-    frame: np.ndarray, left: int, right: int, top: int, bottom: int, marker_y: int
-) -> tuple[int, float] | None:
-    """Levain surface as the median top of the pale mass above the initial mark.
+@dataclass(frozen=True)
+class ColumnScan:
+    """What the per-column surface search saw, for diagnostics."""
 
-    For every column the scan climbs from the dark mark while the pixel is
-    still as light as the levain and stops where the lighter-than-glass run
-    ends. The median over columns ignores foam, levain climbing one wall and
-    reflection streaks, which a gradient-based edge would lock onto. Returns
-    None when levain and empty glass are not clearly different in lightness,
-    so the caller can fall back to the edge-based search.
+    columns: tuple[int, ...]  # x of every scanned column
+    tops: tuple[tuple[int, int], ...]  # (x, y) where the pale mass ends
+    levain: float  # lightness of the levain
+    glass: float  # lightness of the empty glass
+    threshold: float  # halfway between the two
+
+
+def column_scan(
+    frame: np.ndarray, left: int, right: int, top: int, bottom: int, marker_y: int
+) -> ColumnScan | None:
+    """Scan every column upward from the dark mark while it stays levain-pale.
+
+    Returns None when levain and empty glass are not clearly different in
+    lightness, or when too few columns found an end to the pale mass.
     """
     height = bottom - top
     width = right - left
@@ -428,7 +435,7 @@ def _find_surface_by_columns(
     if levain - glass < 40:
         return None
     threshold = (levain + glass) / 2
-    tops: list[int] = []
+    tops: list[tuple[int, int]] = []
     for x in columns:
         column = lightness[limit:scan_end, x - 1:x + 2].mean(axis=1)
         row = len(column) - 1
@@ -447,10 +454,28 @@ def _find_surface_by_columns(
                 dark_rows = 0
             row -= 1
         if row >= 0:
-            tops.append(limit + row + dark_rows)
+            tops.append((int(x), int(limit + row + dark_rows)))
     if len(tops) < len(columns) * 0.4:
         return None
-    found = np.asarray(tops)
+    return ColumnScan(
+        tuple(int(x) for x in columns), tuple(tops), levain, glass, float(threshold)
+    )
+
+
+def _find_surface_by_columns(
+    frame: np.ndarray, left: int, right: int, top: int, bottom: int, marker_y: int
+) -> tuple[int, float] | None:
+    """Levain surface as the median top of the pale mass above the initial mark.
+
+    The median over columns ignores foam, levain climbing one wall and
+    reflection streaks, which a gradient-based edge would lock onto. Returns
+    None when the scan finds nothing usable, so the caller can fall back to
+    the edge-based search.
+    """
+    scan = column_scan(frame, left, right, top, bottom, marker_y)
+    if scan is None:
+        return None
+    found = np.asarray([y for _, y in scan.tops])
     median = float(np.median(found))
     confidence = float(np.mean(np.abs(found - median) <= 6))
     return int(round(median)), confidence

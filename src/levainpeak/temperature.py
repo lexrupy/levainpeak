@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import cv2
 import numpy as np
 
@@ -29,19 +31,40 @@ _SEGMENTS = {
 }
 
 
+@dataclass(frozen=True)
+class TemperatureInspection:
+    """Every stage of one temperature read, for the diagnostics window."""
+
+    roi_image: np.ndarray | None = None  # BGR crop of the selected region
+    face: np.ndarray | None = None  # grayscale LCD face
+    binary: np.ndarray | None = None  # deslanted ink mask (ink = 255)
+    cell_boxes: tuple[tuple[int, int, int, int], ...] = ()  # left, top, right, bottom
+    cells: tuple[np.ndarray, ...] = ()
+    digits: tuple[int | None, ...] = ()
+    occupancy: tuple[tuple[float, ...], ...] = ()  # per cell, segments a..g, 0..1
+    reading: float | None = None
+
+
 def read_temperature(
     frame: np.ndarray, roi: tuple[int, int, int, int] | None
 ) -> float | None:
     """Read a Celsius value from a manually selected seven-segment display."""
+    return inspect_temperature(frame, roi).reading
+
+
+def inspect_temperature(
+    frame: np.ndarray, roi: tuple[int, int, int, int] | None
+) -> TemperatureInspection:
+    """Run the temperature read and keep what each stage produced."""
     if frame is None or roi is None:
-        return None
+        return TemperatureInspection()
     height, width = frame.shape[:2]
     left, top, right, bottom = (
         int(np.clip(value, 0, limit))
         for value, limit in zip(roi, (width, height, width, height), strict=True)
     )
     if right - left < 30 or bottom - top < 20:
-        return None
+        return TemperatureInspection()
 
     display = frame[top:bottom, left:right]
     gray = cv2.cvtColor(display, cv2.COLOR_BGR2GRAY)
@@ -82,28 +105,27 @@ def read_temperature(
     binary = cv2.resize(binary, None, fx=8, fy=8, interpolation=cv2.INTER_NEAREST)
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
     binary = _deslant(binary)
-    cells = _digit_cells(binary)
-    if cells is None:
-        return None
-    digits = []
-    for cell in cells:
-        digit = _classify_digit(cell)
-        if digit is None:
-            # Never close the gap by shifting later digits left: that made
-            # 21.9 appear as a different, plausible temperature.
-            return None
-        digits.append(digit)
-
-    value = digits[0] * 10 + digits[1] + digits[2] / 10
-    return float(value) if -10 <= value <= 60 else None
+    boxes = _digit_cell_boxes(binary)
+    if boxes is None:
+        return TemperatureInspection(display, gray, binary)
+    cells = tuple(binary[top_:bottom_ + 1, left_:right_] for left_, top_, right_, bottom_ in boxes)
+    # Never close the gap by shifting later digits left: that made 21.9 appear
+    # as a different, plausible temperature. One unreadable digit fails the read.
+    digits = tuple(_classify_digit(cell) for cell in cells)
+    occupancy = tuple(_normalized_occupancy(cell) for cell in cells)
+    reading = None
+    if all(digit is not None for digit in digits):
+        value = digits[0] * 10 + digits[1] + digits[2] / 10
+        reading = float(value) if -10 <= value <= 60 else None
+    return TemperatureInspection(display, gray, binary, tuple(boxes), cells, digits, occupancy, reading)
 
 
 _CELL_CENTERS = (0.32, 0.53, 0.76)
 _CELL_WIDTH = 0.16
 
 
-def _digit_cells(binary: np.ndarray) -> list[np.ndarray] | None:
-    """Return a normalized image for each of the three digit positions.
+def _digit_cell_boxes(binary: np.ndarray) -> list[tuple[int, int, int, int]] | None:
+    """Return (left, top, right, bottom) for each of the three digit positions.
 
     Horizontal positions follow the thermometer's fixed layout. The vertical
     extent is measured from the ink itself, so a bottom bar cut by the ROI or
@@ -123,7 +145,7 @@ def _digit_cells(binary: np.ndarray) -> list[np.ndarray] | None:
     if filled.size < height * 0.3:
         return None
     top, bottom = int(filled[0]), int(filled[-1])
-    return [binary[top:bottom + 1, left:right] for left, right in span]
+    return [(left, top, right, bottom) for left, right in span]
 
 
 def _deslant(binary: np.ndarray) -> np.ndarray:
@@ -161,17 +183,33 @@ _MIN_SEPARATION = 0.08
 _MAX_BEST_SCORE = 1.5
 
 
-def _classify_digit(glyph: np.ndarray) -> int | None:
+def _segment_occupancy(glyph: np.ndarray) -> np.ndarray | None:
+    """Ink share of each segment region (a..g), or None for a degenerate glyph."""
     height, width = glyph.shape
     if height < 8 or width < 4:
         return None
-    names = list(_SEGMENTS)
-    occupancy = np.empty(len(names))
-    for index, name in enumerate(names):
+    occupancy = np.empty(len(_SEGMENTS))
+    for index, name in enumerate(_SEGMENTS):
         x0, y0, x1, y1 = _SEGMENTS[name]
         xa, xb = int(width * x0), max(int(width * x0) + 1, int(width * x1))
         ya, yb = int(height * y0), max(int(height * y0) + 1, int(height * y1))
         occupancy[index] = glyph[ya:yb, xa:xb].mean() / 255
+    return occupancy
+
+
+def _normalized_occupancy(glyph: np.ndarray) -> tuple[float, ...]:
+    """Segment occupancy relative to the strongest segment (what is classified)."""
+    occupancy = _segment_occupancy(glyph)
+    if occupancy is None or occupancy.max() <= 0:
+        return (0.0,) * len(_SEGMENTS)
+    return tuple(float(value) for value in occupancy / occupancy.max())
+
+
+def _classify_digit(glyph: np.ndarray) -> int | None:
+    names = list(_SEGMENTS)
+    occupancy = _segment_occupancy(glyph)
+    if occupancy is None:
+        return None
     strongest = occupancy.max()
     if strongest < 0.2:
         return None

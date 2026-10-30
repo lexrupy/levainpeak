@@ -20,6 +20,7 @@ from PIL import Image, ImageTk
 
 from levainpeak.analysis import ContainerAnalyzer
 from levainpeak.config import load_camera_config
+from levainpeak.debug_view import DebugWindow
 from levainpeak.filters import despike, valid_after_recovery
 from levainpeak.forecast import DoublingForecaster
 from levainpeak.graph_phases import (
@@ -97,6 +98,7 @@ class LevainPeakApp:
         self._session_baseline: float | None = None
         self._session_name = ""
         self._show_detail = False
+        self._debug_window: DebugWindow | None = None
         self._phase_tracker = PhaseTracker()
         self._forecaster = DoublingForecaster()
         self._phase = "Aguardando sessão"
@@ -253,6 +255,7 @@ class LevainPeakApp:
         self.resume_button = button(files, "Retomar sessão", self._resume_session, width=14)
         self.open_csv_button = button(files, "Abrir CSV", self._open_session_csv, width=10)
         self.graph_button = button(files, "Gráfico", self._show_session_graph, width=9)
+        self.debug_button = button(files, "Diagnóstico", self._open_debug_view, width=11)
 
     def _wrap_footer_labels(self, event: tk.Event) -> None:
         wrap = max(200, event.width - 8)
@@ -270,6 +273,23 @@ class LevainPeakApp:
             text="Ocultar detecção" if self._show_detail else "Ver detecção"
         )
         self._redraw_current_frame()
+
+    def _open_debug_view(self) -> None:
+        if self._debug_window is not None and self._debug_window.open:
+            self._debug_window.lift()
+            return
+        self._debug_window = DebugWindow(self.root, self._debug_state)
+
+    def _debug_state(self) -> dict:
+        """Read from the diagnostics worker thread: only whole-object reads."""
+        frame = self._stream.snapshot()[1] if self._stream is not None else None
+        return {
+            "frame": frame,
+            "pot_roi": self._manual_pot_roi,
+            "thermometer_roi": self._temperature_roi,
+            "stable": self._measurement,
+            "temperature_c": self._temperature_c,
+        }
 
     def _reset_tracking(self, baseline: float | None = None) -> None:
         self._phase_tracker.reset(baseline)
@@ -725,6 +745,8 @@ class LevainPeakApp:
             )
 
     def close(self) -> None:
+        if self._debug_window is not None and self._debug_window.open:
+            self._debug_window.close()
         if self._session_log.active:
             self._session_log.stop()
         if self._analyzer is not None:

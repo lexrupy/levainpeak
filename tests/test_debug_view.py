@@ -1,0 +1,43 @@
+import sys
+from pathlib import Path
+
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+from levainpeak.debug_view import HEIGHT, WIDTH, build_debug_mosaic  # noqa: E402
+from levainpeak.temperature import inspect_temperature, read_temperature  # noqa: E402
+from test_temperature import render_display  # noqa: E402
+
+
+def test_mosaic_without_a_camera_frame_still_renders():
+    mosaic = build_debug_mosaic(None, None, None)
+    assert mosaic.shape == (HEIGHT, WIDTH, 3) and mosaic.dtype == np.uint8
+
+
+def test_mosaic_when_nothing_is_detected_does_not_fail():
+    blank = np.full((1080, 1920, 3), 90, np.uint8)
+    mosaic = build_debug_mosaic(blank, (654, 221, 1259, 1075), (1384, 839, 1586, 943))
+    assert mosaic.shape == (HEIGHT, WIDTH, 3)
+
+
+def test_mosaic_shows_the_thermometer_stages():
+    frame, roi = render_display("21.8")
+    mosaic = build_debug_mosaic(frame, None, roi, temperature_c=21.8)
+    assert mosaic.shape == (HEIGHT, WIDTH, 3)
+    thermometer_area = mosaic[HEIGHT - 96 - 250:HEIGHT - 96, 238:]
+    assert thermometer_area.std() > 20  # something was drawn, not an empty panel
+
+
+def test_inspection_matches_the_plain_reading():
+    frame, roi = render_display("29.2")
+    inspection = inspect_temperature(frame, roi)
+    assert inspection.reading == read_temperature(frame, roi) == 29.2
+    assert inspection.digits == (2, 9, 2)
+    assert len(inspection.cells) == 3 and len(inspection.occupancy) == 3
+    assert all(len(values) == 7 for values in inspection.occupancy)
+
+
+def test_inspection_without_a_region_is_empty():
+    inspection = inspect_temperature(np.zeros((100, 100, 3), np.uint8), None)
+    assert inspection.reading is None and inspection.cells == ()
