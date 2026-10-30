@@ -209,6 +209,27 @@ class ContainerAnalyzer:
             volume_fraction = float(median(sample.volume_fraction for sample in history))
             volume_profile = measurement.volume_below_profile
 
+        edge_profiles = [
+            np.stack(
+                [
+                    np.interp(
+                        np.linspace(0, len(sample.edge_profile) - 1, height),
+                        np.arange(len(sample.edge_profile)),
+                        np.asarray(sample.edge_profile, dtype=np.float32)[:, side],
+                    )
+                    for side in (0, 1)
+                ],
+                axis=1,
+            )
+            for sample in history
+            if sample.edge_profile
+        ]
+        edge_profile = (
+            tuple((round(a), round(b)) for a, b in np.median(np.stack(edge_profiles), axis=0))
+            if edge_profiles
+            else measurement.edge_profile
+        )
+
         markers = [sample.marker_y for sample in history if sample.marker_y is not None]
         marker_y = round(median(markers)) if markers else None
         initial_fraction = None
@@ -233,6 +254,7 @@ class ContainerAnalyzer:
             initial_volume_fraction=initial_fraction,
             growth_factor=growth_factor,
             volume_below_profile=volume_profile,
+            edge_profile=edge_profile,
         )
         self._last_stable_measurement = stable
         return stable

@@ -85,6 +85,7 @@ class LevainPeakApp:
         self._session_log = SessionLog(sample_seconds=self._settings.record_interval_seconds)
         self._session_baseline: float | None = None
         self._session_name = ""
+        self._show_detail = False
         self._phase_tracker = PhaseTracker()
         self._forecaster = DoublingForecaster()
         self._phase = "Aguardando sessão"
@@ -151,6 +152,7 @@ class LevainPeakApp:
         self.video.bind("<Button-4>", self._on_mouse_wheel, add="+")
         self.video.bind("<Button-5>", self._on_mouse_wheel, add="+")
         self.root.bind("<Escape>", self._cancel_marker_mode, add="+")
+        self.root.bind("<d>", self._toggle_detail, add="+")
 
         metrics = ttk.Frame(monitor, padding=(20, 0, 20, 12))
         metrics.pack(fill="x")
@@ -228,6 +230,7 @@ class LevainPeakApp:
         self.marker_button = button(
             level, "Marcar início", self._toggle_marker_mode, width=13
         )
+        self.detail_button = button(level, "Ver detecção", self._toggle_detail, width=15)
         self.mix_time_button = button(
             session, "Hora da mistura", self._set_mix_time, width=21
         )
@@ -242,6 +245,18 @@ class LevainPeakApp:
         wrap = max(200, event.width - 8)
         self.instructions.configure(wraplength=wrap)
         self.message.configure(wraplength=wrap)
+
+    def _annotate(self, frame, measurement):
+        return draw_measurement(frame, measurement, detail=self._show_detail)
+
+    def _toggle_detail(self, event: tk.Event | None = None) -> None:
+        if event is not None and isinstance(event.widget, (tk.Entry, ttk.Entry, ttk.Spinbox)):
+            return  # typing a "d" in a field must not toggle the overlay
+        self._show_detail = not self._show_detail
+        self.detail_button.configure(
+            text="Ocultar detecção" if self._show_detail else "Ver detecção"
+        )
+        self._redraw_current_frame()
 
     def _reset_tracking(self, baseline: float | None = None) -> None:
         self._phase_tracker.reset(baseline)
@@ -291,7 +306,7 @@ class LevainPeakApp:
                 frame_number != self._last_displayed_frame_number or analysis_changed
             ):
                 self._last_displayed_frame_number = frame_number
-                shown = draw_measurement(frame, self._measurement) if self._measurement else frame
+                shown = self._annotate(frame, self._measurement) if self._measurement else frame
                 shown = self._apply_region_mask(shown)
                 self._show_frame(shown, source_frame=frame)
         self.root.after(40, self._refresh)
@@ -569,7 +584,7 @@ class LevainPeakApp:
         self._cancel_marker_mode()
         self._update_measurement_labels()
         if self._last_raw_frame is not None:
-            shown = draw_measurement(self._last_raw_frame, self._measurement)
+            shown = self._annotate(self._last_raw_frame, self._measurement)
             self._show_frame(
                 self._apply_region_mask(shown),
                 source_frame=self._last_raw_frame,
@@ -638,7 +653,7 @@ class LevainPeakApp:
         if self._last_raw_frame is None:
             return
         overlay = (
-            draw_measurement(self._last_raw_frame, self._measurement)
+            self._annotate(self._last_raw_frame, self._measurement)
             if self._measurement else self._last_raw_frame
         )
         self._show_frame(self._apply_region_mask(overlay), source_frame=self._last_raw_frame)

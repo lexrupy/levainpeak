@@ -22,6 +22,8 @@ class ContainerMeasurement:
     growth_factor: float | None = None
     marker_manual: bool = False
     volume_below_profile: tuple[float, ...] = field(default=(), repr=False, compare=False)
+    # (left_x, right_x) of the inner wall for each row from top to bottom.
+    edge_profile: tuple[tuple[int, int], ...] = field(default=(), repr=False, compare=False)
 
 
 def measure_container(
@@ -68,6 +70,7 @@ def measure_container(
             bottom=local.bottom + y0,
             surface_y=local.surface_y + y0,
             marker_y=None if local.marker_y is None else local.marker_y + y0,
+            edge_profile=tuple((a + x0, b + x0) for a, b in local.edge_profile),
         )
 
     height, width = frame.shape[:2]
@@ -107,7 +110,18 @@ def measure_container(
         return None
     surface_y, surface_confidence = surface
 
-    widths = _width_profile(gradient_x, left, right, inner_top, inner_bottom)
+    widths, left_edges, right_edges = _width_profile(
+        gradient_x, left, right, inner_top, inner_bottom
+    )
+    empty_rows = int(np.clip(surface_y - inner_top, 0, len(widths)))
+    if empty_rows >= 60:
+        # Above the levain the pot is empty glass against a busy background:
+        # trust a robust straight (or conical) wall rather than noisy edges.
+        left_edges = left_edges.copy()
+        right_edges = right_edges.copy()
+        left_edges[:empty_rows] = _robust_wall(left_edges[:empty_rows])
+        right_edges[:empty_rows] = _robust_wall(right_edges[:empty_rows])
+        widths = np.maximum(1.0, right_edges - left_edges).astype(np.float32)
     area_profile = np.square(widths)
     total = float(area_profile.sum())
     if total <= 0:
@@ -126,6 +140,9 @@ def measure_container(
         volume_fraction=fraction,
         confidence=float(np.clip(0.45 * edge_confidence + 0.55 * surface_confidence, 0, 1)),
         volume_below_profile=volume_below_profile,
+        edge_profile=tuple(
+            (int(a), int(b)) for a, b in zip(left_edges, right_edges, strict=True)
+        ),
     )
     return set_initial_marker(measurement, marker_y, manual=False) if marker_y is not None else measurement
 
@@ -168,9 +185,17 @@ def set_initial_volume_reference(
     )
 
 
-def draw_measurement(frame: np.ndarray, measurement: ContainerMeasurement) -> np.ndarray:
-    """Draw the detected vessel bounds and estimated levain surface."""
+def draw_measurement(
+    frame: np.ndarray, measurement: ContainerMeasurement, *, detail: bool = False
+) -> np.ndarray:
+    """Draw the detected vessel bounds and estimated levain surface.
+
+    With ``detail`` the measured inner wall profile is traced and the area
+    counted as levain (from the surface down) is shaded.
+    """
     annotated = frame.copy()
+    if detail and measurement.edge_profile:
+        _draw_profile(annotated, measurement)
     color = (73, 190, 125)
     cv2.rectangle(
         annotated,
@@ -203,6 +228,36 @@ def draw_measurement(frame: np.ndarray, measurement: ContainerMeasurement) -> np
     cv2.putText(annotated, label, (measurement.left, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4, cv2.LINE_AA)
     cv2.putText(annotated, label, (measurement.left, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2, cv2.LINE_AA)
     return annotated
+
+
+def _robust_wall(edge: np.ndarray) -> np.ndarray:
+    """Line fit through wall positions, ignoring rows that grabbed other edges."""
+    rows = np.arange(len(edge), dtype=np.float32)
+    keep = np.ones(len(edge), dtype=bool)
+    coefficients = np.polyfit(rows, edge, 1)
+    for _ in range(3):
+        coefficients = np.polyfit(rows[keep], edge[keep], 1)
+        residual = edge - np.polyval(coefficients, rows)
+        spread = np.median(np.abs(residual[keep] - np.median(residual[keep]))) + 1.0
+        keep = np.abs(residual) <= max(4.0, 2.5 * spread)
+        if keep.sum() < len(edge) * 0.3:
+            break
+    return np.polyval(coefficients, rows).astype(np.float32)
+
+
+def _draw_profile(annotated: np.ndarray, measurement: ContainerMeasurement) -> None:
+    edges = np.asarray(measurement.edge_profile, dtype=np.float32)
+    rows = measurement.top + np.arange(len(edges), dtype=np.float32)
+    left_wall = np.column_stack((edges[:, 0], rows)).astype(np.int32)
+    right_wall = np.column_stack((edges[:, 1], rows)).astype(np.int32)
+    below = rows >= measurement.surface_y
+    if below.any():
+        region = np.vstack((left_wall[below], right_wall[below][::-1]))
+        shade = annotated.copy()
+        cv2.fillPoly(shade, [region], (60, 160, 255))
+        cv2.addWeighted(shade, 0.35, annotated, 0.65, 0, dst=annotated)
+    for wall in (left_wall, right_wall):
+        cv2.polylines(annotated, [wall.reshape(-1, 1, 2)], False, (255, 255, 0), 2, cv2.LINE_AA)
 
 
 def _select_sides(
@@ -473,7 +528,7 @@ def _find_initial_marker(
 
 def _width_profile(
     gradient_x: np.ndarray, left: int, right: int, top: int, bottom: int
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     height, width = gradient_x.shape
     rows = np.arange(max(0, top), min(height, bottom))
     left_start, left_end = max(0, left - 42), min(width, left + 43)
@@ -482,4 +537,21 @@ def _width_profile(
     left_edges = left_start + np.argmax(smoothed[rows, left_start:left_end], axis=1)
     right_edges = right_start + np.argmax(smoothed[rows, right_start:right_end], axis=1)
     widths = np.maximum(1, right_edges - left_edges).astype(np.float32)
-    return np.convolve(widths, np.ones(21, dtype=np.float32) / 21, mode="same")
+    kernel = np.ones(21, dtype=np.float32) / 21
+
+    def smooth(values: np.ndarray) -> np.ndarray:
+        # A wide running median ignores wood-grain streaks that grab the edge
+        # for a few rows, yet keeps the real taper of the base; then a light
+        # blur removes the remaining steps.
+        window = min(61, len(values) | 1)
+        padded = np.pad(values.astype(np.float32), window // 2, mode="edge")
+        median = np.median(np.lib.stride_tricks.sliding_window_view(padded, window), axis=1)
+        padded = np.pad(median, 10, mode="edge")
+        return np.convolve(padded, kernel, mode="valid")
+
+    left_smooth, right_smooth = smooth(left_edges), smooth(right_edges)
+    return (
+        np.maximum(1.0, right_smooth - left_smooth).astype(np.float32),
+        left_smooth,
+        right_smooth,
+    )
