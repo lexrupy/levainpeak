@@ -29,6 +29,7 @@ source .venv/bin/activate
 pip install -e .
 cp camera.ini.example camera.ini
 python -m levainpeak.app
+python -m levainpeak.app --resume   # retoma a sessão gravada mais recentemente
 ```
 
 The local `camera.ini` contains the RTSP URL and credentials and is ignored by Git. The camera settings from the neighboring timelapse project have been copied into this local file for development.

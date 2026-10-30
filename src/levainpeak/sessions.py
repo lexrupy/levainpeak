@@ -12,6 +12,12 @@ from statistics import median
 from typing import TextIO
 
 
+def latest_session_csv(directory: Path | None = None) -> Path | None:
+    """The most recently written session CSV, or None when there is none."""
+    files = (directory or Path("data/sessions")).glob("*.csv")
+    return max(files, key=lambda path: path.stat().st_mtime, default=None)
+
+
 class SessionLog:
     def __init__(self, directory: Path | None = None, sample_seconds: float = 10.0) -> None:
         self.directory = directory or Path("data/sessions")

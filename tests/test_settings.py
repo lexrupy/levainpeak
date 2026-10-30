@@ -17,3 +17,18 @@ def test_corrupt_file_falls_back(tmp_path):
     path = tmp_path / "s.json"
     path.write_text("{oops", encoding="utf-8")
     assert load_settings(path).record_interval_seconds == 10
+
+
+def test_latest_session_csv_picks_the_newest_file(tmp_path):
+    import os
+
+    from levainpeak.sessions import latest_session_csv
+
+    assert latest_session_csv(tmp_path) is None
+    old, new = tmp_path / "a.csv", tmp_path / "b.csv"
+    old.write_text("x")
+    new.write_text("x")
+    os.utime(old, (1000, 1000))
+    os.utime(new, (2000, 2000))
+    (tmp_path / "c.json").write_text("{}")
+    assert latest_session_csv(tmp_path) == new

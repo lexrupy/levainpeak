@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import tkinter as tk
 import logging
 import csv
@@ -21,7 +22,7 @@ from levainpeak.analysis import ContainerAnalyzer
 from levainpeak.config import load_camera_config
 from levainpeak.forecast import DoublingForecaster
 from levainpeak.stream import RtspStream
-from levainpeak.sessions import PhaseTracker, SessionLog
+from levainpeak.sessions import PhaseTracker, SessionLog, latest_session_csv
 from levainpeak.settings import (
     MAX_RECORD_SECONDS,
     MIN_RECORD_SECONDS,
@@ -40,7 +41,7 @@ GRAPH_BORDER = 10
 
 
 class LevainPeakApp:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk, *, resume_last: bool = False) -> None:
         self.root = root
         self.root.title("LevainPeak")
         screen_width = self.root.winfo_screenwidth()
@@ -104,6 +105,8 @@ class LevainPeakApp:
             self.status_value.configure(text="Configuração necessária", foreground="#a43d32")
 
         self.root.after(40, self._refresh)
+        if resume_last:
+            self.root.after(200, self._resume_latest_session)
 
     def _build_layout(self) -> None:
         header = ttk.Frame(self.root, padding=(20, 16))
@@ -1154,10 +1157,22 @@ class LevainPeakApp:
             title="Retomar sessão", initialdir="data/sessions",
             filetypes=(("CSV", "*.csv"),), parent=self.root,
         )
-        if not selected:
+        if selected:
+            self._resume_from(Path(selected))
+
+    def _resume_latest_session(self) -> None:
+        latest = latest_session_csv(self._session_log.directory)
+        if latest is None:
+            self._set_message("Nenhuma sessão anterior para retomar.")
+            return
+        self._resume_from(latest)
+
+    def _resume_from(self, selected: Path) -> None:
+        if self._session_log.active:
+            self._set_message("Encerre a sessão ativa antes de retomar outra.")
             return
         try:
-            session_id, regions = self._session_log.resume(Path(selected))
+            session_id, regions = self._session_log.resume(selected)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             self._set_message(f"Não foi possível retomar o CSV: {exc}")
             return
@@ -1171,7 +1186,7 @@ class LevainPeakApp:
         self._reset_tracking()
         self._session_baseline = None
         try:
-            with Path(selected).open("r", newline="", encoding="utf-8") as source:
+            with selected.open("r", newline="", encoding="utf-8") as source:
                 rows = list(csv.DictReader(source))
             first_time = datetime.fromisoformat(rows[0]["timestamp"])
             clock_origin = time.monotonic()
@@ -1313,8 +1328,14 @@ class LevainPeakApp:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(prog="levainpeak")
+    parser.add_argument(
+        "--resume", "--retomar", dest="resume_last", action="store_true",
+        help="retoma a sessão gravada mais recentemente em data/sessions",
+    )
+    arguments = parser.parse_args()
     root = tk.Tk()
-    LevainPeakApp(root)
+    LevainPeakApp(root, resume_last=arguments.resume_last)
     root.mainloop()
 
 
