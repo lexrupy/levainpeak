@@ -147,11 +147,17 @@ def _deslant(binary: np.ndarray) -> np.ndarray:
     return cv2.warpAffine(binary, matrix, (binary.shape[1], height))
 
 
-# A digit is trusted only when its best pattern beats the runner-up clearly.
-# Patterns one segment apart (3/9, 5/6, 0/8, 1/7) would otherwise turn glare or
-# a weakly lit segment into a plausible but wrong temperature; those ambiguous
-# glyphs are reported as unreadable so they get read again.
-_MIN_MARGIN = 0.25
+# A digit is trusted only when each critical segment is clearly lit or clearly
+# dark once normalized to the strongest segment. A segment is critical when
+# flipping it alone would give another valid digit (3/9 differ by f, 5/6 by e,
+# 0/8 by g, 1/7 by a): glare or a weakly lit segment there would otherwise turn
+# into a plausible but wrong temperature, so such glyphs are reported as
+# unreadable and get read again. Other segments (such as a bottom bar cropped
+# by the ROI) only take part in choosing the closest pattern. Measured on the
+# real display, lit critical segments reach 0.5-1.0 and dark ones stay below 0.3.
+_PATTERNS = {frozenset(pattern) for pattern in _DIGITS.values()}
+_LIT_THRESHOLD = 0.45
+_MIN_SEPARATION = 0.08
 _MAX_BEST_SCORE = 1.5
 
 
@@ -179,7 +185,14 @@ def _classify_digit(glyph: np.ndarray) -> int | None:
         )
         for digit, pattern in _DIGITS.items()
     )
-    (best, digit), (runner_up, _) = ranked[0], ranked[1]
-    if best > _MAX_BEST_SCORE or runner_up - best < _MIN_MARGIN:
+    best, digit = ranked[0]
+    if best > _MAX_BEST_SCORE:
         return None
+    pattern = frozenset(_DIGITS[digit])
+    for name, value in zip(names, occupancy, strict=True):
+        if pattern ^ {name} not in _PATTERNS:
+            continue
+        separation = value - _LIT_THRESHOLD if name in pattern else _LIT_THRESHOLD - value
+        if separation < _MIN_SEPARATION:
+            return None
     return digit
