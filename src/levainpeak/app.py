@@ -36,6 +36,8 @@ from levainpeak.vision import (
     set_initial_volume_reference,
 )
 
+GRAPH_BORDER = 10
+
 
 class LevainPeakApp:
     def __init__(self, root: tk.Tk) -> None:
@@ -781,10 +783,16 @@ class LevainPeakApp:
         self._graph_window.geometry("900x520")
         self._graph_window.minsize(640, 400)
         self._graph_window.bind("<Escape>", self._close_session_graph)
+        self._graph_window.configure(background="#c9c3b4")
         self._graph_canvas = tk.Canvas(
-            self._graph_window, background="#fffefa", highlightthickness=0
+            self._graph_window, background="#fffefa", highlightthickness=0, cursor="fleur"
         )
-        self._graph_canvas.pack(fill="both", expand=True, padx=12, pady=12)
+        self._graph_canvas.pack(fill="both", expand=True, padx=GRAPH_BORDER, pady=GRAPH_BORDER)
+        self._graph_canvas.bind("<ButtonPress-1>", self._graph_drag_start, add="+")
+        self._graph_canvas.bind("<B1-Motion>", self._graph_drag_move, add="+")
+        self._graph_window.bind("<Motion>", self._graph_border_hover, add="+")
+        self._graph_window.bind("<ButtonPress-1>", self._graph_resize_start, add="+")
+        self._graph_window.bind("<B1-Motion>", self._graph_resize_move, add="+")
         self._graph_canvas.bind("<Configure>", self._draw_session_graph, add="+")
         self._refresh_session_graph()
         self._graph_window.after_idle(self._refresh_session_graph)
@@ -796,6 +804,70 @@ class LevainPeakApp:
             self._graph_window.after(10_000, update_graph)
 
         self._graph_window.after(10_000, update_graph)
+
+    def _graph_drag_start(self, event: tk.Event) -> None:
+        window = self._graph_window
+        self._graph_drag_origin = (
+            event.x_root - window.winfo_x(), event.y_root - window.winfo_y()
+        )
+
+    def _graph_drag_move(self, event: tk.Event) -> None:
+        offset_x, offset_y = self._graph_drag_origin
+        self._graph_window.geometry(f"+{event.x_root - offset_x}+{event.y_root - offset_y}")
+
+    def _graph_edges(self, event: tk.Event) -> str:
+        """Edges ("n", "s", "w", "e" combined) under the pointer in the border."""
+        window = self._graph_window
+        edges = ""
+        if event.y < GRAPH_BORDER:
+            edges += "n"
+        elif event.y > window.winfo_height() - GRAPH_BORDER:
+            edges += "s"
+        if event.x < GRAPH_BORDER:
+            edges += "w"
+        elif event.x > window.winfo_width() - GRAPH_BORDER:
+            edges += "e"
+        return edges
+
+    def _graph_border_hover(self, event: tk.Event) -> None:
+        if event.widget is not self._graph_window:
+            return
+        cursors = {
+            "n": "top_side", "s": "bottom_side", "w": "left_side", "e": "right_side",
+            "nw": "top_left_corner", "ne": "top_right_corner",
+            "sw": "bottom_left_corner", "se": "bottom_right_corner",
+        }
+        self._graph_window.configure(cursor=cursors.get(self._graph_edges(event), ""))
+
+    def _graph_resize_start(self, event: tk.Event) -> None:
+        if event.widget is not self._graph_window:
+            return
+        window = self._graph_window
+        self._graph_resize = (
+            self._graph_edges(event), event.x_root, event.y_root,
+            window.winfo_x(), window.winfo_y(), window.winfo_width(), window.winfo_height(),
+        )
+
+    def _graph_resize_move(self, event: tk.Event) -> None:
+        resize = getattr(self, "_graph_resize", None)
+        if event.widget is not self._graph_window or not resize or not resize[0]:
+            return
+        edges, start_x, start_y, x, y, width, height = resize
+        min_width, min_height = self._graph_window.minsize()
+        delta_x, delta_y = event.x_root - start_x, event.y_root - start_y
+        if "e" in edges:
+            width = max(min_width, width + delta_x)
+        if "s" in edges:
+            height = max(min_height, height + delta_y)
+        if "w" in edges:
+            new_width = max(min_width, width - delta_x)
+            x += width - new_width
+            width = new_width
+        if "n" in edges:
+            new_height = max(min_height, height - delta_y)
+            y += height - new_height
+            height = new_height
+        self._graph_window.geometry(f"{width}x{height}+{x}+{y}")
 
     def _refresh_session_graph(self) -> None:
         if getattr(self, "_graph_canvas", None) is None:
