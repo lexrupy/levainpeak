@@ -934,6 +934,7 @@ class LevainPeakApp:
             return
         canvas.delete("all")
         samples = []
+        phases: list[str] = []
         baseline = None
         session_name = path.stem
         try:
@@ -946,6 +947,7 @@ class LevainPeakApp:
                     raw_temperature = row.get("temperature_c", "")
                     temperature = float(raw_temperature) if raw_temperature else None
                     samples.append((timestamp, volume, temperature))
+                    phases.append(row.get("phase", ""))
                     if row.get("session_name"):
                         session_name = row["session_name"]
         except (OSError, KeyError, ValueError, csv.Error) as exc:
@@ -1058,11 +1060,14 @@ class LevainPeakApp:
                 anchor="n", fill="#59645e", font=("TkDefaultFont", 8),
             )
 
+        self._draw_phase_markers(canvas, samples, phases, x_of, top, bottom, plot_width, duration)
+
+        step = max(1, len(samples) // 300)
         volume_points = []
-        for stamp, volume, _ in samples:
+        for stamp, volume, _ in samples[::step]:
             volume_points.extend((x_of(stamp), y_volume(volume)))
         if len(volume_points) >= 4:
-            canvas.create_line(*volume_points, fill="#397a9b", width=2, smooth=False)
+            canvas.create_line(*volume_points, fill="#397a9b", width=3, smooth=True)
 
         previous = None
         for stamp, _, temperature in samples:
@@ -1086,6 +1091,34 @@ class LevainPeakApp:
             text="Temperatura" if temperatures else "Temperatura indisponível",
             anchor="w", fill="#202723",
         )
+
+    @staticmethod
+    def _draw_phase_markers(canvas, samples, phases, x_of, top, bottom, plot_width, duration) -> None:
+        """Dashed dividers at phase changes, with each phase named above the curve."""
+        if len(phases) != len(samples):
+            return
+        minimum_seconds = duration * 0.03  # ignore short flickers between phases
+        segments: list[list] = []  # [phase, start_stamp, end_stamp]
+        for stamp, phase in zip((sample[0] for sample in samples), phases, strict=True):
+            if not phase:
+                continue
+            if segments and segments[-1][0] == phase:
+                segments[-1][2] = stamp
+            elif segments and (segments[-1][2] - segments[-1][1]).total_seconds() < minimum_seconds:
+                segments[-1][0], segments[-1][2] = phase, stamp
+            else:
+                segments.append([phase, stamp, stamp])
+        for index, (phase, start, end) in enumerate(segments):
+            if index:
+                x = x_of(start)
+                canvas.create_line(x, top, x, bottom, fill="#a9b0aa", dash=(5, 4))
+            left_x = x_of(start) if index else x_of(samples[0][0])
+            right_x = x_of(segments[index + 1][1]) if index + 1 < len(segments) else x_of(end)
+            if right_x - left_x >= 64:
+                canvas.create_text(
+                    (left_x + right_x) / 2, top + 10, text=phase, fill="#59645e",
+                    font=("TkDefaultFont", 9, "italic"),
+                )
 
     def _resume_session(self) -> None:
         if self._session_log.active:
