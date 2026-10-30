@@ -11,6 +11,8 @@ from pathlib import Path
 from statistics import median
 from typing import TextIO
 
+from levainpeak.filters import valid_after_recovery
+
 
 def latest_session_csv(directory: Path | None = None) -> Path | None:
     """The most recently written session CSV, or None when there is none."""
@@ -207,7 +209,7 @@ class PhaseTracker:
         plateau_seconds: float = 600,
         decline_fraction: float = 0.02,
         decline_slope_per_minute: float = 0.0003,
-        decline_seconds: float = 180,
+        decline_seconds: float = 600,
         slope_window_seconds: float = 300,
         plateau_window_seconds: float = 900,
     ) -> None:
@@ -317,10 +319,13 @@ class PhaseTracker:
 
     def _slope(self, now: float, window: float | None = None) -> float | None:
         window = self.slope_window_seconds if window is None else window
+        # A reading under an earlier level that a later reading overtakes is
+        # invalid; leave such dips out of the trend.
+        flags = valid_after_recovery([value for _, value in self._samples])
         recent = [
             (timestamp, value)
-            for timestamp, value in self._samples
-            if now - timestamp <= window
+            for (timestamp, value), valid in zip(self._samples, flags, strict=True)
+            if valid and now - timestamp <= window
         ]
         if len(recent) < 3:
             return None

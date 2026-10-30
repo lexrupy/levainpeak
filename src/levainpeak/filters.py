@@ -38,3 +38,70 @@ class OutlierGate:
             self._pending.clear()
             return True
         return False
+
+
+def despike(
+    values: list[float],
+    *,
+    window: int = 80,
+    threshold: float = 0.02,
+    minimum_side: int = 12,
+) -> list[float]:
+    """Replace short excursions that leave the trend and come back.
+
+    A point is a spike when it lies beyond ``threshold`` from the median of
+    the samples before it *and* from the median of the samples after it, on
+    the same side. A lasting step matches one side and is kept, and so is a
+    ramp. A dip shorter than about half of ``window`` is replaced by the mean
+    of the two medians. The first and last ``minimum_side`` points cannot be
+    judged from both sides and are left as they are.
+    """
+    from statistics import median
+
+    cleaned = list(values)
+    for index, value in enumerate(values):
+        before = values[max(0, index - window):index]
+        after = values[index + 1:index + 1 + window]
+        if len(before) < minimum_side or len(after) < minimum_side:
+            continue
+        median_before, median_after = median(before), median(after)
+        below = value < median_before - threshold and value < median_after - threshold
+        above = value > median_before + threshold and value > median_after + threshold
+        if below or above:
+            cleaned[index] = (median_before + median_after) / 2
+    return cleaned
+
+
+def valid_after_recovery(values: list[float], tolerance: float = 0.02) -> list[bool]:
+    """Flag readings that a later recovery proves were not real.
+
+    Levain volume does not dip and come back. When a reading is below a level
+    reached earlier in the session and a later reading rises above it again,
+    that low reading (and every other one under that level in between) is
+    invalid. A fall that never recovers stays valid, and so do the newest
+    readings until a later one overrules them. ``tolerance`` keeps ordinary
+    measurement noise from being treated as a dip.
+    """
+    from statistics import median
+
+    count = len(values)
+    # Levels come from a short running median, so an isolated high spike never
+    # becomes the "level reached earlier" that later readings fall short of.
+    levels = [median(values[max(0, index - 3):index + 4]) for index in range(count)]
+    before_peak = [float("-inf")] * count
+    running = float("-inf")
+    for index in range(count):
+        before_peak[index] = running
+        running = max(running, levels[index])
+    after_peak = [float("-inf")] * count
+    running = float("-inf")
+    for index in range(count - 1, -1, -1):
+        after_peak[index] = running
+        running = max(running, levels[index])
+    return [
+        not (
+            value < before_peak[index] - tolerance
+            and value < after_peak[index] - tolerance
+        )
+        for index, value in enumerate(values)
+    ]

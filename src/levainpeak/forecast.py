@@ -8,6 +8,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Callable
 
+from levainpeak.filters import valid_after_recovery
+
 REFERENCE_TEMPERATURE_C = 24.0
 
 # Relative yeast activity versus 24 °C, read by eye from the "Atividade vs.
@@ -150,7 +152,13 @@ class DoublingForecaster:
         if not self._samples:
             return []
         cutoff = self._samples[-1][0] - self.window_seconds
-        return [sample for sample in self._samples if sample[0] >= cutoff]
+        # Readings that a later recovery proves were not real are left out.
+        flags = valid_after_recovery([sample[1] for sample in self._samples])
+        return [
+            sample
+            for sample, valid in zip(self._samples, flags, strict=True)
+            if valid and sample[0] >= cutoff
+        ]
 
     def _thermal_rate(
         self, model: TemperatureModel

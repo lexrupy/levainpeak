@@ -20,6 +20,7 @@ from PIL import Image, ImageTk
 
 from levainpeak.analysis import ContainerAnalyzer
 from levainpeak.config import load_camera_config
+from levainpeak.filters import despike, valid_after_recovery
 from levainpeak.forecast import DoublingForecaster
 from levainpeak.stream import RtspStream
 from levainpeak.sessions import PhaseTracker, SessionLog, latest_session_csv
@@ -973,7 +974,32 @@ class LevainPeakApp:
             )
             return
 
-        raw_samples = samples
+        # Drop dips and peaks that leave the trend and come back (for example the
+        # surface being read at the dark band for a few minutes).
+        cleaned = despike([sample[1] for sample in samples])
+        # A later reading that rises above an earlier level proves the readings
+        # under that level in between were wrong: rebuild them from the valid
+        # neighbours.
+        valid = valid_after_recovery(cleaned)
+        good = [index for index, ok in enumerate(valid) if ok]
+        if len(good) >= 2:
+            cleaned = [
+                value if ok else float(np.interp(index, good, [cleaned[i] for i in good]))
+                for index, (value, ok) in enumerate(zip(cleaned, valid, strict=True))
+            ]
+        # Phases are recomputed from the cleaned readings, so the shading does
+        # not inherit labels that were produced while a wrong reading was live.
+        graph_tracker = PhaseTracker()
+        graph_tracker.reset(baseline if baseline and baseline > 0 else cleaned[0])
+        origin = samples[0][0]
+        phases = [
+            graph_tracker.update((stamp - origin).total_seconds(), volume)
+            for (stamp, _, _), volume in zip(samples, cleaned, strict=True)
+        ]
+        raw_samples = [
+            (stamp, volume, temperature)
+            for (stamp, _, temperature), volume in zip(samples, cleaned, strict=True)
+        ]
         samples = []
         smoothed_volume = None
         smoothed_temperature = None

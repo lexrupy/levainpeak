@@ -42,3 +42,15 @@ def test_persistent_fall_is_degradation():
     run(tracker, lambda m: 0.2 + 0.2 * min(1, m / 30), 30)
     states = run(tracker, lambda m: 0.4 - 0.002 * m, 30, start=1800)
     assert states[-1] == PhaseTracker.FALLING
+
+
+def test_a_dip_that_recovers_never_becomes_a_decline():
+    """The surface read at the dark band for minutes, then back to the real level."""
+    tracker = PhaseTracker()
+    run(tracker, lambda m: 0.2 + 0.1 * min(1, m / 10), 10)
+    steady = lambda m: 0.3 + 0.0005 * (m - 10)
+    run(tracker, steady, 30, start=600)
+    run(tracker, lambda m: steady(m) - 0.06, 6, start=2400)  # wrong readings
+    states = run(tracker, steady, 20, start=2760)
+    assert PhaseTracker.FALLING not in states
+    assert states[-1] in (PhaseTracker.RISING, PhaseTracker.PLATEAU)

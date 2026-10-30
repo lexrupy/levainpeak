@@ -43,7 +43,7 @@ class ContainerAnalyzer:
         self._last_pot_roi: tuple[int, int, int, int] | None = None
         self._filtered_surface_y: float | None = None
         # Out-of-curve readings are discarded and the next frame is read again.
-        self._volume_gate = OutlierGate(max_jump=0.03, confirmations=12)
+        self._volume_gate = OutlierGate(max_jump=0.03, confirmations=40)
         self._temperature_gate = OutlierGate(max_jump=3.0, confirmations=3)
         self._previous_reading: float | None = None
         self._thread = threading.Thread(target=self._run, name="container-analyzer", daemon=True)

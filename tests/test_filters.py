@@ -24,3 +24,62 @@ def test_scattered_outliers_never_get_adopted():
     for value in (0.9, 0.5, 0.8, 0.6, 0.95):
         assert not gate.accept(value)
     assert gate.trusted == 0.30
+
+
+def test_despike_removes_a_dip_that_comes_back():
+    from levainpeak.filters import despike
+
+    series = [0.30] * 100 + [0.26] * 36 + [0.30] * 100
+    cleaned = despike(series)
+    assert max(abs(value - 0.30) for value in cleaned) < 0.005
+
+
+def test_despike_keeps_a_lasting_step_and_a_ramp():
+    from levainpeak.filters import despike
+
+    step = [0.30] * 100 + [0.36] * 100
+    assert despike(step) == step
+    ramp = [0.30 + 0.0004 * index for index in range(200)]
+    assert despike(ramp) == ramp
+
+
+def test_despike_leaves_the_edges_alone():
+    from levainpeak.filters import despike
+
+    series = [0.30] * 100 + [0.20] * 5  # the latest samples cannot be judged yet
+    assert despike(series)[-5:] == [0.20] * 5
+
+
+def test_valid_after_recovery_invalidates_a_dip_that_is_overtaken():
+    from levainpeak.filters import valid_after_recovery
+
+    series = [0.29] * 30 + [0.23] * 40 + [0.32] * 30
+    flags = valid_after_recovery(series)
+    assert flags[:30] == [True] * 30
+    assert flags[30:70] == [False] * 40
+    assert flags[70:] == [True] * 30
+
+
+def test_valid_after_recovery_keeps_growth_noise_and_real_decline():
+    from levainpeak.filters import valid_after_recovery
+
+    ramp = [0.20 + 0.001 * i for i in range(100)]
+    assert all(valid_after_recovery(ramp))
+    plateau = [0.30 + (0.004 if i % 2 else -0.004) for i in range(100)]
+    assert all(valid_after_recovery(plateau))
+    decline = [0.40] * 30 + [0.40 - 0.002 * i for i in range(60)]
+    assert all(valid_after_recovery(decline))
+
+
+def test_valid_after_recovery_trusts_the_newest_readings_until_overruled():
+    from levainpeak.filters import valid_after_recovery
+
+    series = [0.30] * 50 + [0.20] * 5
+    assert valid_after_recovery(series)[-5:] == [True] * 5
+
+
+def test_valid_after_recovery_ignores_an_isolated_high_spike():
+    from levainpeak.filters import valid_after_recovery
+
+    series = [0.18, 0.18, 0.18, 0.216, 0.18] + [0.18] * 70 + [0.27] * 20
+    assert all(valid_after_recovery(series))
