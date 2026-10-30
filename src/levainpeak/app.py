@@ -1022,10 +1022,13 @@ class LevainPeakApp:
         else:
             full_scale, scale_label = double_target, "dobro"
         span = max(1e-6, full_scale - baseline)
-        # Leave room under 0% so the latency stretch is not glued to the axis;
-        # the room has no ticks or labels, so nothing negative is ever shown.
+        # Leave room under 0% so the latency stretch is not glued to the axis,
+        # and above 100% so the peak does not touch the top edge (the phase
+        # names sit there). The room has no ticks or labels, so nothing
+        # outside 0-100% is ever shown.
         floor = bottom - plot_height * 0.12
-        scale_height = floor - top
+        ceiling = top + plot_height * 0.09
+        scale_height = floor - ceiling
         y_volume = lambda value: floor - min(1.0, max(0.0, (value - baseline) / span)) * scale_height
 
         temperatures = [temp for _, _, temp in samples if temp is not None]
