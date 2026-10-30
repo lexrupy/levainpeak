@@ -209,6 +209,7 @@ class PhaseTracker:
         decline_slope_per_minute: float = 0.0003,
         decline_seconds: float = 180,
         slope_window_seconds: float = 300,
+        plateau_window_seconds: float = 900,
     ) -> None:
         self.minimum_rise = minimum_rise
         self.plateau_slope_per_minute = plateau_slope_per_minute
@@ -217,6 +218,7 @@ class PhaseTracker:
         self.decline_slope_per_minute = decline_slope_per_minute
         self.decline_seconds = decline_seconds
         self.slope_window_seconds = slope_window_seconds
+        self.plateau_window_seconds = plateau_window_seconds
         self.reset()
 
     def reset(self, baseline: float | None = None) -> None:
@@ -287,7 +289,17 @@ class PhaseTracker:
             return self.state
 
         self._decline_since = None
-        if abs(slope) <= self.plateau_slope_per_minute:
+        # Slow fermentation grows at about the noise level of a short window,
+        # which made the phase flip between rising and stable. Judge the
+        # plateau over a longer window, and make it harder to leave a plateau
+        # than to enter one.
+        trend = self._slope(monotonic_time, self.plateau_window_seconds)
+        if trend is None:
+            trend = slope
+        limit = self.plateau_slope_per_minute
+        if self.state in (self.PLATEAU, self.PEAK):
+            limit *= 1.5
+        if abs(trend) <= limit:
             if self._plateau_since is None:
                 self._plateau_since = monotonic_time
             self.state = (
@@ -295,7 +307,7 @@ class PhaseTracker:
                 if monotonic_time - self._plateau_since >= self.plateau_seconds
                 else self.PLATEAU
             )
-        elif slope > 0:
+        elif trend > 0:
             self._plateau_since = None
             self.state = self.RISING
         else:
@@ -303,11 +315,12 @@ class PhaseTracker:
             self.state = self.PLATEAU
         return self.state
 
-    def _slope(self, now: float) -> float | None:
+    def _slope(self, now: float, window: float | None = None) -> float | None:
+        window = self.slope_window_seconds if window is None else window
         recent = [
             (timestamp, value)
             for timestamp, value in self._samples
-            if now - timestamp <= self.slope_window_seconds
+            if now - timestamp <= window
         ]
         if len(recent) < 3:
             return None

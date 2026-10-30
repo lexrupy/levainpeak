@@ -230,6 +230,9 @@ def draw_measurement(
     return annotated
 
 
+MAX_WALL_SLOPE = 0.05
+
+
 def _robust_wall(edge: np.ndarray) -> np.ndarray:
     """Line fit through wall positions, ignoring rows that grabbed other edges."""
     rows = np.arange(len(edge), dtype=np.float32)
@@ -242,6 +245,9 @@ def _robust_wall(edge: np.ndarray) -> np.ndarray:
         keep = np.abs(residual) <= max(4.0, 2.5 * spread)
         if keep.sum() < len(edge) * 0.3:
             break
+    if abs(coefficients[0]) > MAX_WALL_SLOPE:
+        # A glass wall is nearly vertical; a steep fit means noisy edges won.
+        return np.full(len(edge), np.median(edge[keep]), dtype=np.float32)
     return np.polyval(coefficients, rows).astype(np.float32)
 
 
