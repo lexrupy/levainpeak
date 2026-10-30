@@ -10,24 +10,32 @@ from typing import Callable
 
 REFERENCE_TEMPERATURE_C = 24.0
 
-# Approximate relative sourdough activity versus 24 °C (rise rate of a mixed
-# yeast/lactic culture): sluggish when cold, fastest around 27-32 °C and
-# falling again above the mid 30s. A rough rule-of-thumb curve from baking
-# literature, used only until the session has enough data of its own.
+# Relative yeast activity versus 24 °C, read by eye from the "Atividade vs.
+# Temperatura" chart (madrepaesartesanais.com.br): C. milleri, the yeast that
+# produces the gas that raises the dough, peaks near 27 °C and collapses
+# toward zero by about 36 °C. The lactobacillus curve (peak near 33 °C) drives
+# acidity, not volume, so it is not used here. Values are approximate and only
+# stand in until the session has enough data of its own.
 LITERATURE_ACTIVITY = (
-    (4.0, 0.05),
-    (10.0, 0.20),
-    (15.0, 0.42),
-    (18.0, 0.62),
-    (21.0, 0.80),
+    (4.0, 0.02),
+    (8.0, 0.08),
+    (12.0, 0.20),
+    (16.0, 0.36),
+    (18.0, 0.47),
+    (20.0, 0.62),
+    (22.0, 0.80),
     (24.0, 1.00),
-    (27.0, 1.25),
-    (30.0, 1.40),
-    (32.0, 1.40),
-    (35.0, 1.15),
-    (38.0, 0.75),
-    (42.0, 0.30),
+    (26.0, 1.19),
+    (27.0, 1.31),
+    (28.0, 1.22),
+    (30.0, 0.94),
+    (32.0, 0.59),
+    (33.0, 0.38),
+    (34.0, 0.16),
+    (36.0, 0.03),
 )
+# Activity never reaches exactly zero so thermal time keeps advancing.
+MIN_ACTIVITY = 0.02
 
 SEGMENT_SECONDS = 300
 MIN_SEGMENTS = 8
@@ -43,12 +51,12 @@ def literature_factor(temperature_c: float | None) -> float:
         return 1.0
     temps = [point[0] for point in LITERATURE_ACTIVITY]
     if temperature_c <= temps[0]:
-        return LITERATURE_ACTIVITY[0][1]
+        return max(MIN_ACTIVITY, LITERATURE_ACTIVITY[0][1])
     if temperature_c >= temps[-1]:
-        return LITERATURE_ACTIVITY[-1][1]
+        return max(MIN_ACTIVITY, LITERATURE_ACTIVITY[-1][1])
     index = bisect_right(temps, temperature_c)
     (t0, f0), (t1, f1) = LITERATURE_ACTIVITY[index - 1], LITERATURE_ACTIVITY[index]
-    return f0 + (f1 - f0) * (temperature_c - t0) / (t1 - t0)
+    return max(MIN_ACTIVITY, f0 + (f1 - f0) * (temperature_c - t0) / (t1 - t0))
 
 
 def fit_session_model(

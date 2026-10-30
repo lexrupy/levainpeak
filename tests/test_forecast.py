@@ -55,12 +55,15 @@ def test_no_rising_trend_returns_none():
     assert forecaster.minutes_until(0.3, 0.6) is None
 
 
-def test_literature_table_interpolates_and_clamps():
+def test_literature_table_follows_the_yeast_curve():
     assert literature_factor(24) == pytest.approx(1.0)
-    assert literature_factor(25.5) == pytest.approx(1.125)
-    assert literature_factor(-5) == literature_factor(4)
+    assert literature_factor(25) == pytest.approx(1.095)
     assert literature_factor(None) == 1.0
-    assert literature_factor(30) > literature_factor(40)
+    # peak near 27 °C, then a sharp collapse toward zero by about 36 °C
+    assert literature_factor(27) == max(literature_factor(t / 2) for t in range(8, 90))
+    assert literature_factor(33) < literature_factor(24) < literature_factor(27)
+    assert 0 < literature_factor(40) <= 0.03
+    assert literature_factor(-5) == literature_factor(4) > 0
 
 
 def test_uses_table_when_session_lacks_data():
