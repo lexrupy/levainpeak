@@ -819,7 +819,7 @@ class LevainPeakApp:
         self._graph_path = path
         self._graph_window = tk.Toplevel(self.root, class_="Pythontkfloating")
         self._graph_window.title(f"Evolução da sessão · {path.stem}")
-        self._graph_window.geometry("900x520")
+        self._graph_window.geometry("640x400")
         self._graph_window.minsize(640, 400)
         self._graph_window.bind("<Escape>", self._close_session_graph)
         self._graph_window.configure(background="#c9c3b4")
