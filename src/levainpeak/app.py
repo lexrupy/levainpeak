@@ -934,12 +934,15 @@ class LevainPeakApp:
             return
         canvas.delete("all")
         samples = []
+        baseline = None
         session_name = path.stem
         try:
             with path.open("r", newline="", encoding="utf-8") as source:
                 for row in csv.DictReader(source):
                     timestamp = datetime.fromisoformat(row["timestamp"])
                     volume = float(row["volume_fraction"])
+                    if row.get("initial_volume_fraction"):
+                        baseline = float(row["initial_volume_fraction"])
                     raw_temperature = row.get("temperature_c", "")
                     temperature = float(raw_temperature) if raw_temperature else None
                     samples.append((timestamp, volume, temperature))
@@ -1002,7 +1005,18 @@ class LevainPeakApp:
         first_time = samples[0][0]
         duration = max(1.0, (samples[-1][0] - first_time).total_seconds())
         x_of = lambda stamp: left + (stamp - first_time).total_seconds() / duration * plot_width
-        y_volume = lambda value: bottom - min(1.0, max(0.0, value)) * plot_height
+        # 100% is the doubling of the initial volume until it is reached; once
+        # the volume goes past it, 100% is the highest volume of the session.
+        baseline = baseline if baseline and baseline > 0 else samples[0][1]
+        peak = max(volume for _, volume, _ in samples)
+        double_target = 2 * baseline
+        if double_target > 1.0:
+            full_scale, scale_label = 1.0, "capacidade"
+        elif peak >= double_target:
+            full_scale, scale_label = peak, "máximo atingido"
+        else:
+            full_scale, scale_label = double_target, "dobro"
+        y_volume = lambda value: bottom - min(1.0, max(0.0, value / full_scale)) * plot_height
 
         temperatures = [temp for _, _, temp in samples if temp is not None]
         if temperatures:
@@ -1030,7 +1044,13 @@ class LevainPeakApp:
         canvas.create_line(left, top, left, bottom, fill="#397a9b", width=2)
         canvas.create_line(right, top, right, bottom, fill="#c46b35", width=2)
         canvas.create_line(left, bottom, right, bottom, fill="#59645e", width=2)
-        canvas.create_text(left, top - 8, text="Volume (%)", anchor="sw", fill="#397a9b")
+        baseline_y = y_volume(baseline)
+        canvas.create_line(left, baseline_y, right, baseline_y, fill="#397a9b", dash=(4, 4))
+        canvas.create_text(
+            left + 6, baseline_y - 2, text="início", anchor="sw",
+            fill="#397a9b", font=("TkDefaultFont", 8),
+        )
+        canvas.create_text(left, top - 8, text=f"Volume (% do {scale_label})", anchor="sw", fill="#397a9b")
         canvas.create_text(right, top - 8, text="Temperatura (°C)", anchor="se", fill="#c46b35")
 
         for tick in range(5):
