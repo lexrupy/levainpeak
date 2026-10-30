@@ -1092,15 +1092,34 @@ class LevainPeakApp:
             anchor="w", fill="#202723",
         )
 
-    @staticmethod
-    def _draw_phase_markers(canvas, samples, phases, x_of, top, bottom, plot_width, duration) -> None:
-        """Dashed dividers at phase changes, with each phase named above the curve."""
+    # The graph names the classic growth-curve phases; the CSV and the Monitor
+    # keep the finer tracker states (for example "Pico provável").
+    _GRAPH_PHASES = {
+        PhaseTracker.WAITING: "Latência",
+        PhaseTracker.RISING: "Exponencial",
+        PhaseTracker.PLATEAU: "Estacionária",
+        PhaseTracker.PEAK: "Estacionária",
+        PhaseTracker.FALL_CHECK: "Estacionária",
+        PhaseTracker.FALLING: "Decaimento",
+    }
+    _GRAPH_PHASE_FILL = {
+        "Latência": "#f2f0e8",
+        "Exponencial": "#e6f0e8",
+        "Estacionária": "#f7efd9",
+        "Decaimento": "#f3e3de",
+    }
+
+    def _draw_phase_markers(
+        self, canvas, samples, phases, x_of, top, bottom, plot_width, duration
+    ) -> None:
+        """Shaded bands and dashed dividers for the growth-curve phases."""
         if len(phases) != len(samples):
             return
         minimum_seconds = duration * 0.03  # ignore short flickers between phases
         segments: list[list] = []  # [phase, start_stamp, end_stamp]
-        for stamp, phase in zip((sample[0] for sample in samples), phases, strict=True):
-            if not phase:
+        for stamp, raw in zip((sample[0] for sample in samples), phases, strict=True):
+            phase = self._GRAPH_PHASES.get(raw)
+            if phase is None:
                 continue
             if segments and segments[-1][0] == phase:
                 segments[-1][2] = stamp
@@ -1109,11 +1128,14 @@ class LevainPeakApp:
             else:
                 segments.append([phase, stamp, stamp])
         for index, (phase, start, end) in enumerate(segments):
-            if index:
-                x = x_of(start)
-                canvas.create_line(x, top, x, bottom, fill="#a9b0aa", dash=(5, 4))
             left_x = x_of(start) if index else x_of(samples[0][0])
             right_x = x_of(segments[index + 1][1]) if index + 1 < len(segments) else x_of(end)
+            band = canvas.create_rectangle(
+                left_x, top, right_x, bottom, fill=self._GRAPH_PHASE_FILL[phase], outline=""
+            )
+            canvas.tag_lower(band)
+            if index:
+                canvas.create_line(left_x, top, left_x, bottom, fill="#a9b0aa", dash=(5, 4))
             if right_x - left_x >= 64:
                 canvas.create_text(
                     (left_x + right_x) / 2, top + 10, text=phase, fill="#59645e",
