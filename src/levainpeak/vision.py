@@ -119,8 +119,15 @@ def measure_container(
         # trust a robust straight (or conical) wall rather than noisy edges.
         left_edges = left_edges.copy()
         right_edges = right_edges.copy()
-        left_edges[:empty_rows] = _robust_wall(left_edges[:empty_rows])
-        right_edges[:empty_rows] = _robust_wall(right_edges[:empty_rows])
+        # The glass wall lies right next to the detected outer edge; anything
+        # farther in is something else (levain or a label on the wall).
+        tolerance = 0.02 * (right - left)
+        left_edges[:empty_rows] = np.clip(
+            _robust_wall(left_edges[:empty_rows]), left, left + tolerance
+        )
+        right_edges[:empty_rows] = np.clip(
+            _robust_wall(right_edges[:empty_rows]), right - tolerance, right
+        )
         widths = np.maximum(1.0, right_edges - left_edges).astype(np.float32)
     area_profile = np.square(widths)
     total = float(area_profile.sum())
@@ -429,9 +436,11 @@ def _find_surface(
             mode="same",
         )
         band_scores.append(scores)
-    # A real fill boundary should be visible in every horizontal band. The
-    # minimum rejects strong label edges and reflections confined to one side.
-    scores = np.min(np.asarray(band_scores), axis=0)
+    # A real fill boundary should show in most horizontal bands. The median of
+    # the three still rejects label edges and reflections confined to one side,
+    # but tolerates one band being confused (for example levain or a label
+    # climbing the wall hides the transition in the side band).
+    scores = np.median(np.asarray(band_scores), axis=0)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     vessel_left = max(0, left + int(vessel_width * 0.08))
     vessel_right = min(width, right - int(vessel_width * 0.08))
@@ -470,6 +479,15 @@ def _find_surface(
     candidate_scores = local * (0.35 + np.minimum(direction[candidate_start:candidate_end] / 25.0, 1.0))
     index = int(np.argmax(candidate_scores)) + candidate_start
     peak = float(candidate_scores[index - candidate_start])
+    # Inside the levain a shading edge can score nearly as high as the real
+    # surface. The surface is the highest strong transition into pale levain.
+    strong = np.flatnonzero(
+        (candidate_scores >= peak * 0.6)
+        & (direction[candidate_start:candidate_end] >= 8.0)
+    )
+    if strong.size:
+        index = int(strong[0]) + candidate_start
+        peak = float(candidate_scores[index - candidate_start])
     baseline = float(np.median(local))
     if peak < 3.0:
         return None
