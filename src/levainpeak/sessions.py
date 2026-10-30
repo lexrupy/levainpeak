@@ -1,0 +1,331 @@
+"""Session CSV logging and conservative levain phase tracking."""
+
+from __future__ import annotations
+
+import csv
+import json
+import os
+from collections import deque
+from datetime import datetime
+from pathlib import Path
+from statistics import median
+from typing import TextIO
+
+
+class SessionLog:
+    def __init__(self, directory: Path | None = None, sample_seconds: float = 10.0) -> None:
+        self.directory = directory or Path("data/sessions")
+        self.sample_seconds = sample_seconds
+        self.session_id: str | None = None
+        self.path: Path | None = None
+        self._file: TextIO | None = None
+        self._writer = None
+        self._last_write_time: float | None = None
+        self._last_phase: str | None = None
+        self.mix_time: datetime | None = None
+        self.session_name = ""
+        self._columns: list[str] = []
+        self.metadata_path: Path | None = None
+        self.regions: dict[str, tuple[int, int, int, int] | None] = {
+            "pot": None,
+            "thermometer": None,
+        }
+
+    @property
+    def active(self) -> bool:
+        return self._file is not None
+
+    def start(self, mix_time: datetime | None = None, name: str = "") -> str:
+        if self.active:
+            raise RuntimeError("A session is already active")
+        now = datetime.now().astimezone()
+        self.session_id = now.strftime("%Y%m%d_%H%M%S_%f")
+        self.mix_time = mix_time or now
+        self.session_name = name.strip()
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self.path = self.directory / f"{self.session_id}.csv"
+        self.metadata_path = self.path.with_suffix(".json")
+        self._file = self.path.open("w", newline="", encoding="utf-8")
+        self._writer = csv.writer(self._file)
+        self._writer.writerow(
+            (
+                "session_id",
+                "timestamp",
+                "mix_time",
+                "temperature_c",
+                "volume_fraction",
+                "initial_volume_fraction",
+                "growth_factor",
+                "phase",
+                "session_name",
+            )
+        )
+        self._columns = [
+            "session_id", "timestamp", "mix_time", "temperature_c",
+            "volume_fraction", "initial_volume_fraction", "growth_factor",
+            "phase", "session_name",
+        ]
+        self._file.flush()
+        self._last_write_time = None
+        self._last_phase = None
+        return self.session_id
+
+    def save_regions(
+        self,
+        pot: tuple[int, int, int, int] | None,
+        thermometer: tuple[int, int, int, int] | None,
+    ) -> None:
+        self.regions = {"pot": pot, "thermometer": thermometer}
+        if self.metadata_path is None:
+            return
+        payload = {
+            name: list(region) if region is not None else None
+            for name, region in self.regions.items()
+        }
+        payload["session_name"] = self.session_name
+        self.metadata_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    def resume(self, path: Path) -> tuple[str, dict[str, tuple[int, int, int, int] | None]]:
+        if self.active:
+            raise RuntimeError("A session is already active")
+        path = path.expanduser().resolve()
+        with path.open("r", newline="", encoding="utf-8") as source:
+            rows = list(csv.DictReader(source))
+        if not rows:
+            raise ValueError("O CSV não contém medições para retomar.")
+        last = rows[-1]
+        self.path = path
+        self.directory = path.parent
+        self.metadata_path = path.with_suffix(".json")
+        self.session_id = last.get("session_id") or path.stem
+        self.session_name = last.get("session_name", "")
+        self.mix_time = datetime.fromisoformat(last["mix_time"]) if last.get("mix_time") else None
+        if self.metadata_path.exists():
+            raw = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+            if not self.session_name:
+                self.session_name = raw.get("session_name", "")
+            self.regions = {
+                name: tuple(value) if value else None
+                for name, value in raw.items()
+                if name in ("pot", "thermometer")
+            }
+        else:
+            self.regions = {"pot": None, "thermometer": None}
+        with path.open("r", newline="", encoding="utf-8") as source:
+            self._columns = next(csv.reader(source), [])
+        # Add newer optional fields when continuing an older log, keeping all
+        # existing samples and the new rows in one consistent CSV schema.
+        for optional_column in ("temperature_c", "session_name"):
+            if optional_column not in self._columns:
+                self._columns.append(optional_column)
+        if self._columns != list(rows[0].keys()):
+            temporary_path = path.with_suffix(".csv.tmp")
+            with temporary_path.open("w", newline="", encoding="utf-8") as destination:
+                writer = csv.DictWriter(destination, fieldnames=self._columns)
+                writer.writeheader()
+                for row in rows:
+                    if not row.get("session_name"):
+                        row["session_name"] = self.session_name
+                    writer.writerow(row)
+            os.replace(temporary_path, path)
+        self._file = path.open("a", newline="", encoding="utf-8")
+        self._writer = csv.writer(self._file)
+        self._last_write_time = None
+        self._last_phase = last.get("phase")
+        return self.session_id, self.regions
+
+    def record(
+        self,
+        monotonic_time: float,
+        measurement,
+        phase: str,
+        *,
+        temperature_c: float | None = None,
+        force: bool = False,
+    ) -> bool:
+        if not self.active or self._writer is None or self._file is None:
+            return False
+        phase_changed = phase != self._last_phase
+        interval_elapsed = (
+            self._last_write_time is None
+            or monotonic_time - self._last_write_time >= self.sample_seconds
+        )
+        if not force and not phase_changed and not interval_elapsed:
+            return False
+
+        values = {
+            "session_id": self.session_id,
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "mix_time": "" if self.mix_time is None else self.mix_time.isoformat(timespec="minutes"),
+            "temperature_c": "" if temperature_c is None else f"{temperature_c:.1f}",
+            "volume_fraction": f"{measurement.volume_fraction:.6f}",
+            "initial_volume_fraction": "" if measurement.initial_volume_fraction is None else f"{measurement.initial_volume_fraction:.6f}",
+            "growth_factor": "" if measurement.growth_factor is None else f"{measurement.growth_factor:.4f}",
+            "phase": phase,
+            "session_name": self.session_name,
+        }
+        self._writer.writerow([values.get(column, "") for column in self._columns])
+        self._file.flush()
+        self._last_write_time = monotonic_time
+        self._last_phase = phase
+        return True
+
+    def set_mix_time(self, mix_time: datetime) -> None:
+        self.mix_time = mix_time
+
+    def stop(self) -> Path | None:
+        if self._file is not None:
+            self._file.close()
+        self._file = None
+        self._writer = None
+        return self.path
+
+
+class PhaseTracker:
+    """Detects sustained rise, a probable plateau peak, then confirmed decline."""
+
+    WAITING = "Aguardando crescimento"
+    RISING = "Crescendo"
+    PLATEAU = "Estabilizando"
+    PEAK = "Pico provável"
+    FALL_CHECK = "Queda em confirmação"
+    FALLING = "Degradando"
+
+    def __init__(
+        self,
+        *,
+        minimum_rise: float = 0.03,
+        plateau_slope_per_minute: float = 0.00012,
+        plateau_seconds: float = 600,
+        decline_fraction: float = 0.02,
+        decline_slope_per_minute: float = 0.0003,
+        decline_seconds: float = 180,
+        slope_window_seconds: float = 300,
+    ) -> None:
+        self.minimum_rise = minimum_rise
+        self.plateau_slope_per_minute = plateau_slope_per_minute
+        self.plateau_seconds = plateau_seconds
+        self.decline_fraction = decline_fraction
+        self.decline_slope_per_minute = decline_slope_per_minute
+        self.decline_seconds = decline_seconds
+        self.slope_window_seconds = slope_window_seconds
+        self.reset()
+
+    def reset(self, baseline: float | None = None) -> None:
+        self.baseline = baseline
+        self.peak_fraction: float | None = None
+        self._raw: deque[float] = deque(maxlen=9)
+        self._samples: deque[tuple[float, float]] = deque()
+        self._last_sample_time: float | None = None
+        self._plateau_since: float | None = None
+        self._decline_since: float | None = None
+        self.state = self.WAITING
+
+    def set_baseline(self, baseline: float | None) -> None:
+        if baseline is None:
+            return
+        self.baseline = baseline
+        self._plateau_since = None
+        self._decline_since = None
+        if self.peak_fraction is None:
+            self.state = self.WAITING
+
+    def update(
+        self,
+        monotonic_time: float,
+        volume_fraction: float,
+        initial_volume_fraction: float | None = None,
+    ) -> str:
+        self._raw.append(float(volume_fraction))
+        smooth = float(median(self._raw))
+        if initial_volume_fraction is not None and self.baseline is None:
+            self.baseline = initial_volume_fraction
+        if self.baseline is None:
+            self.baseline = smooth
+        if self.peak_fraction is None or smooth > self.peak_fraction:
+            self.peak_fraction = smooth
+
+        if (
+            self._last_sample_time is None
+            or monotonic_time - self._last_sample_time >= 10
+        ):
+            self._samples.append((monotonic_time, smooth))
+            self._last_sample_time = monotonic_time
+            cutoff = monotonic_time - max(self.slope_window_seconds * 3, 1800)
+            while self._samples and self._samples[0][0] < cutoff:
+                self._samples.popleft()
+
+        if self.peak_fraction - self.baseline < self.minimum_rise:
+            self._plateau_since = None
+            self._decline_since = None
+            self.state = self.WAITING
+            return self.state
+
+        slope = self._slope(monotonic_time)
+        if slope is None:
+            self.state = self.RISING
+            return self.state
+
+        drop = self.peak_fraction - smooth
+        if drop >= self.decline_fraction and slope <= -self.decline_slope_per_minute:
+            if self._decline_since is None:
+                self._decline_since = monotonic_time
+            self._plateau_since = None
+            self.state = (
+                self.FALLING
+                if monotonic_time - self._decline_since >= self.decline_seconds
+                else self.FALL_CHECK
+            )
+            return self.state
+
+        self._decline_since = None
+        if abs(slope) <= self.plateau_slope_per_minute:
+            if self._plateau_since is None:
+                self._plateau_since = monotonic_time
+            self.state = (
+                self.PEAK
+                if monotonic_time - self._plateau_since >= self.plateau_seconds
+                else self.PLATEAU
+            )
+        elif slope > 0:
+            self._plateau_since = None
+            self.state = self.RISING
+        else:
+            self._plateau_since = None
+            self.state = self.PLATEAU
+        return self.state
+
+    def _slope(self, now: float) -> float | None:
+        recent = [
+            (timestamp, value)
+            for timestamp, value in self._samples
+            if now - timestamp <= self.slope_window_seconds
+        ]
+        if len(recent) < 3:
+            return None
+        origin = recent[0][0]
+        times = [timestamp - origin for timestamp, _ in recent]
+        values = [value for _, value in recent]
+        mean_time = sum(times) / len(times)
+        mean_value = sum(values) / len(values)
+        denominator = sum((value - mean_time) ** 2 for value in times)
+        if denominator <= 0:
+            return None
+        slope_per_second = sum(
+            (timestamp - mean_time) * (value - mean_value)
+            for timestamp, value in zip(times, values, strict=True)
+        ) / denominator
+        return slope_per_second * 60
+
+    def growth_rate_per_minute(self, now: float) -> float | None:
+        """Return a recent growth rate after enough time has passed to be useful."""
+        recent = [
+            (timestamp, value)
+            for timestamp, value in self._samples
+            if now - timestamp <= self.slope_window_seconds
+        ]
+        if len(recent) < 6 or recent[-1][0] - recent[0][0] < 120:
+            return None
+        return self._slope(now)

@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local configuration and camera credentials
+.env
+.env.*
+!.env.example
+camera.ini
+
+# Captured media, model artifacts, and generated output
+data/private/
+data/sessions/
+captures/
+runs/
+*.mp4
+*.mkv
+*.avi
+*.pt
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+.envrc

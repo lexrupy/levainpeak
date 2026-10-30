@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "levainpeak"
+version = "0.1.0"
+description = "RTSP-based levain monitoring with computer vision"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "opencv-python-headless>=4.10",
+    "Pillow>=10",
+]
+
+[project.scripts]
+levainpeak = "levainpeak.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
