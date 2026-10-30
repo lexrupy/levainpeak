@@ -45,6 +45,7 @@ class ContainerAnalyzer:
         # Out-of-curve readings are discarded and the next frame is read again.
         self._volume_gate = OutlierGate(max_jump=0.08, confirmations=6)
         self._temperature_gate = OutlierGate(max_jump=3.0, confirmations=3)
+        self._previous_reading: float | None = None
         self._thread = threading.Thread(target=self._run, name="container-analyzer", daemon=True)
 
     def start(self) -> None:
@@ -108,6 +109,7 @@ class ContainerAnalyzer:
                 self._last_temperature_read = 0.0
                 self._last_temperature_success = 0.0
                 self._temperature_gate.reset()
+                self._previous_reading = None
             if temperature_roi is not None and now - self._last_temperature_read >= 2.0:
                 self._last_temperature_read = now
                 try:
@@ -116,9 +118,13 @@ class ContainerAnalyzer:
                     reading = None
                 if reading is not None and not MIN_TEMPERATURE_C <= reading <= MAX_TEMPERATURE_C:
                     reading = None
+                # A reading counts only when the previous read agrees with it,
+                # so a one-off OCR slip never reaches the log or the forecast.
+                repeated = reading is not None and reading == self._previous_reading
+                self._previous_reading = reading
                 if reading is not None:
                     self._last_temperature_success = now
-                    if self._temperature_gate.accept(reading):
+                    if repeated and self._temperature_gate.accept(reading):
                         self._temperature_c = reading
                 elif now - self._last_temperature_success > 10.0:
                     self._temperature_c = None

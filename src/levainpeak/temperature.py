@@ -19,13 +19,13 @@ _DIGITS = {
     9: "abfgcd",
 }
 _SEGMENTS = {
-    "a": (0.20, 0.02, 0.80, 0.24),
+    "a": (0.32, 0.02, 0.68, 0.24),
     "b": (0.70, 0.10, 0.98, 0.50),
     "c": (0.70, 0.50, 0.98, 0.90),
-    "d": (0.20, 0.76, 0.80, 0.98),
+    "d": (0.32, 0.76, 0.68, 0.98),
     "e": (0.02, 0.50, 0.30, 0.90),
     "f": (0.02, 0.10, 0.30, 0.50),
-    "g": (0.20, 0.39, 0.80, 0.61),
+    "g": (0.32, 0.39, 0.68, 0.61),
 }
 
 
@@ -81,42 +81,105 @@ def read_temperature(
     binary = (gray < threshold).astype(np.uint8) * 255
     binary = cv2.resize(binary, None, fx=8, fy=8, interpolation=cv2.INTER_NEAREST)
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+    binary = _deslant(binary)
+    cells = _digit_cells(binary)
+    if cells is None:
+        return None
     digits = []
-    cell_width = 0.11
-    for center in (0.32, 0.53, 0.76):
-        x0 = round((center - cell_width / 2) * binary.shape[1])
-        x1 = round((center + cell_width / 2) * binary.shape[1])
-        y0, y1 = round(binary.shape[0] * 0.08), round(binary.shape[0] * 0.95)
-        digit = _classify_digit(binary[y0:y1, x0:x1])
+    for cell in cells:
+        digit = _classify_digit(cell)
         if digit is None:
             # Never close the gap by shifting later digits left: that made
             # 21.9 appear as a different, plausible temperature.
             return None
         digits.append(digit)
 
-    if len(digits) != 3:
-        return None
     value = digits[0] * 10 + digits[1] + digits[2] / 10
     return float(value) if -10 <= value <= 60 else None
 
 
+_CELL_CENTERS = (0.32, 0.53, 0.76)
+_CELL_WIDTH = 0.16
+
+
+def _digit_cells(binary: np.ndarray) -> list[np.ndarray] | None:
+    """Return a normalized image for each of the three digit positions.
+
+    Horizontal positions follow the thermometer's fixed layout. The vertical
+    extent is measured from the ink itself, so a bottom bar cut by the ROI or
+    a slightly different crop does not shift the segment grid.
+    """
+    height, width = binary.shape
+    span = [
+        (round((center - _CELL_WIDTH / 2) * width), round((center + _CELL_WIDTH / 2) * width))
+        for center in _CELL_CENTERS
+    ]
+    ink = binary[:, span[0][0]:span[-1][1]] > 0
+    rows = ink.sum(axis=1) > ink.shape[1] * 0.02
+    # Ignore the thin bezel edges at the very top and bottom of the crop.
+    rows[:round(height * 0.04)] = False
+    rows[round(height * 0.98):] = False
+    filled = np.flatnonzero(rows)
+    if filled.size < height * 0.3:
+        return None
+    top, bottom = int(filled[0]), int(filled[-1])
+    return [binary[top:bottom + 1, left:right] for left, right in span]
+
+
+def _deslant(binary: np.ndarray) -> np.ndarray:
+    """Straighten italic seven-segment digits so segments align with the grid.
+
+    Picks the horizontal shear that makes the digits' vertical strokes line up
+    best, measured by how concentrated the column sums become.
+    """
+    height = binary.shape[0]
+    # The shear is searched on a small copy; shear is scale independent.
+    small = cv2.resize(binary, None, fx=0.125, fy=0.125, interpolation=cv2.INTER_AREA)
+    small_height = small.shape[0]
+    best_shear, best_score = 0.0, -1.0
+    for shear in np.linspace(-0.4, 0.4, 41):
+        matrix = np.float32([[1, shear, -shear * small_height / 2], [0, 1, 0]])
+        warped = cv2.warpAffine(small, matrix, (small.shape[1], small_height))
+        score = float(np.square(warped.sum(axis=0, dtype=np.float64)).sum())
+        if score > best_score:
+            best_shear, best_score = float(shear), score
+    matrix = np.float32([[1, best_shear, -best_shear * height / 2], [0, 1, 0]])
+    return cv2.warpAffine(binary, matrix, (binary.shape[1], height))
+
+
+# A digit is trusted only when its best pattern beats the runner-up clearly.
+# Patterns one segment apart (3/9, 5/6, 0/8, 1/7) would otherwise turn glare or
+# a weakly lit segment into a plausible but wrong temperature; those ambiguous
+# glyphs are reported as unreadable so they get read again.
+_MIN_MARGIN = 0.25
+_MAX_BEST_SCORE = 1.5
+
+
 def _classify_digit(glyph: np.ndarray) -> int | None:
     height, width = glyph.shape
-    active: set[str] = set()
-    for name, (x0, y0, x1, y1) in _SEGMENTS.items():
+    if height < 8 or width < 4:
+        return None
+    names = list(_SEGMENTS)
+    occupancy = np.empty(len(names))
+    for index, name in enumerate(names):
+        x0, y0, x1, y1 = _SEGMENTS[name]
         xa, xb = int(width * x0), max(int(width * x0) + 1, int(width * x1))
         ya, yb = int(height * y0), max(int(height * y0) + 1, int(height * y1))
-        occupancy = float(glyph[ya:yb, xa:xb].mean() / 255)
-        # The lower-left area often contains a dark LCD icon/reflection. Keep
-        # a higher cutoff there so a 9 is not mistaken for an 8.
-        if occupancy > (0.24 if name == "e" else 0.18):
-            active.add(name)
+        occupancy[index] = glyph[ya:yb, xa:xb].mean() / 255
+    strongest = occupancy.max()
+    if strongest < 0.2:
+        return None
+    # Lit segments vary in brightness and a bar can be partly cropped, so
+    # compare against the strongest segment instead of a fixed cutoff.
+    occupancy = occupancy / strongest
     ranked = sorted(
-        (len(active.symmetric_difference(set(pattern))), digit)
+        (
+            float(np.square(occupancy - [1.0 if name in pattern else 0.0 for name in names]).sum()),
+            digit,
+        )
         for digit, pattern in _DIGITS.items()
     )
-    distance, digit = ranked[0]
-    # Accepting a match with two missing/extra segments turns glare and LCD
-    # reflections into plausible but incorrect temperatures (for example,
-    # 21.8 being reported as 29.2). Prefer no reading over a confident lie.
-    return digit if distance <= 1 else None
+    (best, digit), (runner_up, _) = ranked[0], ranked[1]
+    if best > _MAX_BEST_SCORE or runner_up - best < _MIN_MARGIN:
+        return None
+    return digit
