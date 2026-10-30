@@ -1019,7 +1019,11 @@ class LevainPeakApp:
         else:
             full_scale, scale_label = double_target, "dobro"
         span = max(1e-6, full_scale - baseline)
-        y_volume = lambda value: bottom - min(1.0, max(0.0, (value - baseline) / span)) * plot_height
+        # Leave room under 0% so the latency stretch is not glued to the axis;
+        # the room has no ticks or labels, so nothing negative is ever shown.
+        floor = bottom - plot_height * 0.12
+        scale_height = floor - top
+        y_volume = lambda value: floor - min(1.0, max(0.0, (value - baseline) / span)) * scale_height
 
         temperatures = [temp for _, _, temp in samples if temp is not None]
         if temperatures:
@@ -1031,14 +1035,14 @@ class LevainPeakApp:
             else:
                 margin = (high - low) * 0.08
                 low, high = low - margin, high + margin
-            y_temperature = lambda value: bottom - (value - low) / (high - low) * plot_height
+            y_temperature = lambda value: floor - (value - low) / (high - low) * scale_height
         else:
             low, high = 0.0, 1.0
-            y_temperature = lambda value: bottom
+            y_temperature = lambda value: floor
 
         for tick in range(5):
             fraction = tick / 4
-            y = bottom - fraction * plot_height
+            y = floor - fraction * scale_height
             canvas.create_line(left, y, right, y, fill="#e4e6df")
             canvas.create_text(left - 10, y, text=f"{fraction:.0%}", anchor="e", fill="#397a9b")
             if temperatures:
