@@ -215,18 +215,18 @@ class LevainPeakApp:
             widget.pack(side="left", padx=(0, 6))
             return widget
 
-        regions = group("Regiões", 0, 0)
+        regions = group("Marcar Regiões", 0, 0)
         level = group("Nível inicial", 0, 1)
         session = group("Sessão", 1, 0)
         files = group("Arquivos", 1, 1)
         self.draw_pot_button = button(
-            regions, "Marcar pote", lambda: self._toggle_roi_mode("pot"), width=13
+            regions, "Pote", lambda: self._toggle_roi_mode("pot"), width=16
         )
         self.draw_thermometer_button = button(
-            regions, "Marcar termômetro", lambda: self._toggle_roi_mode("thermometer"), width=18
+            regions, "Termômetro", lambda: self._toggle_roi_mode("thermometer"), width=16
         )
         self.auto_pot_button = button(
-            regions, "Detecção automática", self._use_automatic_detection, width=19,
+            regions, "Automático", self._use_automatic_detection, width=12,
             state="disabled",
         )
         self.marker_button = button(
@@ -444,10 +444,10 @@ class LevainPeakApp:
         self._roi_target = target
         self._roi_drag_start = None
         self.draw_pot_button.configure(
-            text="Cancelar desenho" if target == "pot" else "Marcar pote"
+            text="Cancelar desenho" if target == "pot" else "Pote"
         )
         self.draw_thermometer_button.configure(
-            text="Cancelar desenho" if target == "thermometer" else "Marcar termômetro"
+            text="Cancelar desenho" if target == "thermometer" else "Termômetro"
         )
         self.video.configure(cursor="crosshair")
         target_text = "pote" if target == "pot" else "visor do termômetro"
@@ -550,7 +550,7 @@ class LevainPeakApp:
         self._last_container_box = None
         self._measurement = None
         self.auto_pot_button.configure(state="disabled")
-        self.draw_pot_button.configure(text="Marcar pote")
+        self.draw_pot_button.configure(text="Pote")
         if self._session_log.active:
             self._session_baseline = None
             self._reset_tracking()
