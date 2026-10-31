@@ -8,14 +8,17 @@
  *   { "token": "...", "session": "Bradok", "sent_at": "2026-10-31T00:00:00-03:00",
  *     "live":   { "volume_pct": 42.3, "fase": "Crescendo", ... },          (opcional)
  *     "points": [ { "t": ISO, "v": volume 0-1, "c": temperatura, "p": fase } ],  (opcional)
+ *     "chart":  { ... série do gráfico, já na escala do app ... },          (opcional)
  *     "snapshot": { "t": ISO, "jpeg_b64": "..." } }                        (opcional)
  *
- * GET:  ?token=...&o=ao_vivo | serie&limite=1500 | snapshot
+ * GET:  ?token=...&o=painel[&snap=<t do snapshot que você já tem>]
+ *       | ao_vivo | serie&limite=1500 | snapshot
  */
 
 const ABA_SERIE = 'serie';
 const ABA_AO_VIVO = 'ao_vivo';
 const ABA_SNAPSHOT = 'snapshot';
+const ABA_GRAFICO = 'grafico';
 const CABECALHO_SERIE = ['timestamp', 'volume_fracao', 'temperatura_c', 'fase', 'sessao'];
 const MAX_LINHAS_SERIE = 20000;   // as mais antigas saem quando passa disso
 const MAX_CHARS_CELULA = 49000;   // o limite do Sheets é 50.000 caracteres por célula
@@ -30,6 +33,7 @@ function configurar() {
   aba_(ABA_SERIE, CABECALHO_SERIE);
   aba_(ABA_AO_VIVO, ['campo', 'valor']);
   aba_(ABA_SNAPSHOT, ['campo', 'valor']);
+  aba_(ABA_GRAFICO, ['campo', 'valor']);
   Logger.log('Pronto. Agora implante como app da web.');
 }
 
@@ -53,6 +57,9 @@ function doPost(e) {
       gravarAoVivo_(corpo.live, corpo.sent_at);
       recebido.ao_vivo = true;
     }
+    if (corpo.chart && typeof corpo.chart === 'object') {
+      recebido.grafico = gravarGrafico_(corpo.chart, corpo.sent_at);
+    }
     if (corpo.snapshot && corpo.snapshot.jpeg_b64) {
       recebido.snapshot = gravarSnapshot_(corpo.snapshot);
     }
@@ -66,6 +73,7 @@ function doGet(e) {
   const p = (e && e.parameter) || {};
   if (!tokenValido_(p.token)) return resposta_({ ok: false, erro: 'token inválido' });
   const o = p.o || 'ao_vivo';
+  if (o === 'painel') return resposta_(lerPainel_(String(p.snap || '')));
   if (o === 'ao_vivo') return resposta_(lerAoVivo_());
   if (o === 'serie') return resposta_(lerSerie_(Math.min(Number(p.limite) || 1500, 5000)));
   if (o === 'snapshot') return resposta_(lerSnapshot_());
@@ -106,6 +114,17 @@ function gravarAoVivo_(live, enviadoEm) {
   aba.getRange(2, 1, linhas.length, 2).setValues(linhas);
 }
 
+function gravarGrafico_(grafico, enviadoEm) {
+  const texto = JSON.stringify(grafico);
+  if (texto.length > MAX_CHARS_CELULA) return 'grande demais (' + texto.length + ' caracteres)';
+  const aba = aba_(ABA_GRAFICO, ['campo', 'valor']);
+  aba.getRange(2, 1, 2, 2).setValues([
+    ['atualizado_em', String(enviadoEm || new Date().toISOString())],
+    ['json', texto],
+  ]);
+  return 'ok';
+}
+
 function gravarSnapshot_(snapshot) {
   const imagem = String(snapshot.jpeg_b64);
   if (imagem.length > MAX_CHARS_CELULA) return 'grande demais (' + imagem.length + ' caracteres)';
@@ -130,6 +149,28 @@ function lerAoVivo_() {
     live = {};
   }
   return { ok: true, atualizado_em: quando, live: live };
+}
+
+function lerGrafico_() {
+  const aba = aba_(ABA_GRAFICO, ['campo', 'valor']);
+  if (aba.getLastRow() < 3) return { ok: true, vazio: true };
+  let chart = null;
+  try {
+    chart = JSON.parse(String(aba.getRange(3, 2).getValue()));
+  } catch (erro) {
+    chart = null;
+  }
+  return { ok: true, atualizado_em: String(aba.getRange(2, 2).getValue()), chart: chart };
+}
+
+/** Tudo o que o painel mostra, numa chamada só. O snapshot só vai se mudou. */
+function lerPainel_(snapDoCliente) {
+  const snapshot = lerSnapshot_();
+  if (!snapshot.vazio && snapDoCliente && snapDoCliente === snapshot.t) {
+    snapshot.jpeg_b64 = null;
+    snapshot.igual = true;
+  }
+  return { ok: true, ao_vivo: lerAoVivo_(), grafico: lerGrafico_(), snapshot: snapshot };
 }
 
 function lerSerie_(limite) {
