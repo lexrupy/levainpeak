@@ -40,6 +40,8 @@ class SessionLog:
         }
         # Vessel (top, bottom) in frame pixels for each capture profile.
         self.vessel_bounds: dict[str, tuple[int, int]] = {}
+        # Row (frame pixels) of the initial-level mark the user placed by hand.
+        self.manual_marker_y: int | None = None
 
     @property
     def active(self) -> bool:
@@ -94,6 +96,21 @@ class SessionLog:
         }
         payload["session_name"] = self.session_name
         payload["vessel_bounds"] = {name: list(bounds) for name, bounds in self.vessel_bounds.items()}
+        payload["marker_y"] = self.manual_marker_y
+        self.metadata_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    def save_marker(self, marker_y: int | None) -> None:
+        """Remember the hand-placed initial-level mark (None: back to automatic)."""
+        self.manual_marker_y = None if marker_y is None else int(marker_y)
+        if self.metadata_path is None:
+            return
+        try:
+            payload = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+        payload["marker_y"] = self.manual_marker_y
         self.metadata_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -140,9 +157,12 @@ class SessionLog:
             if isinstance(saved, list):  # a single pair means the daylight measurement
                 saved = {"dia": saved}
             self.vessel_bounds = {name: (int(v[0]), int(v[1])) for name, v in saved.items() if v}
+            marker = raw.get("marker_y")
+            self.manual_marker_y = None if marker is None else int(marker)
         else:
             self.regions = {"pot": None, "thermometer": None}
             self.vessel_bounds = {}
+            self.manual_marker_y = None
         with path.open("r", newline="", encoding="utf-8") as source:
             self._columns = next(csv.reader(source), [])
         # Add newer optional fields when continuing an older log, keeping all

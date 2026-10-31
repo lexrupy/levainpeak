@@ -261,6 +261,15 @@ class LevainPeakApp:
         )
         self._redraw_current_frame()
 
+    def _persist_marker(self) -> None:
+        """Keep the hand-placed initial-level mark in the session file."""
+        if not self._session_log.active:
+            return  # written when the session starts
+        try:
+            self._session_log.save_marker(self._manual_marker_y)
+        except OSError:
+            logging.exception("Falha ao salvar a marca de início")
+
     def _sync_vessel_bounds(self) -> None:
         """Keep what daylight measured about the vessel in the session file."""
         if self._analyzer is None or not self._session_log.active:
@@ -408,6 +417,7 @@ class LevainPeakApp:
             )
             if changed:
                 self._manual_marker_y = None
+                self._persist_marker()
         self._last_container_box = current
 
     def _toggle_marker_mode(self) -> None:
@@ -521,6 +531,7 @@ class LevainPeakApp:
                 self._analyzer.roi = selected_roi
                 self._analyzer.vessel_bounds.clear()  # a different pot: measure again by day
             self._manual_marker_y = None
+            self._persist_marker()
             self._last_container_box = None
             self._measurement = None
             if self._session_log.active:
@@ -547,6 +558,7 @@ class LevainPeakApp:
             self._analyzer.roi = None
             self._analyzer.vessel_bounds.clear()
         self._manual_marker_y = None
+        self._persist_marker()
         self._last_container_box = None
         self._measurement = None
         self.auto_pot_button.configure(state="disabled")
@@ -618,6 +630,7 @@ class LevainPeakApp:
             self._set_message("Clique na linha pré-visualizada, dentro do recipiente.")
             return
         self._manual_marker_y = source_y
+        self._persist_marker()
         self._measurement = set_initial_marker(measurement, source_y)
         if self._session_log.active:
             now = time.monotonic()
@@ -787,6 +800,7 @@ class LevainPeakApp:
             self._session_name = name.strip() or suggested_name
             session_id = self._session_log.start(self._mix_time, self._session_name)
             self._session_log.save_regions(self._manual_pot_roi, self._temperature_roi)
+            self._persist_marker()
         except OSError as exc:
             logging.exception("Não foi possível iniciar o registro da sessão")
             self._set_message(f"Não foi possível criar o CSV da sessão: {exc}")
@@ -1243,6 +1257,7 @@ class LevainPeakApp:
             self._analyzer.roi = self._manual_pot_roi
             self._analyzer.temperature_roi = self._temperature_roi
             self._analyzer.vessel_bounds = dict(self._session_log.vessel_bounds)
+        self._manual_marker_y = self._session_log.manual_marker_y
         self._mix_time = self._session_log.mix_time
         self._reset_tracking()
         self._session_baseline = None
@@ -1258,6 +1273,11 @@ class LevainPeakApp:
                 baseline = float(row["initial_volume_fraction"]) if row.get("initial_volume_fraction") else None
                 if self._session_baseline is None:
                     self._session_baseline = baseline if baseline is not None else volume
+                elif baseline is not None and abs(baseline - self._session_baseline) > 1e-9:
+                    # The initial level was marked again here: the latest mark wins,
+                    # and the trend starts over, exactly as it did live.
+                    self._session_baseline = baseline
+                    self._reset_tracking(baseline)
                 elapsed = clock_origin + (stamp - first_time).total_seconds()
                 self._phase = self._phase_tracker.update(elapsed, volume, baseline)
                 temperature = row.get("temperature_c")
