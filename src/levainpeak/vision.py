@@ -259,24 +259,27 @@ def set_initial_volume_reference(
 
 
 def draw_measurement(
-    frame: np.ndarray, measurement: ContainerMeasurement, *, detail: bool = False
+    frame: np.ndarray, measurement: ContainerMeasurement, *, detail: bool = False,
+    faint_box: bool = False,
 ) -> np.ndarray:
     """Draw the detected vessel bounds and estimated levain surface.
 
     With ``detail`` the measured inner wall profile is traced and the area
-    counted as levain (from the surface down) is shaded.
+    counted as levain (from the surface down) is shaded. With ``faint_box`` the
+    bounding box is a thin translucent grey: the contour drawn by the user is
+    the real outline, and the box only repeats it.
     """
     annotated = frame.copy()
     if detail and measurement.edge_profile:
         _draw_profile(annotated, measurement)
     color = (73, 190, 125)
-    cv2.rectangle(
-        annotated,
-        (measurement.left, measurement.top),
-        (measurement.right, measurement.bottom),
-        color,
-        3,
-    )
+    corners = ((measurement.left, measurement.top), (measurement.right, measurement.bottom))
+    if faint_box:
+        overlay = annotated.copy()
+        cv2.rectangle(overlay, *corners, (190, 200, 195), 1, cv2.LINE_AA)
+        cv2.addWeighted(overlay, 0.4, annotated, 0.6, 0, annotated)
+    else:
+        cv2.rectangle(annotated, *corners, color, 3)
     cv2.line(
         annotated,
         (measurement.left, measurement.surface_y),

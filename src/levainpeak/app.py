@@ -297,7 +297,9 @@ class LevainPeakApp:
             self._metrics_container.rowconfigure(row, minsize=needed)
 
     def _annotate(self, frame, measurement):
-        return draw_measurement(frame, measurement, detail=self._show_detail)
+        return draw_measurement(
+            frame, measurement, detail=self._show_detail, faint_box=self._pot_outline is not None
+        )
 
     def _toggle_detail(self, event: tk.Event | None = None) -> None:
         if event is not None and isinstance(event.widget, (tk.Entry, ttk.Entry, ttk.Spinbox)):
@@ -1025,26 +1027,43 @@ class LevainPeakApp:
         if not regions and not self._outline_mode:
             return frame
         height, width = frame.shape[:2]
+        drawn = {"pot": self._pot_outline, "thermometer": self._temperature_quad}
         if self._roi_mode or self._outline_mode:
             # Drawing a new region: the thing to find may have moved out of the old
             # ones, so keep the whole picture visible and only outline them.
             result = frame.copy()
         else:
-            # Dim everything, then put the selected regions back as they were.
+            # Dim everything, then put the selected regions back as they were: the
+            # drawn contour where there is one, otherwise the rectangle.
             result = cv2.convertScaleAbs(frame, alpha=0.5)
-            for left, top, right, bottom in regions:
-                top, bottom = max(0, top), min(height, bottom)
-                left, right = max(0, left), min(width, right)
-                result[top:bottom, left:right] = frame[top:bottom, left:right]
-        for region, color, label in (
-            (self._manual_pot_roi, (50, 220, 130), "POTE"),
-            (self._temperature_roi, (40, 190, 245), "TERMÔMETRO"),
+            keep = np.zeros((height, width), np.uint8)
+            for region, shape in ((self._manual_pot_roi, drawn["pot"]), (self._temperature_roi, drawn["thermometer"])):
+                if shape:
+                    cv2.fillPoly(keep, [np.asarray(shape, np.int32)], 255)
+                elif region:
+                    left, top, right, bottom = region
+                    keep[max(0, top):min(height, bottom), max(0, left):min(width, right)] = 255
+            result[keep > 0] = frame[keep > 0]
+        for region, color, label, shape in (
+            (self._manual_pot_roi, (50, 220, 130), "POTE", drawn["pot"]),
+            (self._temperature_roi, (40, 190, 245), "TERMÔMETRO", drawn["thermometer"]),
         ):
-            if region:
-                left, top, right, bottom = region
+            if not region:
+                continue
+            left, top, right, bottom = region
+            if shape:
+                # The contour is the outline; the search area around it is only a faint hint.
+                overlay = result.copy()
+                cv2.rectangle(overlay, (left, top), (right, bottom), (190, 200, 195), 1, cv2.LINE_AA)
+                cv2.addWeighted(overlay, 0.35, result, 0.65, 0, result)
+                label_x, label_y = min(x for x, _ in shape), min(y for _, y in shape)
+            else:
                 cv2.rectangle(result, (left, top), (right, bottom), color, 2)
-                cv2.putText(result, label, (left, max(22, top - 8)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2, cv2.LINE_AA)
+                label_x, label_y = left, top
+            if shape and label == "POTE":
+                continue  # the measurement label ("Pote | volume ...") already names it
+            cv2.putText(result, label, (label_x, max(22, label_y - 8)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2, cv2.LINE_AA)
         for target, saved, base_color in (
             ("pot", self._pot_outline, (50, 220, 130)),
             ("thermometer", self._temperature_quad, (40, 190, 245)),

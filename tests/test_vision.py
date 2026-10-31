@@ -143,3 +143,14 @@ def test_a_drawn_outline_around_an_empty_jar_reports_empty_not_nothing():
     measurement = measure_container(_tapered_jar(False), (150, 60, 650, 560), outline=OUTLINE)
     assert measurement is not None and measurement.empty
     assert measurement.volume_fraction == 0.0 and measurement.confidence == 0.0
+
+
+def test_the_bounding_box_is_faint_when_the_user_drew_the_contour():
+    from levainpeak.vision import ContainerMeasurement, draw_measurement
+
+    frame = np.full((300, 400, 3), 100, np.uint8)
+    measurement = ContainerMeasurement(left=50, right=350, top=40, bottom=260, surface_y=150, volume_fraction=0.3, confidence=0.9)
+    strong = draw_measurement(frame, measurement)
+    faint = draw_measurement(frame, measurement, faint_box=True)
+    assert strong[100, 50].tolist() == [73, 190, 125]  # the usual green box
+    assert abs(int(faint[100, 50].max()) - 100) < 60 and faint[100, 50].tolist() != [73, 190, 125]  # barely tinted
