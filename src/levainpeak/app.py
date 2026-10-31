@@ -267,7 +267,14 @@ class LevainPeakApp:
         )
         self.resume_button = button(files, "Retomar", self._resume_session, width=9)
         self.open_csv_button = button(files, "CSV", self._open_session_csv, width=6)
-        self.graph_button = button(files, "Gráfico", self._show_session_graph, width=9)
+        self.graph_button = ttk.Menubutton(files, text="Gráfico ▾", width=9, direction="below")
+        graph_menu = tk.Menu(self.graph_button, tearoff=False)
+        graph_menu.add_command(label="Sessão atual", command=self._show_session_graph)
+        graph_menu.add_command(
+            label="Escolher uma sessão salva…", command=lambda: self._show_session_graph(choose=True)
+        )
+        self.graph_button.configure(menu=graph_menu)
+        self.graph_button.pack(side="left", padx=(0, 6))
         self.debug_button = button(files, "Diagnóstico", self._open_debug_view, width=11)
 
     def _wrap_footer_labels(self, event: tk.Event) -> None:
@@ -1170,9 +1177,10 @@ class LevainPeakApp:
             path = Path(selected)
         webbrowser.open(path.resolve().as_uri())
 
-    def _show_session_graph(self) -> None:
+    def _show_session_graph(self, choose: bool = False) -> None:
+        """The chart of the current session, or (``choose``) of any saved one."""
         path = self._session_log.path
-        if path is None or not path.exists():
+        if choose or path is None or not path.exists():
             selected = filedialog.askopenfilename(
                 title="Escolher sessão para o gráfico",
                 initialdir="data/sessions",
@@ -1187,6 +1195,7 @@ class LevainPeakApp:
         if existing is not None and existing.winfo_exists():
             existing.lift()
             self._graph_path = path
+            existing.title(f"Evolução da sessão · {path.stem}")
             self._refresh_session_graph()
             return
 
