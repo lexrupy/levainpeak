@@ -4,3 +4,5 @@ url = https://script.google.com/macros/s/SEU_ID_DE_IMPLANTACAO/exec
 ; mesmo valor da propriedade de script TOKEN (pelo menos 16 caracteres, aleatório)
 ; gerar: python3 -c "import secrets; print(secrets.token_urlsafe(24))"
 token =
+; opcional: onde o painel está publicado (por exemplo GitHub Pages); aparece primeiro nos links
+; panel_url = https://SEU_USUARIO.github.io/levainpeak/

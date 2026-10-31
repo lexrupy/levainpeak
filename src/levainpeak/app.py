@@ -1148,7 +1148,8 @@ class LevainPeakApp:
             self._set_message(str(exc))
             return
         self.root.clipboard_clear()
-        self.root.clipboard_append(links[-1][1])  # the phone's link when the network address is known
+        # The published page first (it works from any network), else the one on this network.
+        self.root.clipboard_append(next((link for where, link in links if where == "Publicado"), links[-1][1]))
         self._set_message("Link do painel copiado. Ele carrega o token: não compartilhe.")
 
     def _graph_data(self, path: Path) -> dict:

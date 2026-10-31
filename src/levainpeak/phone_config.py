@@ -13,6 +13,7 @@ from urllib.parse import quote, urlsplit
 class PhoneConfig:
     url: str
     token: str
+    panel_url: str = ""  # where the panel is published (for example GitHub Pages); optional
 
     def __repr__(self) -> str:  # never let the token reach a log line or a traceback
         return f"PhoneConfig(url={self.url!r}, token=<{len(self.token)} caracteres>)"
@@ -40,7 +41,10 @@ def load_phone_config(path: Path | None = None) -> PhoneConfig:
         raise ValueError("A URL do celular precisa começar com https://")
     if len(token) < 16:
         raise ValueError("O token do celular precisa ter pelo menos 16 caracteres")
-    return PhoneConfig(url=url, token=token)
+    panel_url = section.get("panel_url", "").strip()
+    if panel_url and urlsplit(panel_url).scheme != "https":
+        raise ValueError("O panel_url do celular precisa começar com https://")
+    return PhoneConfig(url=url, token=token, panel_url=panel_url)
 
 
 def lan_address() -> str | None:
@@ -58,7 +62,11 @@ def lan_address() -> str | None:
 def panel_links(config: PhoneConfig, port: int = 8000) -> list[tuple[str, str]]:
     """(where, link) pairs. The settings sit after the #, so they never reach the server."""
     fragment = f"#u={quote(config.url, safe='')}&t={quote(config.token, safe='')}"
-    links = [("No PC", f"http://localhost:{port}/{fragment}")]
+    links = []
+    if config.panel_url:
+        base = config.panel_url if config.panel_url.endswith("/") else config.panel_url + "/"
+        links.append(("Publicado", f"{base}{fragment}"))
+    links.append(("No PC", f"http://localhost:{port}/{fragment}"))
     address = lan_address()
     if address:
         links.append(("No celular (mesma rede)", f"http://{address}:{port}/{fragment}"))
@@ -67,7 +75,7 @@ def panel_links(config: PhoneConfig, port: int = 8000) -> list[tuple[str, str]]:
 
 def main() -> None:
     config = load_phone_config()
-    print("Servir o painel:  cd painel && python -m http.server 8000\n")
+    print("Para servir o painel localmente:  cd painel && python -m http.server 8000\n")
     for where, link in panel_links(config):
         print(f"{where}:\n  {link}\n")
     print("Estes links carregam o token: não os compartilhe.")
