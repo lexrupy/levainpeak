@@ -43,4 +43,4 @@ Licensed under the [MIT License](LICENSE).
 O app pode enviar, a cada 2 ou 4 minutos, o estado atual, os pontos novos, o gráfico e uma imagem reduzida do pote para
 uma planilha do Google (por um Apps Script), e um painel só de leitura mostra isso no celular. Veja
 `docs/apps-script/Code.gs`, `painel/LEIA-ME.md` e `docs/estado-do-projeto.md`. A URL e o token ficam em `phone.ini`,
-fora do git. O painel é publicado de graça em https://lexrupy.github.io/levainpeak/ (GitHub Pages, a partir da pasta `painel/`); ele não contém segredo, e o endereço do Apps Script e o token ficam só no navegador de quem o abre.
+fora do git. O painel é publicado de graça em https://lexrupy.github.io/levainpeak/painel/ (GitHub Pages, que serve o repositório; a pasta `painel/` fica em `/painel/`). Ele não contém segredo, e o endereço do Apps Script e o token ficam só no navegador de quem o abre.

@@ -105,13 +105,13 @@ Publicado em 2026-10-31 em **github.com/lexrupy/levainpeak** (público, MIT). Re
   deste repositório é esse noreply. Backup do histórico original (com o e-mail antigo, **não publicar**):
   `~/projects/levainpeak-antes-da-publicacao.bundle`. O histórico publicado não deve ser reescrito de novo.
 - **Nunca versionar:** `phone.ini`, `camera.ini`, `.envrc`, `data/` (todos no `.gitignore`).
-- **Painel no github.io:** o fluxo `.github/workflows/pages.yml` publica só a pasta `painel/` em
-  `https://lexrupy.github.io/levainpeak/` a cada push que a altere. **Depende de um passo manual do usuário:**
-  Settings > Pages > Build and deployment > Source: **GitHub Actions** (a API exige token, que não há). Depois,
-  Actions > "Publicar o painel" > Run workflow (ou um push em `painel/`).
-- **Link do painel:** `panel_url = https://lexrupy.github.io/levainpeak/` no `phone.ini` faz o
-  `python -m levainpeak.phone_config` e o botão "Copiar link do painel" darem o link `https://` (que também permite
-  instalar como app e usar o cache offline do `sw.js`).
+- **Painel no github.io:** `https://lexrupy.github.io/levainpeak/painel/`. O Pages está ligado por **branch**
+  (Source: Deploy from a branch, `main`, raiz), então serve o repositório inteiro: a raiz mostra o README e o painel
+  fica em `/painel/`. Cada push que muda `painel/` republica sozinho (workflow "pages build and deployment", do próprio
+  GitHub). Não há workflow nosso: o que tentamos para o modo "GitHub Actions" foi removido por não ser o modo em uso.
+- **Link do painel:** `panel_url = https://lexrupy.github.io/levainpeak/painel/` no `phone.ini`. Na aba Configurações há
+  dois botões: "Copiar link do painel local" (precisa de `cd painel && python -m http.server 8000`) e "... online".
+  Verificado: o painel publicado lê a planilha real a partir do github.io (HTTPS, CORS ok).
 
 ## Limites conhecidos
 

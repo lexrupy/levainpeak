@@ -22,6 +22,11 @@ python -m levainpeak.phone_config
 Depois da primeira vez, o endereço e o token ficam guardados no aparelho (`localStorage`) e a página abre sozinha.
 Não compartilhe esses links: eles carregam o token.
 
+## Publicado
+
+`https://lexrupy.github.io/levainpeak/painel/`: o GitHub Pages serve o repositório (deploy pela branch `main`), então
+cada push que muda `painel/` atualiza o site sozinho, em cerca de 1 minuto. É HTTPS, o que permite instalar como app.
+
 ## O que a página faz
 
 - Atualiza a cada 60 s, ao voltar para a aba e ao tocar em ↻.
