@@ -254,6 +254,7 @@ class PhaseTracker:
         decline_seconds: float = 600,
         slope_window_seconds: float = 300,
         plateau_window_seconds: float = 900,
+        filter_dips: bool = True,
     ) -> None:
         self.minimum_rise = minimum_rise
         self.plateau_slope_per_minute = plateau_slope_per_minute
@@ -263,6 +264,9 @@ class PhaseTracker:
         self.decline_seconds = decline_seconds
         self.slope_window_seconds = slope_window_seconds
         self.plateau_window_seconds = plateau_window_seconds
+        # Readings overtaken by a later recovery are left out of the trend. Turn it
+        # off when the readings were already cleaned (the graph does).
+        self.filter_dips = filter_dips
         self.reset()
 
     def reset(self, baseline: float | None = None) -> None:
@@ -271,6 +275,8 @@ class PhaseTracker:
         self._raw: deque[float] = deque(maxlen=9)
         self._samples: deque[tuple[float, float]] = deque()
         self._last_sample_time: float | None = None
+        self._flags: list[bool] = []
+        self._flags_key: tuple | None = None
         self._plateau_since: float | None = None
         self._decline_since: float | None = None
         self.state = self.WAITING
@@ -359,11 +365,22 @@ class PhaseTracker:
             self.state = self.PLATEAU
         return self.state
 
+    def _valid_flags(self) -> list[bool]:
+        """Which stored samples are not proven wrong by a later recovery.
+
+        Computed once per set of samples: both slope windows of one update share it.
+        """
+        if not self.filter_dips:
+            return [True] * len(self._samples)
+        key = (len(self._samples), self._samples[-1] if self._samples else None)
+        if self._flags_key != key:
+            self._flags = valid_after_recovery([value for _, value in self._samples])
+            self._flags_key = key
+        return self._flags
+
     def _slope(self, now: float, window: float | None = None) -> float | None:
         window = self.slope_window_seconds if window is None else window
-        # A reading under an earlier level that a later reading overtakes is
-        # invalid; leave such dips out of the trend.
-        flags = valid_after_recovery([value for _, value in self._samples])
+        flags = self._valid_flags()
         recent = [
             (timestamp, value)
             for (timestamp, value), valid in zip(self._samples, flags, strict=True)

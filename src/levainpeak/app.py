@@ -147,7 +147,7 @@ class LevainPeakApp:
         self.video.bind("<Configure>", self._center_video_items, add="+")
         self.video.bind("<Button-1>", self._set_marker_from_click, add="+")
         self.video.bind("<ButtonPress-1>", self._start_roi_draw, add="+")
-        self.video.bind("<B1-Motion>", self._pan_video, add="+")
+        self.video.bind("<B1-Motion>", self._drag_video, add="+")
         self.video.bind("<ButtonRelease-1>", self._finish_roi_draw, add="+")
         self.video.bind("<Motion>", self._preview_marker, add="+")
         self.video.bind("<Motion>", self._preview_roi, add="+")
@@ -353,6 +353,7 @@ class LevainPeakApp:
         self.message.configure(text=message)
 
     def _refresh(self) -> None:
+        started = time.perf_counter()
         if self._stream is not None:
             status = self._stream.status
             profile = self._analyzer.profile.name if self._analyzer is not None else None
@@ -406,7 +407,9 @@ class LevainPeakApp:
                 shown = self._annotate(frame, self._measurement) if self._measurement else frame
                 shown = self._apply_region_mask(shown)
                 self._show_frame(shown, source_frame=frame)
-        self.root.after(40, self._refresh)
+        # Leave the mouse room: wait at least 40 ms, and longer after a slow pass.
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        self.root.after(int(min(250, max(40, 1.5 * elapsed_ms))), self._refresh)
 
     def _update_measurement_labels(self) -> None:
         if self._measurement is None:
@@ -703,17 +706,25 @@ class LevainPeakApp:
         panel_height = max(1, self.video.winfo_height())
         self._last_raw_frame = source_frame if source_frame is not None else frame
         self._source_frame_size = (frame.shape[1], frame.shape[0])
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        image = Image.fromarray(rgb)
-        image.thumbnail((panel_width, panel_height), Image.Resampling.LANCZOS)
-        base_size = image.size
-        full_size = (max(1, round(image.width * self._zoom)), max(1, round(image.height * self._zoom)))
-        if self._zoom != 1:
-            image = image.resize(full_size, Image.Resampling.LANCZOS)
-        visible = (min(panel_width, image.width), min(panel_height, image.height))
-        crop_x = max(0, min(image.width - visible[0], round((image.width - visible[0]) * self._zoom_center[0])))
-        crop_y = max(0, min(image.height - visible[1], round((image.height - visible[1]) * self._zoom_center[1])))
-        image = image.crop((crop_x, crop_y, crop_x + visible[0], crop_y + visible[1]))
+        source_height, source_width = frame.shape[:2]
+        base_scale = min(panel_width / source_width, panel_height / source_height)
+        base_size = (max(1, round(source_width * base_scale)), max(1, round(source_height * base_scale)))
+        full_size = (max(1, round(base_size[0] * self._zoom)), max(1, round(base_size[1] * self._zoom)))
+        visible = (min(panel_width, full_size[0]), min(panel_height, full_size[1]))
+        crop_x = max(0, min(full_size[0] - visible[0], round((full_size[0] - visible[0]) * self._zoom_center[0])))
+        crop_y = max(0, min(full_size[1] - visible[1], round((full_size[1] - visible[1]) * self._zoom_center[1])))
+        # Resize only what is visible, straight from the source: a 1080p frame
+        # is never scaled up and then cropped, which was most of the time spent here.
+        scale_x, scale_y = full_size[0] / source_width, full_size[1] / source_height
+        x0, y0 = int(crop_x / scale_x), int(crop_y / scale_y)
+        x1 = min(source_width, int(np.ceil((crop_x + visible[0]) / scale_x)))
+        y1 = min(source_height, int(np.ceil((crop_y + visible[1]) / scale_y)))
+        window = frame[y0:y1, x0:x1]
+        shrinking = scale_x < 1
+        resized = cv2.resize(
+            window, visible, interpolation=cv2.INTER_AREA if shrinking else cv2.INTER_LINEAR
+        )
+        image = Image.fromarray(cv2.cvtColor(resized, cv2.COLOR_BGR2RGB))
         self._base_display_size = base_size
         self._displayed_image_size = full_size
         self._display_crop_origin = (crop_x, crop_y)
@@ -743,6 +754,16 @@ class LevainPeakApp:
         if self._zoom == 1:
             self._zoom_center = (0.5, 0.5)
         self._redraw_current_frame()
+
+    def _drag_video(self, event: tk.Event) -> None:
+        """Mouse moved with the left button down.
+
+        Tk runs only the most specific binding, so <B1-Motion> hides <Motion> while
+        a button is held. Both the region preview and the pan have to be driven
+        from here, or the preview rectangle never shows while the region is dragged.
+        """
+        self._preview_roi(event)
+        self._pan_video(event)
 
     def _pan_video(self, event: tk.Event) -> None:
         if self._pan_drag_start is None or self._displayed_image_size is None:
@@ -780,11 +801,12 @@ class LevainPeakApp:
         if not regions:
             return frame
         height, width = frame.shape[:2]
-        mask = np.zeros((height, width), dtype=np.uint8)
+        # Dim everything, then put the selected regions back as they were.
+        result = cv2.convertScaleAbs(frame, alpha=0.24)
         for left, top, right, bottom in regions:
-            mask[max(0, top):min(height, bottom), max(0, left):min(width, right)] = 255
-        dim = (frame.astype(np.float32) * 0.24).astype(np.uint8)
-        result = np.where(mask[:, :, None] > 0, frame, dim)
+            top, bottom = max(0, top), min(height, bottom)
+            left, right = max(0, left), min(width, right)
+            result[top:bottom, left:right] = frame[top:bottom, left:right]
         for region, color, label in (
             (self._manual_pot_roi, (50, 220, 130), "POTE"),
             (self._temperature_roi, (40, 190, 245), "TERMÔMETRO"),
@@ -919,7 +941,7 @@ class LevainPeakApp:
         self._graph_window.bind("<Motion>", self._graph_border_hover, add="+")
         self._graph_window.bind("<ButtonPress-1>", self._graph_resize_start, add="+")
         self._graph_window.bind("<B1-Motion>", self._graph_resize_move, add="+")
-        self._graph_canvas.bind("<Configure>", self._draw_session_graph, add="+")
+        self._graph_canvas.bind("<Configure>", self._on_graph_configure, add="+")
         self._refresh_session_graph()
         self._graph_window.after_idle(self._refresh_session_graph)
 
@@ -1038,52 +1060,39 @@ class LevainPeakApp:
         except OSError as exc:
             self._set_message(f"Não foi possível salvar as configurações: {exc}")
 
-    def _draw_session_graph(self, _event: tk.Event | None = None) -> None:
-        canvas = getattr(self, "_graph_canvas", None)
-        path = getattr(self, "_graph_path", None)
-        if canvas is None or path is None or not canvas.winfo_exists():
-            return
-        canvas.delete("all")
+    def _graph_data(self, path: Path) -> dict:
+        """The graph's series, rebuilt only when the CSV file changes."""
+        stat = path.stat()
+        key = (str(path), stat.st_mtime_ns, stat.st_size)
+        cached = getattr(self, "_graph_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        data = self._prepare_graph_data(path)
+        self._graph_cache = (key, data)
+        return data
+
+    def _prepare_graph_data(self, path: Path) -> dict:
         samples = []
         phases: list[str] = []
         last_temperature: float | None = None
         baseline = None
         session_name = path.stem
-        try:
-            with path.open("r", newline="", encoding="utf-8") as source:
-                for row in csv.DictReader(source):
-                    timestamp = datetime.fromisoformat(row["timestamp"])
-                    volume = float(row["volume_fraction"])
-                    if row.get("initial_volume_fraction"):
-                        baseline = float(row["initial_volume_fraction"])
-                    raw_temperature = row.get("temperature_c", "")
-                    # An unread temperature repeats the last good reading.
-                    temperature = float(raw_temperature) if raw_temperature else last_temperature
-                    last_temperature = temperature
-                    samples.append((timestamp, volume, temperature))
-                    phases.append(row.get("phase", ""))
-                    if row.get("session_name"):
-                        session_name = row["session_name"]
-        except (OSError, KeyError, ValueError, csv.Error) as exc:
-            canvas.create_text(
-                24, 24, anchor="nw", text=f"Não foi possível ler o CSV: {exc}",
-                fill="#8f3028", font=("TkDefaultFont", 11),
-            )
-            return
-
-        width, height = max(1, canvas.winfo_width()), max(1, canvas.winfo_height())
-        canvas.create_text(
-            width / 2, 18, text=f"Evolução · {session_name}",
-            fill="#202723", font=("TkDefaultFont", 13, "bold"),
-        )
+        with path.open("r", newline="", encoding="utf-8") as source:
+            for row in csv.DictReader(source):
+                timestamp = datetime.fromisoformat(row["timestamp"])
+                volume = float(row["volume_fraction"])
+                if row.get("initial_volume_fraction"):
+                    baseline = float(row["initial_volume_fraction"])
+                raw_temperature = row.get("temperature_c", "")
+                # An unread temperature repeats the last good reading.
+                temperature = float(raw_temperature) if raw_temperature else last_temperature
+                last_temperature = temperature
+                samples.append((timestamp, volume, temperature))
+                phases.append(row.get("phase", ""))
+                if row.get("session_name"):
+                    session_name = row["session_name"]
         if len(samples) < 2:
-            canvas.create_text(
-                width / 2, height / 2,
-                text="O gráfico aparecerá após algumas medições da sessão.",
-                fill="#59645e", font=("TkDefaultFont", 11),
-            )
-            return
-
+            return {"too_few": True, "session_name": session_name}
         # Drop dips and peaks that leave the trend and come back (for example the
         # surface being read at the dark band for a few minutes).
         cleaned = despike([sample[1] for sample in samples])
@@ -1099,7 +1108,7 @@ class LevainPeakApp:
             ]
         # Phases are recomputed from the cleaned readings, so the shading does
         # not inherit labels that were produced while a wrong reading was live.
-        graph_tracker = PhaseTracker()
+        graph_tracker = PhaseTracker(filter_dips=False)  # the readings are already clean
         graph_tracker.reset(baseline if baseline and baseline > 0 else cleaned[0])
         origin = samples[0][0]
         phases = [
@@ -1140,6 +1149,56 @@ class LevainPeakApp:
                 smoothed_temperature += 0.3 * (median_temperature - smoothed_temperature)
             samples.append((stamp, smoothed_volume, smoothed_temperature))
             previous_timestamp = stamp
+
+        return {
+            "too_few": False,
+            "session_name": session_name,
+            "samples": samples,
+            "phases": phases,
+            "baseline": baseline,
+        }
+
+
+    def _on_graph_configure(self, event: tk.Event) -> None:
+        # Moving the window also sends <Configure>; only a new size needs a redraw,
+        # and a drag-resize sends many in a row, so they are merged.
+        if (event.width, event.height) == getattr(self, "_graph_drawn_size", None):
+            return
+        job = getattr(self, "_graph_redraw_job", None)
+        if job is not None:
+            self.root.after_cancel(job)
+        self._graph_redraw_job = self.root.after(80, self._draw_session_graph)
+
+    def _draw_session_graph(self, _event: tk.Event | None = None) -> None:
+        self._graph_redraw_job = None
+        canvas = getattr(self, "_graph_canvas", None)
+        path = getattr(self, "_graph_path", None)
+        if canvas is None or path is None or not canvas.winfo_exists():
+            return
+        try:
+            data = self._graph_data(path)
+        except (OSError, KeyError, ValueError, csv.Error) as exc:
+            canvas.delete("all")
+            canvas.create_text(
+                24, 24, anchor="nw", text=f"Não foi possível ler o CSV: {exc}",
+                fill="#8f3028", font=("TkDefaultFont", 11),
+            )
+            return
+        canvas.delete("all")
+        width, height = max(1, canvas.winfo_width()), max(1, canvas.winfo_height())
+        self._graph_drawn_size = (width, height)
+        canvas.create_text(
+            width / 2, 18, text=f"Evolução · {data['session_name']}",
+            fill="#202723", font=("TkDefaultFont", 13, "bold"),
+        )
+        if data["too_few"]:
+            canvas.create_text(
+                width / 2, height / 2,
+                text="O gráfico aparecerá após algumas medições da sessão.",
+                fill="#59645e", font=("TkDefaultFont", 11),
+            )
+            return
+        samples, phases, baseline = data["samples"], data["phases"], data["baseline"]
 
         left, right, top, bottom = 72, width - 76, 82, height - 58
         plot_width, plot_height = max(1, right - left), max(1, bottom - top)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 import tkinter as tk
 from functools import lru_cache
 from typing import Callable
@@ -171,10 +172,15 @@ def build_debug_mosaic(
 
     width_panel = _profile_panel(raw, stable, texts, row2_y)
     place(width_panel, 0, row2_y, "5 · Largura e volume por linha")
-    thermo = _thermometer_panel(frame, thermometer_roi, texts, row2_y, profile)
+    inspection = (
+        inspect_temperature(frame, thermometer_roi, None if profile is None else profile.infrared)
+        if frame is not None and thermometer_roi is not None
+        else None
+    )
+    thermo = _thermometer_panel(inspection, thermometer_roi, texts, row2_y)
     place(thermo, PANEL_W + GAP, row2_y, "6 · Termômetro: recorte · face · binário · dígitos")
 
-    _info_strip(texts, info_y, raw, scan, stable, temperature_c, thermometer_roi, frame, profile, vertical_bounds)
+    _info_strip(texts, info_y, raw, scan, stable, temperature_c, thermometer_roi, frame, inspection, profile, vertical_bounds)
     return _render_texts(mosaic, texts)
 
 
@@ -289,14 +295,13 @@ def _profile_panel(raw, stable, texts: list[Text], row2_y: int) -> np.ndarray:
     return canvas
 
 
-def _thermometer_panel(frame, roi, texts: list[Text], row2_y: int, profile=None) -> np.ndarray:
+def _thermometer_panel(inspection, roi, texts: list[Text], row2_y: int) -> np.ndarray:
     width = 3 * PANEL_W + 2 * GAP
     canvas = np.full((SECOND_ROW_H, width, 3), BACKGROUND, np.uint8)
     base_x, base_y = PANEL_W + GAP, row2_y + TITLE_H
-    if frame is None or roi is None:
+    if inspection is None or roi is None:
         texts.append((base_x + 8, base_y + 8, "marque a região do termômetro", MUTED, 11))
         return canvas
-    inspection = inspect_temperature(frame, roi, None if profile is None else profile.infrared)
     if inspection.roi_image is not None:
         shown = _View(inspection.roi_image, (0, 0), PANEL_W - 8, 118)
         canvas[0:118, 0:PANEL_W - 8] = shown.canvas
@@ -331,7 +336,7 @@ def _thermometer_panel(frame, roi, texts: list[Text], row2_y: int, profile=None)
     return canvas
 
 
-def _info_strip(texts: list[Text], y: int, raw, scan, stable, temperature_c, thermometer_roi, frame, profile=None, vertical_bounds=None) -> None:
+def _info_strip(texts: list[Text], y: int, raw, scan, stable, temperature_c, thermometer_roi, frame, inspection=None, profile=None, vertical_bounds=None) -> None:
     lines: list[tuple[str, tuple[int, int, int]]] = []
     if profile is not None:
         imposed = (
@@ -359,11 +364,7 @@ def _info_strip(texts: list[Text], y: int, raw, scan, stable, temperature_c, the
                 + (f"   ×{stable.growth_factor:.2f} do início" if stable.growth_factor else ""),
                 ORANGE,
             ))
-    reading = None
-    if frame is not None and thermometer_roi is not None:
-        reading = inspect_temperature(
-            frame, thermometer_roi, None if profile is None else profile.infrared
-        ).reading
+    reading = None if inspection is None else inspection.reading
     lines.append((
         "Termômetro: "
         + ("região não marcada" if thermometer_roi is None else f"leitura deste quadro {reading if reading is not None else 'ilegível'}")
@@ -419,6 +420,7 @@ class DebugWindow:
 
     def _work(self) -> None:
         while not self._stop.is_set():
+            started = time.perf_counter()
             try:
                 state = self._get_state()
                 mosaic = build_debug_mosaic(
@@ -437,7 +439,9 @@ class DebugWindow:
             except queue.Empty:
                 pass
             self._frames.put_nowait(mosaic)
-            self._stop.wait(0.5)
+            # Rest several times as long as the work took, so this thread never
+            # takes more than about a sixth of the interpreter's time.
+            self._stop.wait(max(0.5, 5 * (time.perf_counter() - started)))
 
     def _poll(self) -> None:
         if self._stop.is_set() or not self.window.winfo_exists():
