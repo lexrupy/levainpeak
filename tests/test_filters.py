@@ -83,3 +83,14 @@ def test_valid_after_recovery_ignores_an_isolated_high_spike():
 
     series = [0.18, 0.18, 0.18, 0.216, 0.18] + [0.18] * 70 + [0.27] * 20
     assert all(valid_after_recovery(series))
+
+
+def test_a_big_jump_needs_many_more_confirmations_than_a_small_one():
+    from levainpeak.filters import OutlierGate
+
+    gate = OutlierGate(max_jump=0.25, confirmations=6, big_jump=1.0, big_confirmations=40)
+    gate.trusted = 25.6
+    assert not any(gate.accept(20.8) for _ in range(39))  # a steady misread of 5 as 0 is still refused
+    assert gate.accept(20.8) and gate.trusted == 20.8  # ...but a real, lasting change gets in
+    gate.trusted = 25.6
+    assert not any(gate.accept(26.2) for _ in range(5)) and gate.accept(26.2)  # a small step: the usual 6

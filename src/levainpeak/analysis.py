@@ -30,6 +30,7 @@ class ContainerAnalyzer:
         self.empty_pot: ContainerMeasurement | None = None  # outline known, no levain in it (whole-object reads only)
         self.temperature_roi: tuple[int, int, int, int] | None = None
         self.temperature_quad: tuple[tuple[int, int], ...] | None = None  # LCD face corners drawn by the user
+        self.anchor_temperature: float | None = None  # last logged value of a resumed session
         self.interval_seconds = interval_seconds
         self._stop = threading.Event()
         self._results: queue.Queue[
@@ -55,7 +56,7 @@ class ContainerAnalyzer:
         # well-confirmed moves are trusted there, anchored on the last good read.
         self._temperature_gates = {
             DAY.name: OutlierGate(max_jump=3.0, confirmations=3),
-            INFRARED.name: OutlierGate(max_jump=0.25, confirmations=6),
+            INFRARED.name: OutlierGate(max_jump=0.25, confirmations=6, big_jump=1.0, big_confirmations=40),
         }
         self._gate_profile: str | None = None
         self._previous_reading: float | None = None
@@ -163,6 +164,10 @@ class ContainerAnalyzer:
                 self._last_temperature_success = 0.0
                 for gate in self._temperature_gates.values():
                     gate.reset()
+                    if self.anchor_temperature is not None:
+                        gate.trusted = self.anchor_temperature  # a resumed session keeps its last good value
+                if self.anchor_temperature is not None:
+                    self._temperature_c = self.anchor_temperature
                 self._gate_profile = None
                 self._previous_reading = None
             if temperature_roi is not None and now - self._last_temperature_read >= 2.0:

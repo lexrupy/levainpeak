@@ -377,12 +377,13 @@ def _fit_digit_cells(binary: np.ndarray) -> list[tuple[int, int, int, int]] | No
 
 
 def _glyph_cells(binary: np.ndarray) -> list[tuple[int, int, int, int]] | None:
-    """Three digit cells cut at the gaps between the digits' ink.
+    """Three digit cells found from the ink's blocks and the regular spacing of digits.
 
-    The ink of a seven-segment digit is a block; between two digits there is a
-    stretch of empty columns. The three heaviest consecutive blocks are the digits
-    (the unit mark to the right is lighter). All cells get the width of the widest
-    digit, so the segment boxes line up; a narrow one (1) keeps its bar on the right.
+    The ink of a digit is not always one block: a 7 with its upper-left bar has a gap
+    between that bar and the two on the right. So two neighbouring blocks set the
+    spacing, the third digit is expected one step further, and every block that falls
+    in a digit's place belongs to it. All cells get the width of the widest digit, so
+    the segment boxes line up; a narrow one (1) keeps its bar on the right.
     """
     height, width = binary.shape
     core = (binary[int(0.1 * height):int(0.9 * height)] > 0).sum(axis=0).astype(np.float64)  # ignore the frame strips
@@ -392,12 +393,30 @@ def _glyph_cells(binary: np.ndarray) -> list[tuple[int, int, int, int]] | None:
         return None
     present = smooth > 0.12 * smooth.max()
     edges = np.flatnonzero(np.diff(np.concatenate(([0], present.astype(int), [0]))))
-    blocks = [(int(a), int(b)) for a, b in zip(edges[::2], edges[1::2]) if b - a >= 0.05 * width]
+    blocks = [(int(a), int(b)) for a, b in zip(edges[::2], edges[1::2]) if b - a >= 0.03 * width]
     if len(blocks) < 3:
         return None
     mass = [float(core[a:b].sum()) for a, b in blocks]
-    first = max(range(len(blocks) - 2), key=lambda i: sum(mass[i:i + 3]))
-    digits = blocks[first:first + 3]
+    centers = [(a + b) / 2 for a, b in blocks]
+
+    def group(center: float, step: float) -> list[int]:
+        return [i for i, c in enumerate(centers) if abs(c - center) <= 0.55 * step]
+
+    best = None
+    for first in range(len(blocks) - 1):
+        for second in range(first + 1, len(blocks)):
+            step = centers[second] - centers[first]
+            if not 0.12 * width <= step <= 0.40 * width:
+                continue
+            members = [group(centers[first], step), group(centers[first] + step, step), group(centers[first] + 2 * step, step)]
+            if any(not m for m in members):
+                continue
+            total = sum(mass[i] for m in members for i in m)
+            if best is None or total > best[0]:
+                best = (total, members)
+    if best is None:
+        return None
+    digits = [(min(blocks[i][0] for i in m), max(blocks[i][1] for i in m)) for m in best[1]]
     digit_width = max(b - a for a, b in digits)
     pad = int(0.05 * digit_width)
     spans = []

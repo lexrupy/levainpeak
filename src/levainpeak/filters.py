@@ -12,11 +12,18 @@ class OutlierGate:
     within ``max_jump``, so a real step change is not blocked forever.
     """
 
-    def __init__(self, max_jump: float, confirmations: int = 4) -> None:
+    def __init__(
+        self, max_jump: float, confirmations: int = 4,
+        big_jump: float | None = None, big_confirmations: int | None = None,
+    ) -> None:
         if max_jump <= 0 or confirmations < 1:
             raise ValueError("max_jump must be positive and confirmations at least 1")
         self.max_jump = max_jump
         self.confirmations = confirmations
+        # A jump past ``big_jump`` is far likelier a misread digit than a real change:
+        # it must hold for ``big_confirmations`` readings before it is adopted.
+        self.big_jump = big_jump
+        self.big_confirmations = big_confirmations or confirmations
         self.trusted: float | None = None
         self._pending: list[float] = []
 
@@ -33,7 +40,10 @@ class OutlierGate:
         if self._pending and abs(value - self._pending[-1]) > self.max_jump:
             self._pending.clear()
         self._pending.append(value)
-        if len(self._pending) >= self.confirmations:
+        needed = self.confirmations
+        if self.big_jump is not None and abs(value - self.trusted) > self.big_jump:
+            needed = self.big_confirmations
+        if len(self._pending) >= needed:
             self.trusted = value
             self._pending.clear()
             return True

@@ -1714,6 +1714,8 @@ class LevainPeakApp:
                 self._forecaster.add(elapsed, volume, last_temperature)
             if last_temperature is not None:
                 self._last_known_temperature = last_temperature
+                if self._analyzer is not None:
+                    self._analyzer.anchor_temperature = last_temperature
         except (KeyError, ValueError, IndexError):
             self._reset_tracking()
             self._session_baseline = None
