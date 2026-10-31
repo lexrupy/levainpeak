@@ -13,6 +13,7 @@ venv/
 .env.*
 !.env.example
 camera.ini
+phone.ini
 
 # Captured media, model artifacts, and generated output
 data/private/

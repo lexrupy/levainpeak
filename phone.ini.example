@@ -1,0 +1,6 @@
+[phone]
+; URL do app da web do Google Apps Script (termina em /exec)
+url = https://script.google.com/macros/s/SEU_ID_DE_IMPLANTACAO/exec
+; mesmo valor da propriedade de script TOKEN (pelo menos 16 caracteres, aleatório)
+; gerar: python3 -c "import secrets; print(secrets.token_urlsafe(24))"
+token =

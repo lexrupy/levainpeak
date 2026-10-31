@@ -78,7 +78,7 @@ O usuário pediu para **não implementar o app ainda**. Decisões já tomadas:
   do `POST` e na URL do `GET`. Depois de editar o script é preciso criar uma **nova versão** da implantação.
 - **Implantação:** "Executar como: Eu" e "Quem pode acessar: Qualquer pessoa" (com "Conta do Google" ou
   "usuário com acesso" o app recebe uma página de login). Já feita e verificada: `GET` com token falso devolve
-  `{"ok":false,"erro":"token inválido"}`. A URL `/exec` e o token ficarão num `phone.ini` local, fora do git.
+  `{"ok":false,"erro":"token inválido"}`. A URL `/exec` e o token ficam em `phone.ini` (seção `[phone]`, chaves `url` e `token`, permissão 600, fora do git; modelo em `phone.ini.example`). O token colado numa conversa deve ser trocado (propriedade `TOKEN` do script e `phone.ini`).
 
 Pendente: o usuário rodar o script e testar com `curl`; decidir quem lê (token no PWA); depois implementar o
 envio no app (módulo de envio, opções em Configurações) e, se quiser, o PWA. Plano técnico: extrair o preparo
