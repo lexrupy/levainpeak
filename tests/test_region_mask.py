@@ -62,3 +62,26 @@ def test_the_hole_in_the_overlay_is_the_outer_box_and_the_brightness_is_a_settin
     assert shown[100, 60].tolist() == [200, 200, 200]  # inside the outer box but outside the contour: not dimmed
     assert shown[100, 10].tolist() == [60, 60, 60]  # outside the box: 30% of 200
     assert LevainPeakApp._apply_region_mask(app(100), frame)[100, 10].tolist() == [200, 200, 200]  # 100%: nothing dimmed
+
+
+def _cut_app(infrared):
+    from levainpeak.settings import Settings
+
+    analyzer = SimpleNamespace(profile=SimpleNamespace(infrared=infrared), ink_cut_infrared=0.3, ink_cut_day=40)
+    return SimpleNamespace(_settings=Settings(), _analyzer=analyzer, _running_infrared=lambda: infrared)
+
+
+def test_the_cut_slider_changes_only_the_running_profile_and_auto_puts_the_default_back():
+    infrared = _cut_app(True)
+    LevainPeakApp._set_ink_cut(infrared, 100.0, False)  # most ink
+    assert infrared._settings.ink_cut_infrared == 0.1 and infrared._analyzer.ink_cut_infrared == 0.1
+    assert infrared._settings.ink_cut_day == 40  # the other profile is untouched
+    assert LevainPeakApp._ink_control(SimpleNamespace(**{**vars(infrared), "_temperature_quad": (1,), "_temperature_roi": None}))["auto"] is False
+    LevainPeakApp._set_ink_cut(infrared, None, False)  # auto
+    assert infrared._settings.ink_cut_infrared == 0.3 and infrared._analyzer.ink_cut_infrared == 0.3
+
+    day = _cut_app(False)
+    LevainPeakApp._set_ink_cut(day, 100.0, False)
+    assert day._settings.ink_cut_day == 60 and day._settings.ink_cut_infrared == 0.3
+    LevainPeakApp._set_ink_cut(day, None, False)
+    assert day._settings.ink_cut_day == 40

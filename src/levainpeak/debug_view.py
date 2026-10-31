@@ -462,7 +462,7 @@ class DebugWindow:
 
     def __init__(
         self, root: tk.Tk, get_state: Callable[[], dict],
-        on_ink_cut: Callable[[float, bool], None] | None = None,
+        on_ink_cut: Callable[[float | None, bool], None] | None = None,
     ) -> None:
         self._get_state = get_state
         self._on_ink_cut = on_ink_cut
@@ -480,6 +480,10 @@ class DebugWindow:
         self._cut_text = tk.Label(self._label, background="#262928", foreground="#e8c547", font=("TkDefaultFont", 8))
         self._cut_var = tk.DoubleVar(value=50)
         self._cut_scale = ttk.Scale(self._label, from_=0, to=100, orient="horizontal", variable=self._cut_var)
+        # Back to the default cut of the running profile (None = reset).
+        self._cut_auto = ttk.Button(
+            self._label, text="auto", width=6, command=lambda: self._on_ink_cut and self._on_ink_cut(None, True)
+        )
         self._cut_scale.bind("<ButtonPress-1>", lambda _e: setattr(self, "_dragging_cut", True), add="+")
         self._cut_scale.bind("<B1-Motion>", lambda _e: self._cut_changed(False), add="+")
         self._cut_scale.bind("<ButtonRelease-1>", lambda _e: self._cut_changed(True), add="+")
@@ -534,13 +538,17 @@ class DebugWindow:
         if not control:
             self._cut_scale.place_forget()
             self._cut_text.place_forget()
+            self._cut_auto.place_forget()
             return
         if not self._dragging_cut:
             self._cut_var.set(control["percent"])
         self._cut_text.configure(text=f"traço do visor · perfil {control['profile']} · {control['percent']:.0f}%")
+        self._cut_auto.configure(text="auto ✓" if control.get("auto") else "auto")
         x, y, width = ink_slider_box()
         self._cut_text.place(x=offset[0] + int(x * scale), y=offset[1] + int(y * scale) - 15)
-        self._cut_scale.place(x=offset[0] + int(x * scale), y=offset[1] + int(y * scale), width=max(60, int(width * scale)))
+        slider_width = max(60, int(width * scale) - 62)
+        self._cut_scale.place(x=offset[0] + int(x * scale), y=offset[1] + int(y * scale) + 2, width=slider_width)
+        self._cut_auto.place(x=offset[0] + int(x * scale) + slider_width + 6, y=offset[1] + int(y * scale) - 2)
 
     def _show(self, mosaic: np.ndarray) -> None:
         available_w = max(1, self._label.winfo_width())

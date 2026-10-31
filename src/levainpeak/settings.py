@@ -18,6 +18,8 @@ MIN_OVERLAY_BRIGHTNESS = 10  # percent of the picture's brightness kept outside 
 MAX_OVERLAY_BRIGHTNESS = 100  # 100: nothing is dimmed
 INK_CUT_INFRARED = (0.10, 0.80)  # fraction of the face's contrast; lower reads fainter strokes
 INK_CUT_DAY = (20, 60)  # brightness percentile of the face below which a pixel is ink
+DEFAULT_INK_CUT_INFRARED = 0.30  # what "auto" puts back
+DEFAULT_INK_CUT_DAY = 40
 
 
 @dataclass
@@ -29,8 +31,8 @@ class Settings:
     overlay_brightness: int = 50
     graph_temperature_scale: str = "ampla"
     graph_volume_scale: str = "auto"
-    ink_cut_infrared: float = 0.30
-    ink_cut_day: int = 40
+    ink_cut_infrared: float = DEFAULT_INK_CUT_INFRARED
+    ink_cut_day: int = DEFAULT_INK_CUT_DAY
 
     def clamped(self) -> "Settings":
         return Settings(

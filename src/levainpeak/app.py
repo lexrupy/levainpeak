@@ -34,7 +34,8 @@ from levainpeak.phone_push import PhonePusher, make_snapshot
 from levainpeak.sessions import (GEOMETRY_VERSION, PhaseTracker, SessionLog,
                                  latest_session_csv)
 from levainpeak.regions_store import load_regions_file, save_regions_file
-from levainpeak.settings import (INK_CUT_DAY, INK_CUT_INFRARED, MAX_OVERLAY_BRIGHTNESS,
+from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, INK_CUT_DAY,
+                                 INK_CUT_INFRARED, MAX_OVERLAY_BRIGHTNESS,
                                  MAX_PHONE_SECONDS, MAX_RECORD_SECONDS, MIN_OVERLAY_BRIGHTNESS,
                                  MIN_PHONE_SECONDS, MIN_RECORD_SECONDS,
                                  Settings, load_settings, save_settings)
@@ -352,23 +353,36 @@ class LevainPeakApp:
         if self._running_infrared():
             low, high = INK_CUT_INFRARED
             percent = (high - self._settings.ink_cut_infrared) / (high - low) * 100  # a lower cut reads fainter strokes
-            return {"profile": "infravermelho", "percent": percent}
+            return {
+                "profile": "infravermelho", "percent": percent,
+                "auto": abs(self._settings.ink_cut_infrared - DEFAULT_INK_CUT_INFRARED) < 1e-6,
+            }
         low, high = INK_CUT_DAY
-        return {"profile": "dia", "percent": (self._settings.ink_cut_day - low) / (high - low) * 100}
+        return {
+            "profile": "dia", "percent": (self._settings.ink_cut_day - low) / (high - low) * 100,
+            "auto": self._settings.ink_cut_day == DEFAULT_INK_CUT_DAY,
+        }
 
-    def _set_ink_cut(self, percent: float, save: bool) -> None:
-        """Slider moved: apply at once to the running profile; write to disk on release."""
-        percent = min(100.0, max(0.0, percent))
-        if self._running_infrared():
-            low, high = INK_CUT_INFRARED
-            self._settings = replace(self._settings, ink_cut_infrared=round(high - percent / 100 * (high - low), 2)).clamped()
-            if self._analyzer is not None:
-                self._analyzer.ink_cut_infrared = self._settings.ink_cut_infrared
+    def _set_ink_cut(self, percent: float | None, save: bool) -> None:
+        """Slider moved: apply at once to the running profile; write to disk on release.
+
+        ``percent`` None is the "auto" button: the running profile goes back to its default.
+        """
+        infrared = self._running_infrared()
+        if percent is None:
+            cut = DEFAULT_INK_CUT_INFRARED if infrared else DEFAULT_INK_CUT_DAY
         else:
-            low, high = INK_CUT_DAY
-            self._settings = replace(self._settings, ink_cut_day=round(low + percent / 100 * (high - low))).clamped()
-            if self._analyzer is not None:
-                self._analyzer.ink_cut_day = self._settings.ink_cut_day
+            percent = min(100.0, max(0.0, percent))
+            if infrared:
+                low, high = INK_CUT_INFRARED
+                cut = round(high - percent / 100 * (high - low), 2)  # a lower cut reads fainter strokes
+            else:
+                low, high = INK_CUT_DAY
+                cut = round(low + percent / 100 * (high - low))
+        field = "ink_cut_infrared" if infrared else "ink_cut_day"
+        self._settings = replace(self._settings, **{field: cut}).clamped()
+        if self._analyzer is not None:
+            setattr(self._analyzer, field, getattr(self._settings, field))
         if save:
             try:
                 save_settings(self._settings)
