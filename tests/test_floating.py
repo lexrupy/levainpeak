@@ -5,6 +5,9 @@ import pytest
 
 from levainpeak.floating import BORDER, FloatingWindowControls
 
+# These open real windows and take the keyboard focus: run them with `pytest --gui`.
+pytestmark = pytest.mark.gui
+
 
 @pytest.fixture
 def popup():

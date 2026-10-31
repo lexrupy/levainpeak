@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -78,6 +79,7 @@ def test_mosaic_draws_with_a_hand_placed_mark_that_differs_from_the_detection():
     assert mosaic.shape == (HEIGHT, WIDTH, 3)
 
 
+@pytest.mark.gui
 def test_dragging_the_picture_moves_the_diagnostics_window():
     import tkinter as tk
 
