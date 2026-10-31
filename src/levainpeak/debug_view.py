@@ -134,6 +134,7 @@ def build_debug_mosaic(
     temperature_c: float | None = None,
     profile=None,
     vertical_bounds: tuple[int, int] | None = None,
+    outline: tuple[tuple[int, int], ...] | None = None,
 ) -> np.ndarray:
     """One BGR image with the stages of the pot, surface and thermometer reads.
 
@@ -154,7 +155,7 @@ def build_debug_mosaic(
     raw = None
     if frame is not None:
         try:
-            raw = measure_container(frame, roi=pot_roi, vertical_bounds=vertical_bounds)
+            raw = measure_container(frame, roi=pot_roi, vertical_bounds=vertical_bounds, outline=outline)
         except cv2.error:
             raw = None
     scan = None
@@ -371,6 +372,8 @@ def _info_strip(texts: list[Text], y: int, raw, scan, stable, temperature_c, the
         lines.append(("Sem imagem da câmera.", RED))
     elif raw is None:
         lines.append(("Pote: não detectado neste quadro.", RED))
+    elif raw.empty:
+        lines.append(("Pote vazio: o contorno está marcado e não há levain dentro dele.", YELLOW))
     else:
         used, found, manual = marker_rows(raw, stable)
         marker_text = f"{used} (manual; faixa detectada em {found})" if manual else f"{used} (faixa detectada)"
@@ -425,6 +428,7 @@ def _diagnostics_worker(
                 state.get("frame"), state.get("pot_roi"), state.get("thermometer_roi"),
                 stable=state.get("stable"), temperature_c=state.get("temperature_c"),
                 profile=state.get("profile"), vertical_bounds=state.get("vertical_bounds"),
+                outline=state.get("outline"),
             )
         except Exception:  # noqa: BLE001 - a diagnostics glitch must not kill the thread
             logging.exception("Falha ao montar o diagnóstico")

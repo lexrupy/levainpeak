@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 
 from levainpeak.vision import _robust_wall
@@ -106,3 +107,39 @@ def test_surface_cluster_ignores_columns_that_ran_past_the_surface():
     tops = np.array([704] * 40 + [705] * 10 + [616] * 15 + [660, 682, 643, 689, 671, 684] * 3)
     assert 703 <= _surface_cluster(tops) <= 705
     assert _surface_cluster(np.array([500, 501, 499, 502, 500, 498, 503])) == 500
+
+
+def _tapered_jar(with_levain: bool):
+    img = np.full((600, 800, 3), 120, np.uint8)
+    cv2.fillPoly(img, [np.array([(200, 100), (600, 100), (540, 520), (260, 520)])], (150, 150, 150))
+    if with_levain:
+        cv2.fillPoly(img, [np.array([(231, 330), (569, 330), (540, 520), (260, 520)])], (225, 225, 225))
+        cv2.line(img, (222, 400), (578, 400), (20, 20, 20), 9)
+    cv2.rectangle(img, (0, 520), (800, 600), (30, 30, 30), -1)
+    return cv2.GaussianBlur(img, (0, 0), 1.2)
+
+
+OUTLINE = ((200, 100), (600, 100), (540, 520), (260, 520))
+
+
+def test_a_drawn_outline_measures_a_tapered_jar_the_automatic_search_cannot():
+    from levainpeak.vision import measure_container
+
+    measurement = measure_container(_tapered_jar(True), (150, 60, 650, 560), outline=OUTLINE)
+    assert measurement is not None and not measurement.empty
+    assert abs(measurement.surface_y - 330) <= 4
+    assert measurement.marker_y is not None and abs(measurement.marker_y - 400) <= 8
+    assert (measurement.top, measurement.bottom) == (100, 520)
+    # the cone is narrower at the bottom, and the volume counts that
+    top_width = measurement.edge_profile[0][1] - measurement.edge_profile[0][0]
+    bottom_width = measurement.edge_profile[-1][1] - measurement.edge_profile[-1][0]
+    assert bottom_width < 0.8 * top_width
+    assert 0.2 < measurement.volume_fraction < 0.5
+
+
+def test_a_drawn_outline_around_an_empty_jar_reports_empty_not_nothing():
+    from levainpeak.vision import measure_container
+
+    measurement = measure_container(_tapered_jar(False), (150, 60, 650, 560), outline=OUTLINE)
+    assert measurement is not None and measurement.empty
+    assert measurement.volume_fraction == 0.0 and measurement.confidence == 0.0

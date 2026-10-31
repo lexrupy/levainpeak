@@ -21,6 +21,7 @@ class ContainerMeasurement:
     initial_volume_fraction: float | None = None
     growth_factor: float | None = None
     marker_manual: bool = False
+    empty: bool = False  # the outline is known but no levain was found in it
     volume_below_profile: tuple[float, ...] = field(default=(), repr=False, compare=False)
     # (left_x, right_x) of the inner wall for each row from top to bottom.
     edge_profile: tuple[tuple[int, int], ...] = field(default=(), repr=False, compare=False)
@@ -35,11 +36,18 @@ def measure_container(
     width_weight: float = 280.0,
     support_weight: float = 220.0,
     vertical_bounds: tuple[int, int] | None = None,
+    outline: tuple[tuple[int, int], ...] | None = None,
 ) -> ContainerMeasurement | None:
     """Find a prominent vessel and estimate its filled-volume fraction.
 
     ``vertical_bounds`` (top, bottom in frame coordinates) replaces the
     detection of the vessel's top and bottom, which relies on daylight shading.
+
+    ``outline`` is the vessel's inner contour drawn by the user (polygon, frame
+    coordinates). It replaces the search for the walls, top and bottom, so a
+    ribbed, tapered or reflective glass can be measured; only the levain surface
+    is still searched. With an outline and no levain found the result is an
+    ``empty`` measurement instead of ``None``.
 
     This first pass is tuned for the current fixed side view. It assumes a
     mostly round, transparent pot and a visible color/texture transition at the
@@ -68,6 +76,7 @@ def measure_container(
                 if vertical_bounds is None
                 else (vertical_bounds[0] - y0, vertical_bounds[1] - y0)
             ),
+            outline=None if outline is None else tuple((x - x0, y - y0) for x, y in outline),
         )
         if local is None:
             return None
@@ -88,22 +97,36 @@ def measure_container(
     profile = gradient_x[int(height * 0.05) : int(height * 0.98)].sum(axis=0)
     profile = np.convolve(profile, np.ones(11, dtype=np.float32) / 11, mode="same")
 
-    pair = _select_sides(
-        profile, width, gray,
-        preferred_center=center_preference,
-        preferred_width=preferred_width,
-        width_weight=width_weight,
-        support_weight=support_weight,
-    )
-    if pair is None:
-        return None
-    left, right, edge_confidence = pair
-    if vertical_bounds is not None:
-        pot_top, pot_bottom = vertical_bounds
+    outline_edges = None
+    if outline is not None:
+        outline_edges = _outline_edges(outline, width, height)
+        if outline_edges is None:
+            return None
+        pot_top, outer_left, outer_right = outline_edges[0], outline_edges[1], outline_edges[2]
+        pot_bottom = pot_top + len(outer_left)
+        # The columns every row has inside the glass: the search for the mark and
+        # the surface must not run over the tapered wall or the background.
+        left, right = int(np.ceil(outer_left.max())), int(np.floor(outer_right.min()))
+        if right - left < 30 or pot_bottom - pot_top < 100:
+            return None
+        edge_confidence = 1.0
     else:
-        pot_top, pot_bottom = _container_bounds(frame, left, right)
-    if pot_bottom - pot_top < int(height * 0.3):
-        return None
+        pair = _select_sides(
+            profile, width, gray,
+            preferred_center=center_preference,
+            preferred_width=preferred_width,
+            width_weight=width_weight,
+            support_weight=support_weight,
+        )
+        if pair is None:
+            return None
+        left, right, edge_confidence = pair
+        if vertical_bounds is not None:
+            pot_top, pot_bottom = vertical_bounds
+        else:
+            pot_top, pot_bottom = _container_bounds(frame, left, right)
+        if pot_bottom - pot_top < int(height * 0.3):
+            return None
 
     inner_top = pot_top
     inner_bottom = pot_bottom
@@ -123,8 +146,12 @@ def measure_container(
             marker_y=marker_y if marker_confidence >= 0.2 else None,
         )
     if surface is None:
-        return None
+        if outline_edges is None:
+            return None
+        return _empty_outline_measurement(outline_edges)
     surface_y, surface_confidence = surface
+    if outline_edges is not None and _looks_empty(gray, outline_edges, surface_y):
+        return _empty_outline_measurement(outline_edges)
 
     # The vessel's bottom comes from a gradient guess (or from an earlier
     # daylight measurement) and can lie below the glass, on the steel bowl the
@@ -134,10 +161,17 @@ def measure_container(
     if base_y is not None and base_y < inner_bottom - 3:
         inner_bottom = base_y
 
-    widths, left_edges, right_edges = _width_profile(
-        gradient_x, left, right, inner_top, inner_bottom
-    )
-    empty_rows = int(np.clip(surface_y - inner_top, 0, len(widths)))
+    if outline_edges is not None:
+        rows = inner_bottom - inner_top
+        left_edges = outline_edges[1][:rows].astype(np.float32)
+        right_edges = outline_edges[2][:rows].astype(np.float32)
+        widths = np.maximum(1.0, right_edges - left_edges).astype(np.float32)
+        empty_rows = 0
+    else:
+        widths, left_edges, right_edges = _width_profile(
+            gradient_x, left, right, inner_top, inner_bottom
+        )
+        empty_rows = int(np.clip(surface_y - inner_top, 0, len(widths)))
     if empty_rows >= 60:
         # Above the levain the pot is empty glass against a busy background:
         # trust a robust straight (or conical) wall rather than noisy edges.
@@ -162,6 +196,8 @@ def measure_container(
     volume_below_profile = tuple(
         float(value) for value in (np.cumsum(area_profile[::-1])[::-1] / total)
     )
+    if outline_edges is not None:
+        left, right = int(left_edges.min()), int(np.ceil(right_edges.max()))
     measurement = ContainerMeasurement(
         left=left,
         right=right,
@@ -262,6 +298,79 @@ def draw_measurement(
 
 
 MAX_WALL_SLOPE = 0.05
+
+
+def _outline_edges(
+    outline: tuple[tuple[int, int], ...], width: int, height: int
+) -> tuple[int, np.ndarray, np.ndarray] | None:
+    """(top row, left x per row, right x per row) of a polygon, clipped to the frame."""
+    points = np.asarray(outline, dtype=np.float64)
+    if points.ndim != 2 or len(points) < 3:
+        return None
+    points[:, 0] = np.clip(points[:, 0], 0, width - 1)
+    points[:, 1] = np.clip(points[:, 1], 0, height - 1)
+    top, bottom = int(np.ceil(points[:, 1].min())), int(np.floor(points[:, 1].max()))
+    if bottom - top < 20:
+        return None
+    rows = np.arange(top, bottom)
+    left = np.full(len(rows), np.inf)
+    right = np.full(len(rows), -np.inf)
+    for index in range(len(points)):
+        (x1, y1), (x2, y2) = points[index], points[(index + 1) % len(points)]
+        if y1 == y2:
+            continue
+        inside = (rows >= min(y1, y2)) & (rows <= max(y1, y2))
+        crossing = x1 + (rows[inside] - y1) * (x2 - x1) / (y2 - y1)
+        left[inside] = np.minimum(left[inside], crossing)
+        right[inside] = np.maximum(right[inside], crossing)
+    if not np.isfinite(left).all() or not np.isfinite(right).all():
+        return None
+    return top, left, right
+
+
+_EMPTY_RATIO = 1.15
+
+
+def _looks_empty(gray: np.ndarray, outline_edges, surface_y: int) -> bool:
+    """True when what lies below the surface is not opaque levain.
+
+    Levain is opaque and bright: its core is clearly brighter than the wall behind
+    the glass (1.6x to 2.8x on the real frames). Empty glass shows the dim inside of
+    the jar, about as bright as, or darker than, that background (0.8x).
+    """
+    top, left_edges, right_edges = outline_edges
+    rows = range(max(top, surface_y + 15), top + len(left_edges) - 15, 4)
+    width = gray.shape[1]
+    inside, outside = [], []
+    for y in rows:
+        left, right = left_edges[y - top], right_edges[y - top]
+        quarter = (right - left) / 4
+        center = (left + right) / 2
+        inside.append(gray[y, int(center - quarter):int(center + quarter) + 1].mean())
+        sides = [
+            gray[y, max(0, int(left) - 60):max(1, int(left) - 12)].mean(),
+            gray[y, min(width - 1, int(right) + 12):min(width, int(right) + 60)].mean(),
+        ]
+        outside.append(max(sides))
+    if len(inside) < 5:
+        return False
+    return float(np.median(inside)) < _EMPTY_RATIO * max(1.0, float(np.median(outside)))
+
+
+def _empty_outline_measurement(outline_edges) -> ContainerMeasurement:
+    top, left_edges, right_edges = outline_edges
+    bottom = top + len(left_edges)
+    return ContainerMeasurement(
+        left=int(left_edges.min()),
+        right=int(np.ceil(right_edges.max())),
+        top=top,
+        bottom=bottom,
+        surface_y=bottom,
+        volume_fraction=0.0,
+        confidence=0.0,
+        empty=True,
+        edge_profile=tuple((int(a), int(b)) for a, b in zip(left_edges, right_edges, strict=True)),
+    )
 
 
 def _levain_base(

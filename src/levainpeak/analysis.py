@@ -26,6 +26,8 @@ class ContainerAnalyzer:
     def __init__(self, stream: RtspStream, interval_seconds: float = 0.5) -> None:
         self.stream = stream
         self.roi: tuple[int, int, int, int] | None = None
+        self.outline: tuple[tuple[int, int], ...] | None = None  # the pot's inner contour drawn by the user
+        self.empty_pot: ContainerMeasurement | None = None  # outline known, no levain in it (whole-object reads only)
         self.temperature_roi: tuple[int, int, int, int] | None = None
         self.interval_seconds = interval_seconds
         self._stop = threading.Event()
@@ -43,6 +45,7 @@ class ContainerAnalyzer:
         self._last_stable_measurement: ContainerMeasurement | None = None
         self._missing_measurements = 0
         self._last_pot_roi: tuple[int, int, int, int] | None = None
+        self._last_outline: tuple[tuple[int, int], ...] | None = None
         self._filtered_surface_y: float | None = None
         # Out-of-curve readings are discarded and the next frame is read again.
         self._volume_gate = OutlierGate(max_jump=0.03, confirmations=40)
@@ -121,8 +124,9 @@ class ContainerAnalyzer:
                 self._stop.wait(0.1)
                 continue
             last_frame_number = frame_number
-            if self.roi != self._last_pot_roi:
+            if self.roi != self._last_pot_roi or self.outline != self._last_outline:
                 self._last_pot_roi = self.roi
+                self._last_outline = self.outline
                 self._measurement_history.clear()
                 self._geometry_candidates.clear()
                 self._geometry_anchor = None
@@ -133,9 +137,15 @@ class ContainerAnalyzer:
             self.profile = self._profile_selector.update(frame)
             try:
                 measurement = measure_container(
-                    frame, roi=self.roi, vertical_bounds=self.effective_bounds()
+                    frame, roi=self.roi, vertical_bounds=self.effective_bounds(),
+                    outline=self.outline,
                 )
             except cv2.error:
+                measurement = None
+            # An empty pot is not a measurement: the session sees "no pot" as before,
+            # and the window shows the pot as empty.
+            self.empty_pot = measurement if measurement is not None and measurement.empty else None
+            if self.empty_pot is not None:
                 measurement = None
             measurement = self._stabilize_measurement(measurement)
             self._learn_vessel_bounds(measurement)

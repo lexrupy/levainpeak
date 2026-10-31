@@ -93,3 +93,21 @@ def test_an_older_session_file_is_version_one_until_it_is_brought_up_to_date(tmp
     again.resume(path)
     assert again.geometry == GEOMETRY_VERSION
     again.stop()
+
+
+def test_the_drawn_pot_outline_is_saved_and_comes_back_on_resume(tmp_path):
+    outline = ((10, 20), (300, 20), (260, 400), (50, 400))
+    log = SessionLog(tmp_path)
+    log.start(name="teste")
+    log.save_regions((0, 0, 320, 420), None, outline=outline)
+    log.save_marker(300)  # saving something else must not lose the outline
+    path = log.path
+    log.record(0.0, _row(0.3), "Crescendo")
+    log.stop()
+    assert json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))["pot_outline"] == [list(p) for p in outline]
+    resumed = SessionLog(tmp_path)
+    resumed.resume(path)
+    assert resumed.pot_outline == outline
+    resumed.save_regions((0, 0, 320, 420), None, outline=None)  # back to automatic detection
+    assert json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))["pot_outline"] is None
+    resumed.stop()
