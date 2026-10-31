@@ -813,12 +813,17 @@ class LevainPeakApp:
         if not regions:
             return frame
         height, width = frame.shape[:2]
-        # Dim everything, then put the selected regions back as they were.
-        result = cv2.convertScaleAbs(frame, alpha=0.24)
-        for left, top, right, bottom in regions:
-            top, bottom = max(0, top), min(height, bottom)
-            left, right = max(0, left), min(width, right)
-            result[top:bottom, left:right] = frame[top:bottom, left:right]
+        if self._roi_mode:
+            # Drawing a new region: the thing to find may have moved out of the old
+            # ones, so keep the whole picture visible and only outline them.
+            result = frame.copy()
+        else:
+            # Dim everything, then put the selected regions back as they were.
+            result = cv2.convertScaleAbs(frame, alpha=0.24)
+            for left, top, right, bottom in regions:
+                top, bottom = max(0, top), min(height, bottom)
+                left, right = max(0, left), min(width, right)
+                result[top:bottom, left:right] = frame[top:bottom, left:right]
         for region, color, label in (
             (self._manual_pot_roi, (50, 220, 130), "POTE"),
             (self._temperature_roi, (40, 190, 245), "TERMÔMETRO"),

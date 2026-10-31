@@ -183,6 +183,7 @@ def _inspect_face(display: np.ndarray, gray: np.ndarray, infrared: bool) -> Temp
     else:
         threshold = int(np.clip(np.percentile(gray, 40), 100, 150))
         binary = (gray < threshold).astype(np.uint8) * 255
+    binary = _drop_edge_ink(binary)
     binary = cv2.resize(binary, None, fx=8, fy=8, interpolation=cv2.INTER_NEAREST)
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
     binary = _deslant(binary)
@@ -229,6 +230,23 @@ def _infrared_ink(gray: np.ndarray) -> np.ndarray:
 
 _CELL_CENTERS = (0.32, 0.53, 0.76)
 _CELL_WIDTH = 0.16
+
+
+def _drop_edge_ink(binary: np.ndarray) -> np.ndarray:
+    """Erase the bezel: narrow ink shapes that touch the left or right side of the face.
+
+    The digits sit well inside the face (margin of about a quarter on the left,
+    a sixth on the right), so ink reaching a side edge is the dark frame, the
+    degree/unit marks or a shadow. Left in, it pulls the cell search sideways.
+    """
+    count, labels, stats, _ = cv2.connectedComponentsWithStats((binary > 0).astype(np.uint8), 8)
+    width = binary.shape[1]
+    cleaned = binary.copy()
+    for index in range(1, count):
+        x, _, box_width, _, _ = stats[index]
+        if (x == 0 or x + box_width >= width) and box_width < 0.25 * width:
+            cleaned[labels == index] = 0
+    return cleaned
 
 
 def _digit_cell_boxes(binary: np.ndarray) -> list[tuple[int, int, int, int]] | None:
