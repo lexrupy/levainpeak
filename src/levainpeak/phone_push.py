@@ -60,6 +60,7 @@ def build_packet(
     after: str | None,
     snapshot: dict | None,
     now: datetime | None = None,
+    chart_options: dict | None = None,
 ) -> tuple[dict, str | None]:
     """The bundle for one cycle, and the timestamp of its newest point (None if no points)."""
     stamp = (now or datetime.now().astimezone()).isoformat(timespec="seconds")
@@ -71,7 +72,7 @@ def build_packet(
         if points:
             packet["points"] = points
             newest = points[-1]["t"]
-        chart = chart_payload(prepare_graph_data(session_csv))
+        chart = chart_payload(prepare_graph_data(session_csv), **(chart_options or {}))
         if chart is not None:
             packet["chart"] = chart
     if snapshot and len(snapshot.get("jpeg_b64", "")) <= MAX_SNAPSHOT_CHARS:
@@ -141,6 +142,7 @@ class PhonePusher:
         get_session_csv: Callable[[], Path | None],
         get_snapshot: Callable[[], dict | None] | None = None,
         *,
+        get_chart_options: Callable[[], dict] | None = None,
         interval_seconds: float = 120,
         first_delay: float = 10,
         timeout: float = 60,
@@ -150,6 +152,7 @@ class PhonePusher:
         self._get_live = get_live
         self._get_session_csv = get_session_csv
         self._get_snapshot = get_snapshot
+        self._get_chart_options = get_chart_options
         self.interval_seconds = interval_seconds
         self._first_delay = first_delay
         self._timeout = timeout
@@ -226,6 +229,7 @@ class PhonePusher:
         packet, newest = build_packet(
             self._config, self._get_live() or {}, session_csv,
             after=self._after, snapshot=snapshot,
+            chart_options=None if self._get_chart_options is None else self._get_chart_options(),
         )
         body = json.dumps(packet).encode("utf-8")
         error = "sem resposta"

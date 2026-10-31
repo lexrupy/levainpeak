@@ -97,7 +97,10 @@ function drawChart(chart) {
   let baixo = Math.min(...temperaturas);
   let alto = Math.max(...temperaturas);
   if (temperaturas.length) {
-    if (alto - baixo < 1) {
+    if (Array.isArray(chart.temp_eixo) && chart.temp_eixo.length === 2) {
+      // Os limites escolhidos no app (a mesma escala do gráfico de lá).
+      [baixo, alto] = chart.temp_eixo;
+    } else if (alto - baixo < 1) {
       const centro = (alto + baixo) / 2;
       baixo = centro - 0.5;
       alto = centro + 0.5;
@@ -127,7 +130,7 @@ function drawChart(chart) {
     partes.push(`<text class="eixo" x="${L - 4}" y="${(y + 3).toFixed(1)}" text-anchor="end">${percentual}%</text>`);
     if (temperaturas.length) {
       const valor = baixo + (percentual / 100) * (alto - baixo);
-      partes.push(`<text class="eixo" x="${W - R + 4}" y="${(y + 3).toFixed(1)}" text-anchor="start">${valor.toFixed(1)}°</text>`);
+      partes.push(`<text class="eixo" x="${W - R + 4}" y="${(y + 3).toFixed(1)}" text-anchor="start">${Math.abs(valor - Math.round(valor)) < 1e-6 ? valor.toFixed(0) : valor.toFixed(1)}°</text>`);
     }
   });
   // Horas no eixo de baixo.

@@ -11,6 +11,7 @@ import time
 import tkinter as tk
 import tkinter.font as tkfont
 import webbrowser
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -24,7 +25,8 @@ from levainpeak.config import load_camera_config
 from levainpeak.debug_view import DebugWindow
 from levainpeak.floating import FloatingWindowControls
 from levainpeak.forecast import DoublingForecaster
-from levainpeak.graph_data import prepare_graph_data, volume_scale
+from levainpeak.graph_data import (TEMPERATURE_SCALES, VOLUME_SCALES, prepare_graph_data,
+                                   temperature_axis, volume_scale)
 from levainpeak.graph_phases import (DECLINE, EXPONENTIAL, LATENCY, STATIONARY,
                                      graph_phase_segments)
 from levainpeak.phone_config import load_phone_config, local_link, online_link
@@ -1260,6 +1262,23 @@ class LevainPeakApp:
 
         self._graph_window.after(10_000, update_graph)
 
+    def _cycle_graph_scale(self, series: str) -> str:
+        """Next scale mode for the volume or the temperature, saved and redrawn at once."""
+        if series == "volume":
+            modes, current = VOLUME_SCALES, self._settings.graph_volume_scale
+            field = "graph_volume_scale"
+        else:
+            modes, current = tuple(TEMPERATURE_SCALES), self._settings.graph_temperature_scale
+            field = "graph_temperature_scale"
+        chosen = modes[(modes.index(current) + 1) % len(modes)] if current in modes else modes[0]
+        self._settings = replace(self._settings, **{field: chosen}).clamped()
+        try:
+            save_settings(self._settings)
+        except OSError:
+            logging.exception("Falha ao salvar a escala do gráfico")
+        self._refresh_session_graph()
+        return "break"
+
     def _refresh_session_graph(self) -> None:
         if getattr(self, "_graph_canvas", None) is None:
             return
@@ -1397,6 +1416,7 @@ class LevainPeakApp:
                     config, self._phone_live, self._phone_csv,
                     self._phone_snapshot if settings.phone_snapshot else None,
                     interval_seconds=settings.phone_interval_seconds,
+                    get_chart_options=self._phone_chart_options,
                 )
                 self._phone_pusher.start()
         self._render_phone_status()
@@ -1478,6 +1498,13 @@ class LevainPeakApp:
 
     def _phone_csv(self) -> Path | None:
         return self._session_log.path if self._session_log.active else None
+
+    def _phone_chart_options(self) -> dict:
+        """The scales chosen on the graph, so the phone shows the same axes."""
+        return {
+            "temperature_scale": self._settings.graph_temperature_scale,
+            "volume_mode": self._settings.graph_volume_scale,
+        }
 
     def _phone_snapshot(self) -> dict | None:
         stream, measurement = self._stream, self._measurement
@@ -1570,7 +1597,9 @@ class LevainPeakApp:
         duration = max(1.0, (samples[-1][0] - first_time).total_seconds())
         x_of = lambda stamp: left + (stamp - first_time).total_seconds() / duration * plot_width
         # 0% is the initial volume; see volume_scale for what 100% is.
-        baseline, full_scale, scale_label = volume_scale(baseline, [v for _, v, _ in samples])
+        baseline, full_scale, scale_label = volume_scale(
+            baseline, [v for _, v, _ in samples], self._settings.graph_volume_scale
+        )
         span = max(1e-6, full_scale - baseline)
         # Leave room under 0% so the latency stretch is not glued to the axis,
         # and above 100% so the peak does not touch the top edge (the phase
@@ -1583,14 +1612,7 @@ class LevainPeakApp:
 
         temperatures = [temp for _, _, temp in samples if temp is not None]
         if temperatures:
-            low = min(temperatures)
-            high = max(temperatures)
-            if high - low < 1.0:
-                center = (high + low) / 2
-                low, high = center - 0.5, center + 0.5
-            else:
-                margin = (high - low) * 0.08
-                low, high = low - margin, high + margin
+            low, high = temperature_axis(temperatures, self._settings.graph_temperature_scale)
             y_temperature = lambda value: floor - (value - low) / (high - low) * scale_height
         else:
             low, high = 0.0, 1.0
@@ -1603,12 +1625,23 @@ class LevainPeakApp:
             canvas.create_text(left - 10, y, text=f"{fraction:.0%}", anchor="e", fill="#397a9b")
             if temperatures:
                 value = low + fraction * (high - low)
-                canvas.create_text(right + 10, y, text=f"{value:.1f}°", anchor="w", fill="#c46b35")
+                text = f"{value:.0f}°" if abs(value - round(value)) < 1e-6 else f"{value:.1f}°"
+                canvas.create_text(right + 10, y, text=text, anchor="w", fill="#c46b35")
         canvas.create_line(left, top, left, bottom, fill="#397a9b", width=2)
         canvas.create_line(right, top, right, bottom, fill="#c46b35", width=2)
         canvas.create_line(left, bottom, right, bottom, fill="#59645e", width=2)
-        canvas.create_text(left, top - 8, text=f"Volume (% do {scale_label}; 0% = início)", anchor="sw", fill="#397a9b")
-        canvas.create_text(right, top - 8, text="Temperatura (°C)", anchor="se", fill="#c46b35")
+        # The axis titles are buttons: a click cycles the scale of that series.
+        volume_title = canvas.create_text(
+            left, top - 8, text=f"Volume (% do {scale_label}; 0% = início) ▾", anchor="sw", fill="#397a9b"
+        )
+        temperature_title = canvas.create_text(
+            right, top - 8, text=f"Temperatura (°C) · {self._settings.graph_temperature_scale} ▾",
+            anchor="se", fill="#c46b35",
+        )
+        for item, series in ((volume_title, "volume"), (temperature_title, "temperature")):
+            canvas.tag_bind(item, "<Button-1>", lambda _e, series=series: self._cycle_graph_scale(series))
+            canvas.tag_bind(item, "<Enter>", lambda _e: canvas.configure(cursor="hand2"))
+            canvas.tag_bind(item, "<Leave>", lambda _e: canvas.configure(cursor="fleur"))
 
         for tick in range(5):
             fraction = tick / 4

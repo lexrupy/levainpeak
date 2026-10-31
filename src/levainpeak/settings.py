@@ -7,6 +7,8 @@ import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from levainpeak.graph_data import TEMPERATURE_SCALES, VOLUME_SCALES
+
 SETTINGS_PATH = Path("data/settings.json")
 MIN_RECORD_SECONDS = 10
 MAX_RECORD_SECONDS = 120
@@ -23,6 +25,8 @@ class Settings:
     phone_interval_seconds: int = 120
     phone_snapshot: bool = False
     overlay_brightness: int = 50
+    graph_temperature_scale: str = "ampla"
+    graph_volume_scale: str = "auto"
 
     def clamped(self) -> "Settings":
         return Settings(
@@ -37,6 +41,10 @@ class Settings:
             overlay_brightness=min(
                 MAX_OVERLAY_BRIGHTNESS, max(MIN_OVERLAY_BRIGHTNESS, int(self.overlay_brightness))
             ),
+            graph_temperature_scale=(
+                self.graph_temperature_scale if self.graph_temperature_scale in TEMPERATURE_SCALES else "ampla"
+            ),
+            graph_volume_scale=self.graph_volume_scale if self.graph_volume_scale in VOLUME_SCALES else "auto",
         )
 
 
@@ -51,6 +59,8 @@ def load_settings(path: Path = SETTINGS_PATH) -> Settings:
             phone_interval_seconds=int(data.get("phone_interval_seconds", defaults.phone_interval_seconds)),
             phone_snapshot=bool(data.get("phone_snapshot", defaults.phone_snapshot)),
             overlay_brightness=int(data.get("overlay_brightness", defaults.overlay_brightness)),
+            graph_temperature_scale=str(data.get("graph_temperature_scale", defaults.graph_temperature_scale)),
+            graph_volume_scale=str(data.get("graph_volume_scale", defaults.graph_volume_scale)),
         ).clamped()
     except FileNotFoundError:
         return defaults

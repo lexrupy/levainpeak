@@ -262,10 +262,11 @@ def _inspect_face(
     binary = cv2.resize(binary, None, fx=8, fy=8, interpolation=cv2.INTER_NEAREST)
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
     binary = _deslant(binary)
-    # A drawn face may leave any margin around the digits: the cells are cut at the
-    # gaps between digits; the usual layout (fixed positions) and cells fitted to
-    # the ink are the next tries.
-    strategies = (_glyph_cells, _digit_cell_boxes, _fit_digit_cells) if drawn else (_digit_cell_boxes,)
+    # A drawn face may leave any margin around the digits, so the fixed layout of the
+    # found face does not apply (on a tight face it reads wrong digits with confidence):
+    # the cells are cut at the gaps between digits, or fitted to the ink when the
+    # digits touch.
+    strategies = (_glyph_cells, _fit_digit_cells) if drawn else (_digit_cell_boxes,)
     first: TemperatureInspection | None = None
     for find_cells in strategies:
         boxes = find_cells(binary)
@@ -418,7 +419,7 @@ def _glyph_cells(binary: np.ndarray) -> list[tuple[int, int, int, int]] | None:
         return None
     digits = [(min(blocks[i][0] for i in m), max(blocks[i][1] for i in m)) for m in best[1]]
     digit_width = max(b - a for a, b in digits)
-    pad = int(0.05 * digit_width)
+    pad = int(0.03 * digit_width)
     spans = []
     for a, b in digits:
         if b - a >= 0.75 * digit_width:

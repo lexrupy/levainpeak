@@ -103,14 +103,24 @@ def prepare_graph_data(path: Path) -> dict:
     }
 
 
-def volume_scale(baseline: float | None, volumes: list[float]) -> tuple[float, float, str]:
+VOLUME_SCALES = ("auto", "máximo", "capacidade")
+
+
+def volume_scale(
+    baseline: float | None, volumes: list[float], mode: str = "auto"
+) -> tuple[float, float, str]:
     """(0% level, 100% level, label) of the volume axis.
 
-    0% is the initial volume. 100% is the doubling of it until that is reached;
-    once the volume goes past it, 100% is the session's peak.
+    0% is the initial volume. ``auto``: 100% is the doubling of it until that is
+    reached, then the session's peak. ``máximo``: always the peak. ``capacidade``:
+    always the full pot.
     """
     start = baseline if baseline and baseline > 0 else volumes[0]
     peak = max(volumes)
+    if mode == "capacidade":
+        return start, 1.0, "capacidade"
+    if mode == "máximo":
+        return start, max(peak, start + 1e-3), "máximo atingido"
     double_target = 2 * start
     if double_target > 1.0:
         return start, 1.0, "capacidade"
@@ -119,7 +129,9 @@ def volume_scale(baseline: float | None, volumes: list[float]) -> tuple[float, f
     return start, double_target, "dobro"
 
 
-def chart_payload(data: dict, max_points: int = 400) -> dict | None:
+def chart_payload(
+    data: dict, max_points: int = 400, *, temperature_scale: str = "ampla", volume_mode: str = "auto"
+) -> dict | None:
     """The series for the phone panel, small enough for one spreadsheet cell.
 
     Volumes come already on the graph's axis (0% = initial volume, 100% = the
@@ -129,7 +141,7 @@ def chart_payload(data: dict, max_points: int = 400) -> dict | None:
     if data.get("too_few"):
         return None
     samples = data["samples"]
-    baseline, full_scale, label = volume_scale(data["baseline"], [v for _, v, _ in samples])
+    baseline, full_scale, label = volume_scale(data["baseline"], [v for _, v, _ in samples], volume_mode)
     span = max(1e-6, full_scale - baseline)
     first = samples[0][0]
     stride = max(1, -(-len(samples) // max_points))
@@ -149,10 +161,43 @@ def chart_payload(data: dict, max_points: int = 400) -> dict | None:
         [name, int((start - first).total_seconds()), int((end - first).total_seconds())]
         for name, start, end in segments
     ]
-    return {
+    payload = {
         "nome": data["session_name"],
         "t0": first.isoformat(timespec="seconds"),
         "escala": label,
         "pts": points,
         "fases": phases,
     }
+    temperatures = [sample[2] for sample in samples if sample[2] is not None]
+    if temperatures:
+        payload["temp_eixo"] = list(temperature_axis(temperatures, temperature_scale))
+    return payload
+
+
+# Narrowest range (degrees) the temperature axis may zoom to, by mode.
+TEMPERATURE_SCALES = {"ampla": 4, "zoom": 1, "larga": 12}
+
+
+def temperature_axis(values: list[float], mode: str = "ampla") -> tuple[float, float]:
+    """Limits of the temperature axis.
+
+    ``zoom`` fits the data (one degree at the least): a 0.1 degree wobble becomes a
+    spike as tall as the chart. ``ampla`` and ``larga`` keep a wider range, in whole
+    degrees, a multiple of four so the five ticks fall on whole degrees, with the data
+    in the middle.
+    """
+    low_value, high_value = min(values), max(values)
+    minimum = TEMPERATURE_SCALES.get(mode, TEMPERATURE_SCALES["ampla"])
+    if mode == "zoom":
+        if high_value - low_value < 1.0:
+            center = (high_value + low_value) / 2
+            return center - 0.5, center + 0.5
+        margin = (high_value - low_value) * 0.08
+        return low_value - margin, high_value + margin
+    span = max(minimum, -(-(high_value - low_value + 0.5) // 4) * 4)
+    low = int((low_value + high_value) / 2 // 1 - span // 2)
+    while low_value - 0.25 < low:
+        low -= 1
+    while high_value + 0.25 > low + span:
+        span += 4
+    return float(low), float(low + span)

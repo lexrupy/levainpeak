@@ -168,7 +168,7 @@ def test_a_display_stuck_on_the_wall_at_a_tilt_is_still_read(text, angle):
     assert read_temperature(tilted, (0, 0, width, height)) == pytest.approx(float(text))
 
 
-@pytest.mark.parametrize("text", ["21.8", "26.6", "23.7", "30.9"])
+@pytest.mark.parametrize("text", ["21.8", "26.6", "24.5", "30.9"])
 def test_a_drawn_face_quad_reads_a_display_seen_at_an_angle(text):
     frame, _ = render_display(text)
     frame = cv2.copyMakeBorder(frame, 80, 80, 80, 80, cv2.BORDER_CONSTANT, value=(190, 190, 190))
