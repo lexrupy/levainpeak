@@ -21,11 +21,12 @@ a fase e a temperatura lida do visor de um termômetro. Grava uma linha de CSV a
 | `debug_view.py` | Janela Diagnóstico (mosaico ao vivo das etapas da detecção). |
 | `floating.py` | Mover, redimensionar pela borda e fechar com Esc nos popups. |
 | `settings.py` | Configurações (`data/settings.json`). |
+| `graph_data.py`, `phone_config.py`, `phone_push.py` | Dados do gráfico, `phone.ini` e envio ao celular. |
 | `app.py` | Interface Tk. |
 
 ## Como rodar
 
-- Testes: `.venv/bin/python -m pytest -q`
+- Testes: `.venv/bin/python -m pytest -q` (sem janelas; `--gui` abre as dos testes de interface)
 - App: `.venv/bin/python -m levainpeak.app --resume` (retoma a sessão com o CSV modificado mais recentemente).
 - Reiniciar o app aberto: `kill $(pgrep -f levainpeak.app)` e subir de novo com `--resume`, em segundo plano.
 - Câmera: `camera.ini` local (fora do git). Nunca versionar credenciais nem imagens da câmera.
@@ -54,35 +55,40 @@ a fase e a temperatura lida do visor de um termômetro. Grava uma linha de CSV a
   `git diff` no começo de cada rodada. Commitar só os arquivos próprios, nunca `git add -A`.
 - Reiniciar o app com `--resume` sempre que for preciso.
 
-## Em andamento: acompanhar pelo celular (app NÃO implementado)
+## Celular: o app envia para uma planilha e um painel lê
 
-O usuário pediu para **não implementar o app ainda**. Decisões já tomadas:
+Implementado (2026-10-31). O fluxo: o app do PC envia **um pacote por ciclo** para o Google Sheets, por um
+Apps Script; um painel estático só de leitura mostra os dados.
 
-- **Destino dos dados:** Google Sheets, recebendo por um **Google Apps Script** (app da web). O app do PC faz um
-  `POST` HTTPS simples (biblioteca padrão, sem OAuth nem chave). O celular lê por `GET` ou abre a planilha.
-  Firebase foi descartado porque, com envio a cada 2 a 4 minutos, o "ao vivo" de verdade não compensa o setup.
-- **Script pronto:** `docs/apps-script/Code.gs` (validado só por sintaxe e por uma simulação em memória; ainda
-  **não** foi rodado no Google). O usuário cola o script na planilha, define a propriedade `TOKEN`, roda
-  `configurar()` e implanta como app da web ("Executar como: eu", "Acesso: qualquer pessoa").
-- **Um pacote por ciclo, com tudo:** `POST` com `{token, session, sent_at, live, points, snapshot}`.
-  `points` = `{t, v (0-1), c, p}`; `snapshot` = `{t, jpeg_b64}`. **Intervalo configurável** na aba Configurações,
-  120 s por padrão e 240 s como alternativa. Sem envio imediato nos eventos.
-- **Snapshot:** só o recorte do pote, ~300 px, JPEG ~60, em base64 **abaixo de ~25 KB** (o script recusa acima de
-  49.000 caracteres). Opção separada, desligada por padrão.
-- **Leitura:** `GET ?token=...&o=ao_vivo | serie&limite=N | snapshot`. A primeira versão pode dispensar o PWA
-  (olhar a planilha e um gráfico do Sheets no celular). O PWA entra para mostrar a imagem e o gráfico do app.
-- **Descartados:** página do claude.ai (o app não grava nela sozinho), Gist (revisões demais, cache de minutos).
-- **Cuidados do cliente:** o Apps Script executa o `POST` e responde com um redirecionamento 302 que deve ser
-  seguido com `GET`. O `urllib` do Python faz isso sozinho (verificado contra a implantação real, 2026-10-31).
-  No `curl`, usar `-L -d ...` e **não** `-X POST`, que força um segundo `POST` e devolve 405. O token vai no corpo
-  do `POST` e na URL do `GET`. Depois de editar o script é preciso criar uma **nova versão** da implantação.
-- **Implantação:** "Executar como: Eu" e "Quem pode acessar: Qualquer pessoa" (com "Conta do Google" ou
-  "usuário com acesso" o app recebe uma página de login). Já feita e verificada: `GET` com token falso devolve
-  `{"ok":false,"erro":"token inválido"}`. A URL `/exec` e o token ficam em `phone.ini` (seção `[phone]`, chaves `url` e `token`, permissão 600, fora do git; modelo em `phone.ini.example`). O token colado numa conversa deve ser trocado (propriedade `TOKEN` do script e `phone.ini`).
+| Peça | Onde |
+|---|---|
+| Receptor (Apps Script) | `docs/apps-script/Code.gs`; simulação em `docs/apps-script/simulacao.js` (`node docs/apps-script/simulacao.js`) |
+| Envio no app | `src/levainpeak/phone_push.py` (`PhonePusher`, `build_packet`, `make_snapshot`), ligado em `app.py` |
+| Configuração secreta | `phone.ini` (`[phone]`, `url` e `token`; fora do git; modelo `phone.ini.example`); leitura em `phone_config.py` |
+| Opções | aba Configurações: ligar, intervalo (60 a 900 s, padrão 120), imagem do pote (desligada por padrão); `settings.py` |
+| Dados do gráfico | `graph_data.py` (`prepare_graph_data`, `volume_scale`, `chart_payload`), usado pela janela e pelo painel |
+| Painel | `painel/` (HTML, JS e CSS sem biblioteca). Rodar: `cd painel && python -m http.server 8000`. Links prontos: `python -m levainpeak.phone_config` |
 
-Pendente: o usuário rodar o script e testar com `curl`; decidir quem lê (token no PWA); depois implementar o
-envio no app (módulo de envio, opções em Configurações) e, se quiser, o PWA. Plano técnico: extrair o preparo
-dos dados do gráfico (`App._prepare_graph_data` e a escala do eixo) para uma função pura compartilhada.
+- **Pacote:** `{token, session, sent_at, live, points, chart, snapshot}`. `points` = `{t, v, c, p}` (só os novos desde
+  o último envio); `chart` = série já na escala do app (0% = início, 100% = dobro ou pico), até 400 pontos, com as
+  fases; `snapshot` = recorte do pote em base64, abaixo de 25.000 caracteres. `live` = `sessao, volume_pct,
+  crescimento, fase, temperatura_c, temperatura_nota, previsao, perfil, status, intervalo_s`.
+- **Leitura:** `GET ?token=...&o=painel[&snap=<t>]` devolve estado, gráfico e snapshot numa chamada; o snapshot só
+  vai se mudou. O painel guarda o endereço e o token no `localStorage` (entram pelo `#u=...&t=...`, que não vai
+  para o servidor) e atualiza a cada 60 s.
+- **Implantação do Apps Script:** "Executar como: Eu", "Quem pode acessar: Qualquer pessoa". **Depois de editar o
+  `Code.gs`, criar uma nova versão** em "Gerenciar implantações". Se o painel disser que o script está
+  desatualizado, é isso.
+- **Cuidados:** o `POST` ao Apps Script é respondido com um redirecionamento 302 (o `urllib` já segue; no `curl`,
+  `-L -d ...` sem `-X POST`). O token nunca vai para log nem para a mensagem de status. O token colado em
+  conversa deve ser trocado (propriedade `TOKEN` do script e `phone.ini`).
+- **Testes:** `pytest -q` não abre janela. `pytest --gui` roda os testes que abrem janelas e tomam o foco.
+- **Descartados:** Firebase (o "ao vivo" de verdade não compensa com envio a cada 2 a 4 min), Gist, página do
+  claude.ai.
+
+Pendente: o usuário colar o `Code.gs` novo no Apps Script e criar a nova versão da implantação; ligar o envio na
+aba Configurações. Não validado contra a planilha real: o `o=painel` e o campo `chart` (a implantação ainda estava
+na versão antiga quando isto foi escrito).
 
 ## Limites conhecidos
 

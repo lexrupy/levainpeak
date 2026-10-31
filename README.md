@@ -35,3 +35,10 @@ python -m levainpeak.app --resume   # retoma a sessão gravada mais recentemente
 The local `camera.ini` contains the RTSP URL and credentials and is ignored by Git. The camera settings from the neighboring timelapse project have been copied into this local file for development.
 
 Do not commit camera credentials, private footage, virtual environments, or generated model artifacts. See [AGENTS.md](AGENTS.md) for contribution guidance.
+
+## Acompanhar pelo celular
+
+O app pode enviar, a cada 2 ou 4 minutos, o estado atual, os pontos novos, o gráfico e uma imagem reduzida do pote para
+uma planilha do Google (por um Apps Script), e um painel só de leitura mostra isso no celular. Veja
+`docs/apps-script/Code.gs`, `painel/LEIA-ME.md` e `docs/estado-do-projeto.md`. A URL e o token ficam em `phone.ini`,
+fora do git.
