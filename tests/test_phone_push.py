@@ -44,7 +44,7 @@ class FakeAppsScript:
                     answer = {"ok": False, "erro": "token inválido"}
                 else:
                     outer.packets.append(body)
-                    answer = {"ok": True, "recebido": {"pontos": len(body.get("points", []))}}
+                    answer = {"ok": True, "limpou": {"serie": 7, "grafico": 2}} if body.get("acao") == "limpar" else {"ok": True, "recebido": {"pontos": len(body.get("points", []))}}
                 key = str(len(outer.answers))
                 outer.answers[key] = answer
                 self.send_response(302)
@@ -198,3 +198,23 @@ def test_the_background_thread_sends_every_cycle_and_stops_quickly(receiver, tmp
     began = time.time()
     sender.stop()
     assert len(receiver.packets) >= 3 and time.time() - began < 2
+
+
+def test_clearing_asks_the_receiver_and_does_not_resend_what_the_session_already_has(receiver, tmp_path):
+    csv_path = tmp_path / "s.csv"
+    append_rows(csv_path, 0, 5)
+    sender = pusher(receiver.url, csv_path)
+    assert sender.push_once()
+    done, message = sender.clear_remote()
+    assert done and message == "9 linhas apagadas"
+    assert receiver.packets[-1] == {"token": TOKEN, "acao": "limpar"}
+    append_rows(csv_path, 5, 2)
+    assert sender.push_once()
+    assert len(receiver.packets[-1]["points"]) == 2
+
+
+def test_a_refused_clear_reports_the_reason_without_the_token(receiver, tmp_path):
+    csv_path = tmp_path / "s.csv"
+    append_rows(csv_path, 0, 3)
+    done, message = pusher(receiver.url, csv_path, token="outro-token-comprido").clear_remote()
+    assert not done and message == "token inválido" and "outro-token" not in message

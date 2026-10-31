@@ -146,6 +146,7 @@ class PhonePusher:
         self._after: str | None = None  # newest point the receiver has accepted
         self._status = PusherStatus()
         self._lock = threading.Lock()
+        self._send_lock = threading.Lock()  # a cycle and a clear never overlap
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -181,6 +182,36 @@ class PhonePusher:
 
     def push_once(self) -> bool:
         """Send one bundle now. True when the receiver accepted it."""
+        with self._send_lock:
+            return self._push_once()
+
+    def clear_remote(self) -> tuple[bool, str]:
+        """Ask the receiver to empty the spreadsheet. Returns (done, message for the user).
+
+        Points already in the session CSV are not sent again afterwards, so the
+        sheet stays empty until new readings arrive (the live state and the chart
+        come back with the next cycle).
+        """
+        with self._send_lock:
+            body = json.dumps({"token": self._config.token, "acao": "limpar"}).encode("utf-8")
+            try:
+                answer = self._post(body)
+            except Exception as exc:  # noqa: BLE001 - described, never re-raised with the URL
+                return False, self._describe(exc)
+            if not answer.get("ok"):
+                return False, str(answer.get("erro") or "resposta inesperada").replace(self._config.token, "<token>")
+            if "limpou" not in answer:
+                return False, "o script do Google ainda é a versão antiga (cole o Code.gs novo e crie uma nova versão)"
+            csv_path = self._get_session_csv()
+            if csv_path is not None and csv_path.is_file():
+                newest, _ = read_new_points(csv_path, None, limit=1)
+                if newest:
+                    with self._lock:
+                        self._after = newest[-1]["t"]
+            rows = sum(int(n) for n in (answer.get("limpou") or {}).values() if isinstance(n, (int, float)))
+            return True, f"{rows} linhas apagadas"
+
+    def _push_once(self) -> bool:
         snapshot = self._get_snapshot() if self._get_snapshot is not None else None
         packet, newest = build_packet(
             self._config, self._get_live() or {}, self._get_session_csv(),

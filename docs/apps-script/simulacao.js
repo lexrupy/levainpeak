@@ -29,7 +29,7 @@ const ctx = {
   Logger: { log() {} }, console,
 };
 vm.createContext(ctx);
-vm.runInContext(fs.readFileSync(path.join(__dirname, 'Code.gs'), 'utf8') + '\nthis.__api = { doPost, doGet, configurar };', ctx);
+vm.runInContext(fs.readFileSync(path.join(__dirname, 'Code.gs'), 'utf8') + '\nthis.__api = { doPost, doGet, configurar, limparTudo };', ctx);
 const { doPost, doGet, configurar } = ctx.__api;
 const post = o => JSON.parse(doPost({ postData: { contents: typeof o === 'string' ? o : JSON.stringify(o) } }).getContent());
 const get = q => JSON.parse(doGet({ parameter: q }).getContent());
@@ -75,4 +75,15 @@ ok('a série é aparada em 20000 linhas', () => {
   post({ token: T, points: muitos }); assert.strictEqual(sheets.serie.getLastRow() - 1, 20000);
 });
 ok('parâmetro desconhecido é recusado', () => assert.strictEqual(get({ token: T, o: 'xx' }).ok, false));
+ok('limpar sem token é recusado e não apaga nada', () => { assert.strictEqual(post({ token: 'x', acao: 'limpar' }).ok, false); assert.ok(sheets.serie.getLastRow() > 1); });
+ok('limpar zera as quatro abas e mantém os cabeçalhos', () => {
+  const r = post({ token: T, acao: 'limpar' });
+  assert.strictEqual(r.ok, true); assert.strictEqual(r.limpou.serie, 20000); assert.strictEqual(r.limpou.snapshot, 2);
+  assert.strictEqual(sheets.serie.rows[0].join(','), 'timestamp,volume_fracao,temperatura_c,fase,sessao');
+  assert.strictEqual(sheets.serie.getLastRow(), 1);
+  const p = get({ token: T, o: 'painel' }); assert.ok(p.ao_vivo.vazio && p.grafico.vazio && p.snapshot.vazio);
+  assert.deepStrictEqual(get({ token: T, o: 'serie' }).pontos, []);
+});
+ok('depois de limpar, dados novos entram normalmente', () => assert.strictEqual(post({ token: T, points: [pt(1, 0.3)] }).recebido.pontos, 1));
+ok('limparTudo (editor) também funciona', () => { ctx.__api.limparTudo(); assert.strictEqual(sheets.serie.getLastRow(), 1); });
 console.log(`\n${n} verificações passaram`);

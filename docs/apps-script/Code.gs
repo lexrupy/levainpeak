@@ -11,6 +11,8 @@
  *     "chart":  { ... série do gráfico, já na escala do app ... },          (opcional)
  *     "snapshot": { "t": ISO, "jpeg_b64": "..." } }                        (opcional)
  *
+ * POST de limpeza: { "token": "...", "acao": "limpar" } zera as quatro abas (mantém os cabeçalhos).
+ *
  * GET:  ?token=...&o=painel[&snap=<t do snapshot que você já tem>]
  *       | ao_vivo | serie&limite=1500 | snapshot
  */
@@ -37,6 +39,11 @@ function configurar() {
   Logger.log('Pronto. Agora implante como app da web.');
 }
 
+/** Para rodar à mão no editor: apaga todos os dados e deixa só os cabeçalhos. */
+function limparTudo() {
+  Logger.log(JSON.stringify(limpar_()));
+}
+
 function doPost(e) {
   let corpo;
   try {
@@ -49,6 +56,7 @@ function doPost(e) {
   const trava = LockService.getScriptLock();
   trava.waitLock(20000);
   try {
+    if (corpo.acao === 'limpar') return resposta_({ ok: true, limpou: limpar_() });
     const recebido = {};
     if (Array.isArray(corpo.points) && corpo.points.length) {
       recebido.pontos = acrescentarPontos_(corpo.points, String(corpo.session || ''));
@@ -134,6 +142,20 @@ function gravarSnapshot_(snapshot) {
     ['jpeg_base64', imagem],
   ]);
   return 'ok';
+}
+
+/** Zera as abas e devolve quantas linhas de dados cada uma tinha. */
+function limpar_() {
+  const abas = [[ABA_SERIE, CABECALHO_SERIE], [ABA_AO_VIVO, ['campo', 'valor']],
+    [ABA_GRAFICO, ['campo', 'valor']], [ABA_SNAPSHOT, ['campo', 'valor']]];
+  const limpou = {};
+  abas.forEach(function (par) {
+    const aba = aba_(par[0], par[1]);
+    const linhas = Math.max(0, aba.getLastRow() - 1);
+    if (linhas > 0) aba.getRange(2, 1, linhas, par[1].length).clearContent();
+    limpou[par[0]] = linhas;
+  });
+  return limpou;
 }
 
 // ---------------------------------------------------------------- leitura

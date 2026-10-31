@@ -6,13 +6,14 @@ import argparse
 import csv
 import json
 import logging
+import threading
 import time
 import tkinter as tk
 import tkinter.font as tkfont
 import webbrowser
 from datetime import datetime, timedelta
 from pathlib import Path
-from tkinter import filedialog, simpledialog, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import cv2
 import numpy as np
@@ -1024,6 +1025,9 @@ class LevainPeakApp:
         ttk.Button(buttons, text="Copiar link do painel online", command=self._copy_online_link).pack(
             side="left", padx=(8, 0)
         )
+        ttk.Button(buttons, text="Limpar dados do celular", command=self._clear_phone_data).pack(
+            side="left", padx=(8, 0)
+        )
         ttk.Label(
             phone, foreground="#59645e", wraplength=560, justify="left",
             text="Precisa do phone.ini (modelo: phone.ini.example) e do script no Google Sheets. "
@@ -1080,6 +1084,26 @@ class LevainPeakApp:
                 )
                 self._phone_pusher.start()
         self._render_phone_status()
+
+    def _clear_phone_data(self) -> None:
+        pusher = self._phone_pusher
+        if pusher is None:
+            messagebox.showinfo("Celular", "Ligue o envio para o celular antes de limpar a planilha.")
+            return
+        if not messagebox.askyesno(
+            "Limpar dados do celular",
+            "Apagar todos os dados da planilha do Google (série, gráfico, imagem e estado ao vivo)?\n\n"
+            "Os arquivos de sessão deste computador não são tocados. Não dá para desfazer.",
+        ):
+            return
+        self._phone_status.configure(text="Limpando a planilha…")
+
+        def work() -> None:
+            done, message = pusher.clear_remote()
+            text = f"Planilha limpa ({message})." if done else f"Não foi possível limpar: {message}"
+            self.root.after(0, lambda: self._phone_status.configure(text=text))
+
+        threading.Thread(target=work, name="phone-clear", daemon=True).start()
 
     def _render_phone_status(self) -> None:
         pusher = self._phone_pusher
