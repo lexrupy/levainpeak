@@ -122,3 +122,29 @@ def test_infrared_look_reads_the_digits_or_gives_up_never_a_wrong_value():
                 wrong.append((text, value))
     assert not wrong, f"confident misreads in infrared: {wrong}"
     assert read >= 16  # it must not simply refuse everything
+
+
+def _in_a_big_region(text, padding, *, seed=0):
+    """The display lost in a much larger selected area with bright objects around it."""
+    frame, _ = render_display(text, noise=2, seed=seed)
+    height, width = frame.shape[:2]
+    big = np.full((height + 2 * padding, width + 2 * padding, 3), 55, np.uint8)
+    big[padding:padding + height, padding:padding + width] = frame
+    cv2.rectangle(big, (5, 5), (padding + 40, padding // 2), (215, 215, 215), -1)  # a bright shelf edge
+    cv2.circle(big, (big.shape[1] - 30, big.shape[0] - 30), 22, (230, 230, 230), -1)  # a lamp reflection
+    return big, (0, 0, big.shape[1], big.shape[0])
+
+
+@pytest.mark.parametrize("padding", [20, 60, 120, 200])
+def test_a_much_larger_region_still_reads_or_gives_up_never_a_wrong_value(padding):
+    wrong, read = [], 0
+    for text in ("21.8", "21.9", "29.2", "25.6"):
+        frame, roi = _in_a_big_region(text, padding)
+        value = read_temperature(frame, roi)
+        if value is None:
+            continue
+        read += 1
+        if value != pytest.approx(float(text)):
+            wrong.append((text, value))
+    assert not wrong, f"confident misreads with padding {padding}: {wrong}"
+    assert read >= 3

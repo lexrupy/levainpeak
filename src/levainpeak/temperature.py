@@ -73,13 +73,32 @@ def inspect_temperature(
 
     display = frame[top:bottom, left:right]
     gray = cv2.cvtColor(display, cv2.COLOR_BGR2GRAY)
+    use_infrared = is_infrared(display) if infrared is None else infrared
     # The manual ROI includes a little bezel for easier selection. Find the
     # bright LCD face first so its dark frame is not joined to the digits by
-    # the column-based seven-segment recognizer.
-    threshold = max(95, min(150, int(np.percentile(gray, 65))))
-    count, _, stats, _ = cv2.connectedComponentsWithStats(
-        (gray >= threshold).astype(np.uint8), 8
-    )
+    # the column-based seven-segment recognizer. How bright "bright" is depends
+    # on how much dark surroundings the ROI takes in, so several thresholds are
+    # tried, the usual one first, and the first face that reads is kept.
+    first: TemperatureInspection | None = None
+    votes: dict[float, list[TemperatureInspection]] = {}
+    for index, face in enumerate(_face_candidates(gray)):
+        result = _inspect_face(display, face, use_infrared)
+        first = first or result
+        if result.reading is None:
+            continue
+        if index == 0:
+            return result  # the usual threshold found the face and read it
+        # A face found with another threshold must be confirmed by a second one:
+        # one odd rectangle can still spell three valid digits by chance.
+        votes.setdefault(result.reading, []).append(result)
+        if len(votes[result.reading]) >= 2:
+            return votes[result.reading][0]
+    return first or TemperatureInspection(display, gray)
+
+
+def _lcd_face(gray: np.ndarray, threshold: int) -> np.ndarray | None:
+    """The bright LCD rectangle at ``threshold``, or None when there is none."""
+    count, _, stats, _ = cv2.connectedComponentsWithStats((gray >= threshold).astype(np.uint8), 8)
     lcd_boxes = []
     for index in range(1, count):
         x, y, box_width, box_height, area = stats[index]
@@ -95,17 +114,68 @@ def inspect_temperature(
             and 1.25 <= aspect <= 4.5
         ):
             lcd_boxes.append((int(area), int(x), int(y), int(box_width), int(box_height)))
-    if lcd_boxes:
-        _, x, y, box_width, box_height = max(lcd_boxes)
-        margin = max(1, int(min(box_width, box_height) * 0.025))
-        gray = gray[
-            max(0, y - margin):min(gray.shape[0], y + box_height + margin),
-            max(0, x - margin):min(gray.shape[1], x + box_width + margin),
-        ]
+    if not lcd_boxes:
+        return None
+    _, x, y, box_width, box_height = max(lcd_boxes)
+    margin = max(1, int(min(box_width, box_height) * 0.025))
+    return gray[
+        max(0, y - margin):min(gray.shape[0], y + box_height + margin),
+        max(0, x - margin):min(gray.shape[1], x + box_width + margin),
+    ]
+
+
+def _trim_dark_border(face: np.ndarray) -> np.ndarray:
+    """Cut away the bezel: outer rows and columns much darker than the LCD face."""
+    height, width = face.shape
+    if height < 12 or width < 12:
+        return face
+    reference = float(np.percentile(face[height // 4:3 * height // 4, width // 4:3 * width // 4], 75))
+    bright_rows = np.flatnonzero(face.mean(axis=1) >= 0.65 * reference)
+    bright_columns = np.flatnonzero(face.mean(axis=0) >= 0.65 * reference)
+    if bright_rows.size < 12 or bright_columns.size < 12:
+        return face
+    return face[bright_rows[0]:bright_rows[-1] + 1, bright_columns[0]:bright_columns[-1] + 1]
+
+
+def _face_candidates(gray: np.ndarray) -> list[np.ndarray]:
+    """Possible LCD faces, from the usual threshold first, without duplicates."""
+    bright = float(np.percentile(gray, 98))
+    thresholds = [
+        _face_threshold(gray),
+        int(0.65 * bright),
+        int(0.75 * bright),
+        int(cv2.threshold(cv2.GaussianBlur(gray, (0, 0), 1.5), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[0]),
+        int((float(np.percentile(gray, 50)) + bright) / 2),
+    ]
+    faces: list[np.ndarray] = []
+    seen: set[tuple[int, int, int]] = set()
+
+    def add(face: np.ndarray) -> None:
+        key = (face.shape[0], face.shape[1], int(face.sum()) % 100003)
+        if key not in seen:
+            seen.add(key)
+            faces.append(face)
+
+    for threshold in dict.fromkeys(thresholds):
+        face = _lcd_face(gray, threshold)
+        if face is None:
+            if not faces and threshold == thresholds[0]:
+                add(gray)  # nothing rectangular found: use the whole region
+            continue
+        # Trimmed first: it removes the bezel a loose threshold drags in. The
+        # untrimmed face stays as an option because in infrared the face fades
+        # toward one side and trimming can cut into the digits there.
+        add(_trim_dark_border(face))
+        add(face)
+    return faces or [gray]
+
+
+def _inspect_face(display: np.ndarray, gray: np.ndarray, infrared: bool) -> TemperatureInspection:
+    """Binarize the LCD face, locate the three digits and read them."""
     # Otsu often selects the bright LCD background on these reflective
     # displays. Threshold relative to the face brightness, then inspect the
     # three fixed digit positions used by this thermometer layout.
-    if is_infrared(display) if infrared is None else infrared:
+    if infrared:
         binary = _infrared_ink(gray)
     else:
         threshold = int(np.clip(np.percentile(gray, 40), 100, 150))
@@ -126,6 +196,10 @@ def inspect_temperature(
         value = digits[0] * 10 + digits[1] + digits[2] / 10
         reading = float(value) if -10 <= value <= 60 else None
     return TemperatureInspection(display, gray, binary, tuple(boxes), cells, digits, occupancy, reading)
+
+
+def _face_threshold(gray: np.ndarray) -> int:
+    return max(95, min(150, int(np.percentile(gray, 65))))
 
 
 # In infrared the picture is blurry, the LCD face is brighter and lit from one
