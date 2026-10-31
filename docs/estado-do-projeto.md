@@ -95,6 +95,24 @@ Pendente: o usuário ligar o envio na aba Configurações; apagar a linha de tes
 abrir o painel de novo pelo link do `python -m levainpeak.phone_config` nos aparelhos que guardaram a URL antiga.
 Ainda não vistos: o painel no celular de verdade e o tema escuro pela preferência do sistema.
 
+## Publicação no GitHub
+
+Publicado em 2026-10-31 em **github.com/lexrupy/levainpeak** (público, MIT). Remoto `origin` por SSH.
+
+- **Antes de publicar:** auditoria de segredos em todo o histórico (token, IDs do Apps Script, IP da câmera, e-mail,
+  caminhos: 0 ocorrências) e **reescrita do e-mail dos 55 commits** para o noreply do GitHub
+  (`16597+lexrupy@users.noreply.github.com`), com o conteúdo idêntico (mesmo hash de árvore). O `user.email` local
+  deste repositório é esse noreply. Backup do histórico original (com o e-mail antigo, **não publicar**):
+  `~/projects/levainpeak-antes-da-publicacao.bundle`. O histórico publicado não deve ser reescrito de novo.
+- **Nunca versionar:** `phone.ini`, `camera.ini`, `.envrc`, `data/` (todos no `.gitignore`).
+- **Painel no github.io:** o fluxo `.github/workflows/pages.yml` publica só a pasta `painel/` em
+  `https://lexrupy.github.io/levainpeak/` a cada push que a altere. **Depende de um passo manual do usuário:**
+  Settings > Pages > Build and deployment > Source: **GitHub Actions** (a API exige token, que não há). Depois,
+  Actions > "Publicar o painel" > Run workflow (ou um push em `painel/`).
+- **Link do painel:** `panel_url = https://lexrupy.github.io/levainpeak/` no `phone.ini` faz o
+  `python -m levainpeak.phone_config` e o botão "Copiar link do painel" darem o link `https://` (que também permite
+  instalar como app e usar o cache offline do `sw.js`).
+
 ## Limites conhecidos
 
 - A leitura do termômetro em infravermelho foi ajustada em um único valor (21.8).
