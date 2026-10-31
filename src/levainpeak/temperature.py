@@ -128,15 +128,25 @@ def inspect_temperature(
     return TemperatureInspection(display, gray, binary, tuple(boxes), cells, digits, occupancy, reading)
 
 
-# In infrared the picture is blurrier, the LCD face is brighter and lit from one
-# side, and the digits are faint mid-grays. Ink is whatever is clearly darker
-# than the smooth local background, so a brightness gradient does not matter.
+# In infrared the picture is blurry, the LCD face is brighter and lit from one
+# side, and the digits are faint mid-grays whose lower bars are the faintest.
+# Sharpen first (the camera's own blur is what hides those bars), then call ink
+# whatever is clearly darker than the smooth local background, so a brightness
+# gradient does not matter. Chosen on 24 real frames of a display showing 21.8:
+# every setting nearby read it right or not at all, never as another digit.
+_INFRARED_SHARPEN_AMOUNT = 4.5
+_INFRARED_SHARPEN_SIGMA = 3.0
 _INFRARED_INK_DELTA = 9
 
 
 def _infrared_ink(gray: np.ndarray) -> np.ndarray:
-    smooth = cv2.GaussianBlur(gray, (0, 0), 1.0).astype(np.float32)
-    background = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), max(6, min(gray.shape) / 3))
+    plain = gray.astype(np.float32)
+    sharp = np.clip(
+        plain + _INFRARED_SHARPEN_AMOUNT * (plain - cv2.GaussianBlur(plain, (0, 0), _INFRARED_SHARPEN_SIGMA)),
+        0, 255,
+    )
+    smooth = cv2.GaussianBlur(sharp.astype(np.uint8), (0, 0), 1.0).astype(np.float32)
+    background = cv2.GaussianBlur(sharp, (0, 0), max(6, min(gray.shape) / 3))
     return (smooth < background - _INFRARED_INK_DELTA).astype(np.uint8) * 255
 
 

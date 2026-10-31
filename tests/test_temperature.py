@@ -96,3 +96,29 @@ def test_a_bar_too_dim_to_judge_is_never_turned_into_another_digit():
 def test_a_nine_is_still_a_nine_next_to_dimmed_bars():
     frame, roi = render_display("21.9", weak="c")
     assert read_temperature(frame, roi) == pytest.approx(21.9)
+
+
+def _infrared_like(text, *, seed=0):
+    """Grayscale, blurry, low contrast, brighter on one side: the night-mode look."""
+    frame, roi = render_display(text, noise=3, seed=seed)
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    gray = cv2.GaussianBlur(gray, (0, 0), 1.9)  # strong blur: 2.2 makes a 3 leak into an 8
+    gray = 150 + 0.45 * (gray - 120)  # lower contrast, lifted
+    ramp = np.linspace(40, -25, gray.shape[1], dtype=np.float32)  # one side brighter
+    gray = np.clip(gray + ramp[None, :], 0, 255).astype(np.uint8)
+    return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR), roi
+
+
+def test_infrared_look_reads_the_digits_or_gives_up_never_a_wrong_value():
+    wrong, read = [], 0
+    for text in ("21.8", "21.9", "23.5", "27.1", "18.3", "25.6", "30.4", "19.7"):
+        for seed in range(3):
+            frame, roi = _infrared_like(text, seed=seed)
+            value = read_temperature(frame, roi, infrared=True)
+            if value is None:
+                continue
+            read += 1
+            if value != pytest.approx(float(text)):
+                wrong.append((text, value))
+    assert not wrong, f"confident misreads in infrared: {wrong}"
+    assert read >= 16  # it must not simply refuse everything

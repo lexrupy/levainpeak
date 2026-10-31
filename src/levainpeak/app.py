@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import argparse
-import tkinter as tk
-import logging
 import csv
 import json
+import logging
 import time
+import tkinter as tk
 import webbrowser
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -23,28 +23,15 @@ from levainpeak.config import load_camera_config
 from levainpeak.debug_view import DebugWindow
 from levainpeak.filters import despike, valid_after_recovery
 from levainpeak.forecast import DoublingForecaster
-from levainpeak.graph_phases import (
-    DECLINE,
-    EXPONENTIAL,
-    LATENCY,
-    STATIONARY,
-    graph_phase_segments,
-)
-from levainpeak.stream import RtspStream
+from levainpeak.graph_phases import (DECLINE, EXPONENTIAL, LATENCY, STATIONARY,
+                                     graph_phase_segments)
 from levainpeak.sessions import PhaseTracker, SessionLog, latest_session_csv
-from levainpeak.settings import (
-    MAX_RECORD_SECONDS,
-    MIN_RECORD_SECONDS,
-    Settings,
-    load_settings,
-    save_settings,
-)
-from levainpeak.vision import (
-    ContainerMeasurement,
-    draw_measurement,
-    set_initial_marker,
-    set_initial_volume_reference,
-)
+from levainpeak.settings import (MAX_RECORD_SECONDS, MIN_RECORD_SECONDS,
+                                 Settings, load_settings, save_settings)
+from levainpeak.stream import RtspStream
+from levainpeak.vision import (ContainerMeasurement, draw_measurement,
+                               set_initial_marker,
+                               set_initial_volume_reference)
 
 GRAPH_BORDER = 10
 
@@ -470,9 +457,9 @@ class LevainPeakApp:
         self._roi_mode = False
         self._roi_drag_start = None
         if hasattr(self, "draw_pot_button"):
-            self.draw_pot_button.configure(text="Marcar pote")
+            self.draw_pot_button.configure(text="Pote")
         if hasattr(self, "draw_thermometer_button"):
-            self.draw_thermometer_button.configure(text="Marcar termômetro")
+            self.draw_thermometer_button.configure(text="Termômetro")
         if hasattr(self, "video"):
             self.video.configure(cursor="")
         if self._roi_preview_item is not None:

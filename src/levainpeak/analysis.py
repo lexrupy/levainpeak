@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 from levainpeak.filters import OutlierGate
-from levainpeak.profiles import DAY, CaptureProfile, ProfileSelector
+from levainpeak.profiles import DAY, INFRARED, CaptureProfile, ProfileSelector
 from levainpeak.stream import RtspStream
 from levainpeak.temperature import read_temperature
 from levainpeak.vision import ContainerMeasurement, measure_container
@@ -46,7 +46,13 @@ class ContainerAnalyzer:
         self._filtered_surface_y: float | None = None
         # Out-of-curve readings are discarded and the next frame is read again.
         self._volume_gate = OutlierGate(max_jump=0.03, confirmations=40)
-        self._temperature_gate = OutlierGate(max_jump=3.0, confirmations=3)
+        # Infrared reads are blurrier, so a wrong digit is likelier: only small,
+        # well-confirmed moves are trusted there, anchored on the last good read.
+        self._temperature_gates = {
+            DAY.name: OutlierGate(max_jump=3.0, confirmations=3),
+            INFRARED.name: OutlierGate(max_jump=0.25, confirmations=6),
+        }
+        self._gate_profile: str | None = None
         self._previous_reading: float | None = None
         # Capture profile (day or infrared) and the vessel's top and bottom per
         # profile. Daylight finds them by shading that vanishes in infrared, so
@@ -141,7 +147,9 @@ class ContainerAnalyzer:
                 self._temperature_updated_at = None
                 self._last_temperature_read = 0.0
                 self._last_temperature_success = 0.0
-                self._temperature_gate.reset()
+                for gate in self._temperature_gates.values():
+                    gate.reset()
+                self._gate_profile = None
                 self._previous_reading = None
             if temperature_roi is not None and now - self._last_temperature_read >= 2.0:
                 self._last_temperature_read = now
@@ -159,7 +167,12 @@ class ContainerAnalyzer:
                 self._previous_reading = reading
                 if reading is not None:
                     self._last_temperature_success = now
-                    if repeated and self._temperature_gate.accept(reading):
+                    gate = self._temperature_gates[self.profile.name]
+                    if self._gate_profile != self.profile.name:
+                        self._gate_profile = self.profile.name
+                        if self._temperature_c is not None:
+                            gate.trusted = self._temperature_c
+                    if repeated and gate.accept(reading):
                         self._temperature_c = reading
                         self._temperature_updated_at = now
                 # When the display cannot be read, the last good reading stays.
