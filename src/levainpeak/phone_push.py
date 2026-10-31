@@ -79,11 +79,16 @@ def build_packet(
     return packet, newest
 
 
-def make_snapshot(frame: np.ndarray, measurement, *, width: int = 300) -> dict | None:
+def make_snapshot(
+    frame: np.ndarray, measurement, *, width: int = 300,
+    outline: tuple[tuple[int, int], ...] | None = None,
+) -> dict | None:
     """A small JPEG of the pot with the surface and the initial mark drawn, as base64.
 
-    Shrinks the picture and the quality until it fits MAX_SNAPSHOT_CHARS. None
-    when there is no measurement yet.
+    With the user's ``outline`` only the inside of that contour is kept (the rest
+    is a flat dark grey) and the lines stop at its walls. Shrinks the picture and
+    the quality until it fits MAX_SNAPSHOT_CHARS. None when there is no
+    measurement yet.
     """
     if frame is None or measurement is None:
         return None
@@ -92,18 +97,35 @@ def make_snapshot(frame: np.ndarray, measurement, *, width: int = 300) -> dict |
     margin_y = int((measurement.bottom - measurement.top) * 0.04)
     left, right = max(0, measurement.left - margin_x), min(width_px, measurement.right + margin_x)
     top, bottom = max(0, measurement.top - margin_y), min(height_px, measurement.bottom + margin_y)
-    crop = frame[top:bottom, left:right]
+    source = frame
+    if outline:
+        inside = np.zeros((height_px, width_px), np.uint8)
+        cv2.fillPoly(inside, [np.asarray(outline, np.int32)], 255)
+        source = np.full_like(frame, 40)
+        source[inside > 0] = frame[inside > 0]
+    crop = source[top:bottom, left:right]
     if crop.size == 0:
         return None
+
+    def span_at(row: int, scale: float, target: int) -> tuple[int, int]:
+        """Where a line may be drawn on this row: the whole width, or between the walls."""
+        index = row - measurement.top
+        if outline and 0 <= index < len(measurement.edge_profile):
+            wall_left, wall_right = measurement.edge_profile[index]
+            return max(0, int((wall_left - left) * scale)), min(target, int((wall_right - left) * scale))
+        return 0, target
+
     for target in (width, int(width * 0.8), int(width * 0.64)):
         scale = target / crop.shape[1]
         picture = cv2.resize(crop, (target, max(1, int(crop.shape[0] * scale))), interpolation=cv2.INTER_AREA)
         surface = int((measurement.surface_y - top) * scale)
-        cv2.line(picture, (0, surface), (target, surface), (40, 210, 255), 1)
+        start, end = span_at(measurement.surface_y, scale, target)
+        cv2.line(picture, (start, surface), (end, surface), (40, 210, 255), 1)
         if measurement.marker_y is not None:
             mark = int((measurement.marker_y - top) * scale)
-            for x in range(0, target, 10):
-                cv2.line(picture, (x, mark), (min(x + 5, target), mark), (255, 160, 50), 1)
+            start, end = span_at(measurement.marker_y, scale, target)
+            for x in range(start, end, 10):
+                cv2.line(picture, (x, mark), (min(x + 5, end), mark), (255, 160, 50), 1)
         for quality in (60, 50, 40, 30):
             ok, encoded = cv2.imencode(".jpg", picture, [cv2.IMWRITE_JPEG_QUALITY, quality])
             text = base64.b64encode(encoded.tobytes()).decode("ascii")
