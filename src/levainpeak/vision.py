@@ -130,9 +130,15 @@ def measure_container(
 
     inner_top = pot_top
     inner_bottom = pot_bottom
-    marker_y, marker_confidence = _find_initial_marker(
-        frame, left, right, inner_top, inner_bottom
-    )
+    if outline_edges is not None:
+        # The dark-band search was made for one elastic on one pot; on a drawn
+        # contour any ring in the glass looks like a band and pushes the surface
+        # search above the real level. The mark is placed by hand there.
+        marker_y, marker_confidence = None, 0.0
+    else:
+        marker_y, marker_confidence = _find_initial_marker(
+            frame, left, right, inner_top, inner_bottom
+        )
     surface = None
     if marker_confidence >= 0.2:
         surface = _find_surface_by_columns(frame, left, right, inner_top, inner_bottom, marker_y)
@@ -309,7 +315,11 @@ def _outline_edges(
         return None
     points[:, 0] = np.clip(points[:, 0], 0, width - 1)
     points[:, 1] = np.clip(points[:, 1], 0, height - 1)
-    top, bottom = int(np.ceil(points[:, 1].min())), int(np.floor(points[:, 1].max()))
+    # A hand-drawn top or bottom side is never level. The rows above the second
+    # highest corner (and below the second lowest) are a sliver where the polygon
+    # has only part of its width, so they are left out.
+    heights = np.sort(points[:, 1])
+    top, bottom = int(np.ceil(heights[1])), int(np.floor(heights[-2]))
     if bottom - top < 20:
         return None
     rows = np.arange(top, bottom)

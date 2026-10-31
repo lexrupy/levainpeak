@@ -1021,7 +1021,11 @@ class LevainPeakApp:
             self._session_baseline = None
             return
         if self._measurement is None:
-            self._set_message("Aguarde a detecção do pote para iniciar uma sessão.")
+            empty = self._analyzer is not None and self._analyzer.empty_pot is not None
+            self._set_message(
+                "O pote está vazio; coloque o levain para iniciar a sessão." if empty
+                else "Aguarde a detecção do pote para iniciar uma sessão."
+            )
             return
         try:
             if self._mix_time is None:

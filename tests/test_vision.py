@@ -128,7 +128,7 @@ def test_a_drawn_outline_measures_a_tapered_jar_the_automatic_search_cannot():
     measurement = measure_container(_tapered_jar(True), (150, 60, 650, 560), outline=OUTLINE)
     assert measurement is not None and not measurement.empty
     assert abs(measurement.surface_y - 330) <= 4
-    assert measurement.marker_y is not None and abs(measurement.marker_y - 400) <= 8
+    assert measurement.marker_y is None  # no automatic mark on a drawn contour; the user places it
     assert (measurement.top, measurement.bottom) == (100, 520)
     # the cone is narrower at the bottom, and the volume counts that
     top_width = measurement.edge_profile[0][1] - measurement.edge_profile[0][0]
