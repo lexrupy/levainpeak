@@ -126,6 +126,14 @@ def measure_container(
         return None
     surface_y, surface_confidence = surface
 
+    # The vessel's bottom comes from a gradient guess (or from an earlier
+    # daylight measurement) and can lie below the glass, on the steel bowl the
+    # jar sits on. Cut it where the pale levain ends so the bowl is not counted
+    # as starter: that inflated the initial volume and understated the growth.
+    base_y = _levain_base(frame, left, right, surface_y, marker_y if marker_confidence >= 0.2 else None, inner_bottom)
+    if base_y is not None and base_y < inner_bottom - 3:
+        inner_bottom = base_y
+
     widths, left_edges, right_edges = _width_profile(
         gradient_x, left, right, inner_top, inner_bottom
     )
@@ -254,6 +262,40 @@ def draw_measurement(
 
 
 MAX_WALL_SLOPE = 0.05
+
+
+def _levain_base(
+    frame: np.ndarray,
+    left: int,
+    right: int,
+    surface_y: int,
+    marker_y: int | None,
+    bottom: int,
+) -> int | None:
+    """Row where the pale levain ends at the jar's base, or None when it cannot be told.
+
+    Scans down the middle of the jar from just under the dark initial mark
+    (skipping the mark itself) while the rows stay as pale as the levain.
+    Needs the levain to be at or above the mark; otherwise the rows under the
+    mark are not levain and there is nothing to anchor on.
+    """
+    if marker_y is None or surface_y > marker_y:
+        return None
+    start = marker_y + 30
+    stop = min(bottom, frame.shape[0])
+    if stop - start < 40:
+        return None
+    width = right - left
+    centre = slice(left + int(width * 0.30), right - int(width * 0.30))
+    rows = np.median(cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)[:, centre, 0].astype(np.float32), axis=1)
+    levain = float(np.percentile(rows[start:start + 50], 80))
+    if levain < 120:
+        return None  # nothing pale under the mark
+    dark = rows < 0.75 * levain
+    for row in range(start, stop - 2):
+        if dark[row] and dark[row + 1] and dark[row + 2]:
+            return row
+    return None
 
 
 def _robust_wall(edge: np.ndarray) -> np.ndarray:

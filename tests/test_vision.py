@@ -55,3 +55,46 @@ def test_surface_by_columns_gives_up_when_levain_and_glass_look_alike():
     frame, _ = _jar_frame()
     frame[400:470, 300:580] = 160
     assert _find_surface_by_columns(frame, 300, 580, 100, 560, marker_y=480) is None
+
+
+def _jar_with_a_base(base_row=540):
+    """Glass, pale levain on both sides of the dark mark, and a dark gap where the jar ends."""
+    import cv2  # noqa: F401  (the frame is plain numpy; cv2 is only needed by the code under test)
+
+    frame = np.full((620, 900, 3), 40, np.uint8)
+    frame[100:560, 300:580] = 150
+    frame[400:480, 300:580] = 245  # levain above the mark
+    frame[480:495, 300:580] = 25  # the dark initial-level mark
+    frame[495:base_row, 300:580] = 245  # levain under the mark, down to the base
+    frame[base_row:, 300:580] = 60  # the bowl under the jar
+    return frame
+
+
+def test_the_levain_base_is_where_the_pale_mass_ends():
+    from levainpeak.vision import _levain_base
+
+    base = _levain_base(_jar_with_a_base(540), 300, 580, surface_y=400, marker_y=480, bottom=600)
+    assert abs(base - 540) <= 1
+
+
+def test_the_levain_base_needs_the_levain_to_be_above_the_mark():
+    from levainpeak.vision import _levain_base
+
+    # surface below the mark: the rows under the mark are not levain, nothing to anchor on
+    assert _levain_base(_jar_with_a_base(), 300, 580, surface_y=500, marker_y=480, bottom=600) is None
+    assert _levain_base(_jar_with_a_base(), 300, 580, surface_y=400, marker_y=None, bottom=600) is None
+
+
+def test_the_levain_base_gives_up_when_nothing_pale_lies_under_the_mark():
+    from levainpeak.vision import _levain_base
+
+    frame = _jar_with_a_base()
+    frame[495:, 300:580] = 100
+    assert _levain_base(frame, 300, 580, surface_y=400, marker_y=480, bottom=600) is None
+
+
+def test_the_levain_base_gives_up_when_the_mass_never_ends_before_the_bottom():
+    from levainpeak.vision import _levain_base
+
+    frame = _jar_with_a_base(base_row=620)  # pale all the way down
+    assert _levain_base(frame, 300, 580, surface_y=400, marker_y=480, bottom=600) is None
