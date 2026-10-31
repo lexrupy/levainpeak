@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 import time
@@ -13,6 +14,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
+from levainpeak.floating import BORDER, FloatingWindowControls
 from levainpeak.temperature import inspect_temperature
 from levainpeak.vision import ContainerMeasurement, column_scan, measure_container
 
@@ -406,40 +408,63 @@ def _render_texts(mosaic: np.ndarray, texts: list[Text]) -> np.ndarray:
     return cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
 
 
+def _diagnostics_worker(
+    get_state: Callable[[], dict], frames: "queue.Queue[np.ndarray]", stop: threading.Event
+) -> None:
+    """Rebuild the mosaic until told to stop.
+
+    A plain function on purpose: if the thread held the window, the last
+    reference to its Tk image could be dropped here, and Tk objects must only be
+    destroyed on the thread that made them.
+    """
+    while not stop.is_set():
+        started = time.perf_counter()
+        try:
+            state = get_state()
+            mosaic = build_debug_mosaic(
+                state.get("frame"), state.get("pot_roi"), state.get("thermometer_roi"),
+                stable=state.get("stable"), temperature_c=state.get("temperature_c"),
+                profile=state.get("profile"), vertical_bounds=state.get("vertical_bounds"),
+            )
+        except Exception:  # noqa: BLE001 - a diagnostics glitch must not kill the thread
+            logging.exception("Falha ao montar o diagnóstico")
+            stop.wait(2.0)
+            continue
+        try:
+            frames.get_nowait()
+        except queue.Empty:
+            pass
+        frames.put_nowait(mosaic)
+        # Rest several times as long as the work took, so this thread never
+        # takes more than about a sixth of the interpreter's time.
+        stop.wait(max(0.5, 5 * (time.perf_counter() - started)))
+
+
 class DebugWindow:
     """Floating window that rebuilds the mosaic about twice a second."""
 
     def __init__(self, root: tk.Tk, get_state: Callable[[], dict]) -> None:
-        self._get_state = get_state
         self.window = tk.Toplevel(root, class_="Pythontkfloating")
         self.window.title("LevainPeak · Diagnóstico")
         self.window.geometry("980x780")
         self.window.minsize(560, 440)
-        self.window.configure(background="#262928")
-        self.window.bind("<Escape>", lambda _e: self.close())
+        # The window's own background shows around the picture as a border to grab.
+        self.window.configure(background="#4a504d")
         self.window.protocol("WM_DELETE_WINDOW", self.close)
-        self._label = tk.Label(self.window, background="#262928", borderwidth=0, cursor="fleur")
-        self._label.pack(fill="both", expand=True)
-        # Dragging anywhere on the picture moves the window, as in the graph popup.
-        self._drag_origin = (0, 0)
-        self._label.bind("<ButtonPress-1>", self._drag_start, add="+")
-        self._label.bind("<B1-Motion>", self._drag_move, add="+")
+        self._label = tk.Label(self.window, background="#262928", borderwidth=0)
+        self._label.pack(fill="both", expand=True, padx=BORDER, pady=BORDER)
+        # Drag the picture to move the window, the border to resize it.
+        self._controls = FloatingWindowControls(self.window, self._label, on_close=self.close)
         self._photo: ImageTk.PhotoImage | None = None
         self._latest: np.ndarray | None = None
         self._frames: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
         self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._work, name="debug-view", daemon=True)
+        self._thread = threading.Thread(
+            target=_diagnostics_worker, args=(get_state, self._frames, self._stop),
+            name="debug-view", daemon=True,
+        )
         self._thread.start()
         self.window.after(150, self._poll)
-
-    def _drag_start(self, event: tk.Event) -> None:
-        self._drag_origin = (
-            event.x_root - self.window.winfo_x(), event.y_root - self.window.winfo_y()
-        )
-
-    def _drag_move(self, event: tk.Event) -> None:
-        offset_x, offset_y = self._drag_origin
-        self.window.geometry(f"+{event.x_root - offset_x}+{event.y_root - offset_y}")
 
     @property
     def open(self) -> bool:
@@ -452,31 +477,6 @@ class DebugWindow:
         self._stop.set()
         if self.window.winfo_exists():
             self.window.destroy()
-
-    def _work(self) -> None:
-        while not self._stop.is_set():
-            started = time.perf_counter()
-            try:
-                state = self._get_state()
-                mosaic = build_debug_mosaic(
-                    state.get("frame"), state.get("pot_roi"), state.get("thermometer_roi"),
-                    stable=state.get("stable"), temperature_c=state.get("temperature_c"),
-                    profile=state.get("profile"), vertical_bounds=state.get("vertical_bounds"),
-                )
-            except Exception:  # noqa: BLE001 - a diagnostics glitch must not kill the thread
-                import logging
-
-                logging.exception("Falha ao montar o diagnóstico")
-                self._stop.wait(2.0)
-                continue
-            try:
-                self._frames.get_nowait()
-            except queue.Empty:
-                pass
-            self._frames.put_nowait(mosaic)
-            # Rest several times as long as the work took, so this thread never
-            # takes more than about a sixth of the interpreter's time.
-            self._stop.wait(max(0.5, 5 * (time.perf_counter() - started)))
 
     def _poll(self) -> None:
         if self._stop.is_set() or not self.window.winfo_exists():
