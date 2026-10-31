@@ -8,6 +8,7 @@ import json
 import logging
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 import webbrowser
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -90,6 +91,7 @@ class LevainPeakApp:
         self._forecaster = DoublingForecaster()
         self._phase = "Aguardando sessão"
         self._mix_time: datetime | None = None
+        self._line_height = tkfont.nametofont("TkDefaultFont").metrics("linespace")
         self._build_layout()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
@@ -172,13 +174,7 @@ class LevainPeakApp:
             tile = ttk.LabelFrame(metrics, text=title, padding=(10, 7))
             label = ttk.Label(tile, text=value, anchor="nw", justify="left", wraplength=240)
             label.pack(fill="x", anchor="w")
-            tile.bind(
-                "<Configure>",
-                lambda event, target=label: target.configure(
-                    wraplength=max(120, event.width - 28)
-                ),
-                add="+",
-            )
+            label.bind("<Configure>", self._fit_wraplength, add="+")
             self._metric_tiles.append(tile)
             self.metric_values[title] = label
         self._metrics_container = metrics
@@ -186,17 +182,23 @@ class LevainPeakApp:
             self._metrics_container.columnconfigure(column, weight=1, uniform="metrics")
         for index, tile in enumerate(self._metric_tiles):
             tile.grid(row=index // 3, column=index % 3, sticky="nsew", padx=4, pady=4)
+        self._reserve_metric_rows(lines=3)
 
         footer = ttk.Frame(monitor, padding=(20, 0, 20, 14))
         footer.pack(fill="x")
         self.instructions = ttk.Label(
             footer,
-            text="Ative ‘Marcar início’, passe o mouse para pré-visualizar e clique para confirmar.",
+            text="Marcar início: passe o mouse sobre o pote e clique para confirmar.",
             anchor="w", justify="left",
         )
         self.instructions.pack(fill="x", pady=(0, 2))
-        self.message = ttk.Label(footer, text="", anchor="w", justify="left")
-        self.message.pack(fill="x", pady=(0, 6))
+        # The message area always holds two lines, so a longer message never
+        # pushes the rest of the window around.
+        message_area = ttk.Frame(footer, height=2 * self._line_height + 2)
+        message_area.pack(fill="x", pady=(0, 6))
+        message_area.pack_propagate(False)
+        self.message = ttk.Label(message_area, text="", anchor="nw", justify="left")
+        self.message.pack(fill="both", expand=True)
         footer.bind("<Configure>", self._wrap_footer_labels, add="+")
 
         buttons = ttk.Frame(footer)
@@ -245,9 +247,31 @@ class LevainPeakApp:
         self.debug_button = button(files, "Diagnóstico", self._open_debug_view, width=11)
 
     def _wrap_footer_labels(self, event: tk.Event) -> None:
-        wrap = max(200, event.width - 8)
-        self.instructions.configure(wraplength=wrap)
-        self.message.configure(wraplength=wrap)
+        wrap = max(200, event.width - 48)  # the footer has 20 px of padding per side
+        for label in (self.instructions, self.message):
+            if int(float(str(label.cget("wraplength")) or 0)) != wrap:
+                label.configure(wraplength=wrap)
+
+    @staticmethod
+    def _fit_wraplength(event: tk.Event) -> None:
+        """Wrap a label at its own width. Only touched when it changes, so the
+        resulting size change cannot feed back into another resize."""
+        label = event.widget
+        wrap = max(120, event.width - 4)
+        if int(float(str(label.cget("wraplength")) or 0)) != wrap:
+            label.configure(wraplength=wrap)
+
+    def _reserve_metric_rows(self, lines: int) -> None:
+        """Make every metric row as tall as ``lines`` lines of text, so a text that
+        wraps to more lines does not resize the rest of the window."""
+        probe = self.metric_values["Sessão"]
+        original, wrap = probe.cget("text"), probe.cget("wraplength")
+        probe.configure(text="\n".join(["Ag"] * lines), wraplength=9999)
+        self.root.update_idletasks()
+        needed = probe.master.winfo_reqheight() + 8  # the grid pads each tile by 4 px
+        probe.configure(text=original, wraplength=wrap)
+        for row in range(2):
+            self._metrics_container.rowconfigure(row, minsize=needed)
 
     def _annotate(self, frame, measurement):
         return draw_measurement(frame, measurement, detail=self._show_detail)
@@ -260,6 +284,20 @@ class LevainPeakApp:
             text="Ocultar detecção" if self._show_detail else "Ver detecção"
         )
         self._redraw_current_frame()
+
+    def _session_summary(self, *, resumed: bool = False) -> str:
+        """Up to three short lines for the session card."""
+        lines = [self._session_name or "Sessão"]
+        try:
+            started = datetime.strptime(
+                (self._session_log.session_id or "")[:15], "%Y%m%d_%H%M%S"
+            ).strftime("%d/%m %H:%M")
+            lines.append(f"Retomada de {started}" if resumed else f"Iniciada {started}")
+        except ValueError:
+            pass
+        if self._mix_time is not None:
+            lines.append(f"Mistura {self._mix_time.strftime('%d/%m %H:%M')}")
+        return "\n".join(lines)
 
     def _persist_marker(self) -> None:
         """Keep the hand-placed initial-level mark in the session file."""
@@ -305,6 +343,13 @@ class LevainPeakApp:
         self._forecaster.reset()
 
     def _set_message(self, message: str) -> None:
+        # Two lines is all the message area holds; cut a longer text with an ellipsis.
+        font = tkfont.nametofont("TkDefaultFont")
+        limit = 2 * max(200, int(float(str(self.message.cget("wraplength")) or 0))) * 0.9
+        if font.measure(message) > limit:
+            while message and font.measure(message + "…") > limit:
+                message = message[:-1]
+            message = message.rstrip() + "…"
         self.message.configure(text=message)
 
     def _refresh(self) -> None:
@@ -819,7 +864,7 @@ class LevainPeakApp:
             text=f"Mistura: {self._mix_time.strftime('%d/%m %H:%M')}"
         )
         self.metric_values["Sessão"].configure(
-            text=f"{self._session_name}\nAtiva desde {session_id}\nMistura: {self._mix_time.strftime('%d/%m %H:%M')}"
+            text=self._session_summary()
         )
         self.metric_values["Estado do levain"].configure(text=self._phase)
         self._update_double_forecast(time.monotonic())
@@ -1291,7 +1336,7 @@ class LevainPeakApp:
             self._session_baseline = None
         self.session_button.configure(text="Encerrar sessão")
         self.metric_values["Sessão"].configure(
-            text=f"{self._session_name or session_id}\nRetomada: {session_id}"
+            text=self._session_summary(resumed=True)
         )
         self.metric_values["Estado do levain"].configure(text=self._phase)
         self.mix_time_button.configure(
@@ -1330,9 +1375,9 @@ class LevainPeakApp:
             label.configure(text="Sem nível inicial para estimar o dobro")
             return
         basis = (
-            "nível inicial marcado"
+            "início marcado"
             if self._measurement.marker_y is not None
-            else "primeira leitura"
+            else "1ª leitura"
         )
         target = mix_volume * 2
         if target > 1.0:
@@ -1347,7 +1392,7 @@ class LevainPeakApp:
             return
         minutes = forecast.minutes
         if forecast.uses_temperature:
-            basis += f" + temperatura ({forecast.model})"
+            basis += f" + temp. ({forecast.model})"
         if minutes > 10080:
             label.configure(text="Projeção muito distante; aguardando mais crescimento")
             return
@@ -1360,11 +1405,9 @@ class LevainPeakApp:
             elapsed_text = f"{elapsed_days}d {elapsed_hours}h após mistura"
         else:
             elapsed_text = f"{elapsed_hours}h{elapsed_minutes:02d} após mistura"
+        # Three short lines: when, how long after mixing, and what it rests on.
         label.configure(
-            text=(
-                f"{predicted_at.strftime('%d/%m às %H:%M')} · {basis}"
-                f" ({elapsed_text})"
-            )
+            text=f"{predicted_at.strftime('%d/%m às %H:%M')}\n{elapsed_text}\n{basis}"
         )
 
     def _set_mix_time(self) -> None:
@@ -1390,9 +1433,7 @@ class LevainPeakApp:
         if self._session_log.active:
             self._session_log.set_mix_time(mix_time)
             self._record_session(time.monotonic(), force=True)
-            self.metric_values["Sessão"].configure(
-                text=f"Ativa desde {self._session_log.session_id}\nMistura: {mix_time.strftime('%d/%m %H:%M')}"
-            )
+            self.metric_values["Sessão"].configure(text=self._session_summary())
         self.mix_time_button.configure(text=f"Mistura: {mix_time.strftime('%d/%m %H:%M')}")
         self._update_double_forecast(time.monotonic())
         self._set_message(f"Hora da mistura definida para {mix_time.strftime('%d/%m/%Y às %H:%M')}.")
