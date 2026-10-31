@@ -1,7 +1,6 @@
 # LevainPeak — estado do projeto
 
-Nota para retomar numa conversa nova. Atualizada em 2026-10-31, com 81 testes passando
-e o último commit em `4feb7e1`. Complementa o `AGENTS.md` (regras do repositório) e o `README.md`.
+Nota para retomar numa conversa nova. Atualizada em 2026-10-31, com 81 testes passando. Complementa o `AGENTS.md` (regras do repositório) e o `README.md`.
 
 ## O que o app faz
 
@@ -55,31 +54,31 @@ a fase e a temperatura lida do visor de um termômetro. Grava uma linha de CSV a
   `git diff` no começo de cada rodada. Commitar só os arquivos próprios, nunca `git add -A`.
 - Reiniciar o app com `--resume` sempre que for preciso.
 
-## Em andamento: acompanhar pelo celular (NÃO implementado)
+## Em andamento: acompanhar pelo celular (app NÃO implementado)
 
-O usuário pediu para **não implementar ainda**. Decisões já tomadas:
+O usuário pediu para **não implementar o app ainda**. Decisões já tomadas:
 
-- **Destino dos dados:** Firebase Realtime Database. O app do PC envia (push) por HTTPS e um **PWA só de leitura**
-  lê de lá. Funciona fora de casa e com o PC desligado (mostra o último dado).
-- **Um pacote por ciclo, com tudo:** estado de agora (volume, fase, temperatura, previsão), pontos novos da série
-  e o snapshot. **Intervalo configurável** na aba Configurações, com 120 s como padrão e 240 s como alternativa.
-  Sem envio imediato nos eventos.
-- **Snapshot:** só o recorte do pote, reduzido (~300 px, JPEG ~60), em base64, **abaixo de ~25 KB**. Opção
-  separada, desligada por padrão.
-- **PWA:** mostra "atualizado há N min". Hospedagem estática (por exemplo Firebase Hosting).
-- **Descartados:** página do claude.ai (o app não consegue gravar nela sozinho), Gist (revisões demais a cada
-  envio, cache de minutos), Google Sheets (sem imagem e sem ao vivo).
+- **Destino dos dados:** Google Sheets, recebendo por um **Google Apps Script** (app da web). O app do PC faz um
+  `POST` HTTPS simples (biblioteca padrão, sem OAuth nem chave). O celular lê por `GET` ou abre a planilha.
+  Firebase foi descartado porque, com envio a cada 2 a 4 minutos, o "ao vivo" de verdade não compensa o setup.
+- **Script pronto:** `docs/apps-script/Code.gs` (validado só por sintaxe e por uma simulação em memória; ainda
+  **não** foi rodado no Google). O usuário cola o script na planilha, define a propriedade `TOKEN`, roda
+  `configurar()` e implanta como app da web ("Executar como: eu", "Acesso: qualquer pessoa").
+- **Um pacote por ciclo, com tudo:** `POST` com `{token, session, sent_at, live, points, snapshot}`.
+  `points` = `{t, v (0-1), c, p}`; `snapshot` = `{t, jpeg_b64}`. **Intervalo configurável** na aba Configurações,
+  120 s por padrão e 240 s como alternativa. Sem envio imediato nos eventos.
+- **Snapshot:** só o recorte do pote, ~300 px, JPEG ~60, em base64 **abaixo de ~25 KB** (o script recusa acima de
+  49.000 caracteres). Opção separada, desligada por padrão.
+- **Leitura:** `GET ?token=...&o=ao_vivo | serie&limite=N | snapshot`. A primeira versão pode dispensar o PWA
+  (olhar a planilha e um gráfico do Sheets no celular). O PWA entra para mostrar a imagem e o gráfico do app.
+- **Descartados:** página do claude.ai (o app não grava nela sozinho), Gist (revisões demais, cache de minutos).
+- **Cuidados do cliente Python:** o Apps Script responde ao `POST` com um redirecionamento 302 que deve ser
+  seguido com `GET` (o `urllib` já faz isso). O token vai no corpo do `POST` e na URL do `GET`. Depois de editar
+  o script é preciso criar uma **nova versão** da implantação.
 
-Pendente de decidir ou de fazer pelo usuário:
-
-1. Quem pode ler: token no PWA ou caminho com chave aleatória longa.
-2. O usuário criar o projeto Firebase e o banco (posso escrever um passo a passo curto) e guardar a chave de
-   escrita em configuração local, fora do git.
-3. Quanto da série enviar (sugestão: as últimas N horas, para o banco não crescer sem limite).
-
-Plano técnico sugerido: extrair o preparo dos dados do gráfico (`App._prepare_graph_data` e a escala do eixo)
-para uma função pura compartilhada pela janela e pelo PWA. Depois: um módulo de envio com um destino plugável,
-as opções na aba Configurações e o PWA estático.
+Pendente: o usuário rodar o script e testar com `curl`; decidir quem lê (token no PWA); depois implementar o
+envio no app (módulo de envio, opções em Configurações) e, se quiser, o PWA. Plano técnico: extrair o preparo
+dos dados do gráfico (`App._prepare_graph_data` e a escala do eixo) para uma função pura compartilhada.
 
 ## Limites conhecidos
 
