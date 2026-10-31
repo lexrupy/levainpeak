@@ -176,10 +176,12 @@ def _deslant(binary: np.ndarray) -> np.ndarray:
 # into a plausible but wrong temperature, so such glyphs are reported as
 # unreadable and get read again. Other segments (such as a bottom bar cropped
 # by the ROI) only take part in choosing the closest pattern. Measured on the
-# real display, lit critical segments reach 0.5-1.0 and dark ones stay below 0.3.
+# real display (69 digit readings), the weakest lit critical segment is the 8's lower-left
+# bar (0.39, weakened by the camera angle) and the strongest dark one is the 9's
+# lower-left (0.29), so the threshold sits between them at 0.34.
 _PATTERNS = {frozenset(pattern) for pattern in _DIGITS.values()}
-_LIT_THRESHOLD = 0.45
-_MIN_SEPARATION = 0.08
+_LIT_THRESHOLD = 0.34
+_MIN_SEPARATION = 0.04
 _MAX_BEST_SCORE = 1.5
 
 
@@ -216,14 +218,24 @@ def _classify_digit(glyph: np.ndarray) -> int | None:
     # Lit segments vary in brightness and a bar can be partly cropped, so
     # compare against the strongest segment instead of a fixed cutoff.
     occupancy = occupancy / strongest
-    ranked = sorted(
-        (
-            float(np.square(occupancy - [1.0 if name in pattern else 0.0 for name in names]).sum()),
-            digit,
+    # First read the segments directly: lit above the threshold, dark below.
+    # When that spells a digit exactly, trust it (an 8 whose lower bars are
+    # weakened by the camera angle is still an 8). Otherwise fall back to the
+    # closest pattern, which tolerates one cropped bar such as a 2's bottom.
+    lit = frozenset(name for name, value in zip(names, occupancy) if value > _LIT_THRESHOLD)
+    digit = next((candidate for candidate, shape in _DIGITS.items() if frozenset(shape) == lit), None)
+    if digit is None:
+        ranked = sorted(
+            (
+                float(np.square(occupancy - [1.0 if name in shape else 0.0 for name in names]).sum()),
+                candidate,
+            )
+            for candidate, shape in _DIGITS.items()
         )
-        for digit, pattern in _DIGITS.items()
+        digit = ranked[0][1]
+    best = float(
+        np.square(occupancy - [1.0 if name in _DIGITS[digit] else 0.0 for name in names]).sum()
     )
-    best, digit = ranked[0]
     if best > _MAX_BEST_SCORE:
         return None
     pattern = frozenset(_DIGITS[digit])

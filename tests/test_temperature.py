@@ -17,7 +17,7 @@ CENTERS = (0.32, 0.53, 0.76)
 CELL = 0.16
 
 
-def render_display(text: str, *, noise: float = 0.0, glare: bool = False, seed: int = 0):
+def render_display(text: str, *, noise: float = 0.0, glare: bool = False, seed: int = 0, weak: str = ""):
     """Dark bezel around a bright LCD face with three seven-segment digits."""
     face = np.full((FACE_H, FACE_W), 190, np.uint8)
     for center, char in zip(CENTERS, text.replace(".", ""), strict=True):
@@ -26,6 +26,9 @@ def render_display(text: str, *, noise: float = 0.0, glare: bool = False, seed: 
         height, width = y1 - y0, CELL * FACE_W
         for name in _DIGITS[int(char)]:
             sx0, sy0, sx1, sy1 = DRAW[name]
+            if name in weak:  # a bar dimmed by the viewing angle: smaller footprint
+                cx, cy, half_w, half_h = (sx0 + sx1) / 2, (sy0 + sy1) / 2, (sx1 - sx0) * 0.375, (sy1 - sy0) * 0.375
+                sx0, sx1, sy0, sy1 = cx - half_w, cx + half_w, cy - half_h, cy + half_h
             cv2.rectangle(
                 face,
                 (int(x0 + sx0 * width), int(y0 + sy0 * height)),
@@ -76,3 +79,13 @@ def test_glare_never_yields_a_confident_wrong_value():
         frame, roi = render_display(text, glare=True)
         value = read_temperature(frame, roi)
         assert value is None or value == pytest.approx(float(text))
+
+
+def test_an_eight_with_bars_dimmed_by_the_angle_is_still_an_eight():
+    frame, roi = render_display("21.8", weak="ce")
+    assert read_temperature(frame, roi) == pytest.approx(21.8)
+
+
+def test_a_nine_is_not_mistaken_for_that_dimmed_eight():
+    frame, roi = render_display("21.9", weak="c")
+    assert read_temperature(frame, roi) == pytest.approx(21.9)
