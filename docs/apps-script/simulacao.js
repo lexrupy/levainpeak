@@ -85,5 +85,14 @@ ok('limpar zera as quatro abas e mantém os cabeçalhos', () => {
   assert.deepStrictEqual(get({ token: T, o: 'serie' }).pontos, []);
 });
 ok('depois de limpar, dados novos entram normalmente', () => assert.strictEqual(post({ token: T, points: [pt(1, 0.3)] }).recebido.pontos, 1));
+ok('sessão diferente zera a antiga e grava a nova', () => {
+  post({ token: T, session: 'Antiga', points: [pt(1, 0.3), pt(2, 0.4)], live: { a: 1 } });
+  const r = post({ token: T, session: 'Nova', points: [pt(1, 0.2), pt(2, 0.25), pt(3, 0.3)], live: { b: 1 } });
+  assert.strictEqual(r.recebido.sessao_nova, true); assert.strictEqual(r.recebido.pontos, 3);
+  const s = get({ token: T, o: 'serie' }).pontos; assert.ok(s.length === 3 && s.every(p => p.s === 'Nova'));
+  assert.deepStrictEqual(Object.keys(get({ token: T, o: 'ao_vivo' }).live), ['b']);
+});
+ok('a mesma sessão não zera nada', () => { const r = post({ token: T, session: 'Nova', points: [pt(4, 0.35)] }); assert.ok(!r.recebido.sessao_nova); assert.strictEqual(get({ token: T, o: 'serie' }).pontos.length, 4); });
+ok('pacote sem nome de sessão nunca zera', () => { post({ token: T, live: { c: 1 } }); assert.strictEqual(get({ token: T, o: 'serie' }).pontos.length, 4); });
 ok('limparTudo (editor) também funciona', () => { ctx.__api.limparTudo(); assert.strictEqual(sheets.serie.getLastRow(), 1); });
 console.log(`\n${n} verificações passaram`);

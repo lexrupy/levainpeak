@@ -11,6 +11,8 @@
  *     "chart":  { ... série do gráfico, já na escala do app ... },          (opcional)
  *     "snapshot": { "t": ISO, "jpeg_b64": "..." } }                        (opcional)
  *
+ * Se "session" for diferente da última guardada na aba serie, o script zera tudo e começa a nova.
+ *
  * POST de limpeza: { "token": "...", "acao": "limpar" } zera as quatro abas (mantém os cabeçalhos).
  *
  * GET:  ?token=...&o=painel[&snap=<t do snapshot que você já tem>]
@@ -58,6 +60,11 @@ function doPost(e) {
   try {
     if (corpo.acao === 'limpar') return resposta_({ ok: true, limpou: limpar_() });
     const recebido = {};
+    // Outra sessão: a planilha guarda uma só; zera a antiga e começa a nova.
+    if (sessaoMudou_(String(corpo.session || ''))) {
+      limpar_();
+      recebido.sessao_nova = true;
+    }
     if (Array.isArray(corpo.points) && corpo.points.length) {
       recebido.pontos = acrescentarPontos_(corpo.points, String(corpo.session || ''));
     }
@@ -142,6 +149,16 @@ function gravarSnapshot_(snapshot) {
     ['jpeg_base64', imagem],
   ]);
   return 'ok';
+}
+
+/** True quando a série guardada é de uma sessão diferente da que chegou. */
+function sessaoMudou_(sessao) {
+  if (!sessao) return false;
+  const aba = aba_(ABA_SERIE, CABECALHO_SERIE);
+  const ultima = aba.getLastRow();
+  if (ultima < 2) return false;
+  const guardada = String(aba.getRange(ultima, 5).getValue());
+  return guardada !== '' && guardada !== sessao;
 }
 
 /** Zera as abas e devolve quantas linhas de dados cada uma tinha. */

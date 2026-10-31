@@ -143,6 +143,7 @@ class PhonePusher:
         self._first_delay = first_delay
         self._timeout = timeout
         self._retry_delays = retry_delays
+        self._csv_sent: Path | None = None  # session file the last bundles came from
         self._after: str | None = None  # newest point the receiver has accepted
         self._status = PusherStatus()
         self._lock = threading.Lock()
@@ -188,9 +189,8 @@ class PhonePusher:
     def clear_remote(self) -> tuple[bool, str]:
         """Ask the receiver to empty the spreadsheet. Returns (done, message for the user).
 
-        Points already in the session CSV are not sent again afterwards, so the
-        sheet stays empty until new readings arrive (the live state and the chart
-        come back with the next cycle).
+        The next cycle sends the current session again, so the sheet restarts
+        with it. (The receiver also clears by itself when the session changes.)
         """
         with self._send_lock:
             body = json.dumps({"token": self._config.token, "acao": "limpar"}).encode("utf-8")
@@ -202,19 +202,18 @@ class PhonePusher:
                 return False, str(answer.get("erro") or "resposta inesperada").replace(self._config.token, "<token>")
             if "limpou" not in answer:
                 return False, "o script do Google ainda é a versão antiga (cole o Code.gs novo e crie uma nova versão)"
-            csv_path = self._get_session_csv()
-            if csv_path is not None and csv_path.is_file():
-                newest, _ = read_new_points(csv_path, None, limit=1)
-                if newest:
-                    with self._lock:
-                        self._after = newest[-1]["t"]
+            with self._lock:
+                self._after = None  # the next cycle sends the current session again, from the start
             rows = sum(int(n) for n in (answer.get("limpou") or {}).values() if isinstance(n, (int, float)))
             return True, f"{rows} linhas apagadas"
 
     def _push_once(self) -> bool:
         snapshot = self._get_snapshot() if self._get_snapshot is not None else None
+        session_csv = self._get_session_csv()
+        if session_csv != self._csv_sent:  # a new session: send it whole, the receiver drops the old one
+            self._csv_sent, self._after = session_csv, None
         packet, newest = build_packet(
-            self._config, self._get_live() or {}, self._get_session_csv(),
+            self._config, self._get_live() or {}, session_csv,
             after=self._after, snapshot=snapshot,
         )
         body = json.dumps(packet).encode("utf-8")

@@ -1093,7 +1093,7 @@ class LevainPeakApp:
         if not messagebox.askyesno(
             "Limpar dados do celular",
             "Apagar todos os dados da planilha do Google (série, gráfico, imagem e estado ao vivo)?\n\n"
-            "Os arquivos de sessão deste computador não são tocados. Não dá para desfazer.",
+            "A sessão atual é enviada de novo em seguida. Os arquivos de sessão deste computador não são tocados.",
         ):
             return
         self._phone_status.configure(text="Limpando a planilha…")

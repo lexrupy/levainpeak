@@ -200,7 +200,7 @@ def test_the_background_thread_sends_every_cycle_and_stops_quickly(receiver, tmp
     assert len(receiver.packets) >= 3 and time.time() - began < 2
 
 
-def test_clearing_asks_the_receiver_and_does_not_resend_what_the_session_already_has(receiver, tmp_path):
+def test_clearing_asks_the_receiver_and_then_sends_the_current_session_again(receiver, tmp_path):
     csv_path = tmp_path / "s.csv"
     append_rows(csv_path, 0, 5)
     sender = pusher(receiver.url, csv_path)
@@ -208,9 +208,24 @@ def test_clearing_asks_the_receiver_and_does_not_resend_what_the_session_already
     done, message = sender.clear_remote()
     assert done and message == "9 linhas apagadas"
     assert receiver.packets[-1] == {"token": TOKEN, "acao": "limpar"}
-    append_rows(csv_path, 5, 2)
     assert sender.push_once()
-    assert len(receiver.packets[-1]["points"]) == 2
+    assert len(receiver.packets[-1]["points"]) == 5
+
+
+def test_a_new_session_file_is_sent_whole_from_the_start(receiver, tmp_path):
+    old, new = tmp_path / "old.csv", tmp_path / "new.csv"
+    append_rows(old, 0, 5)
+    append_rows(new, 0, 3)
+    current = [old]
+    sender = PhonePusher(
+        PhoneConfig(receiver.url, TOKEN), dict, lambda: current[0],
+        interval_seconds=1, first_delay=0.0, retry_delays=(0.01,),
+    )
+    assert sender.push_once() and sender.push_once()
+    assert len(receiver.packets[-1].get("points", [])) == 0
+    current[0] = new
+    assert sender.push_once()
+    assert len(receiver.packets[-1]["points"]) == 3
 
 
 def test_a_refused_clear_reports_the_reason_without_the_token(receiver, tmp_path):
