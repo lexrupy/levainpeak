@@ -33,9 +33,9 @@ class ContainerAnalyzer:
         self.anchor_temperature: float | None = None  # last logged value of a resumed session
         self.interval_seconds = interval_seconds
         self._stop = threading.Event()
-        self._results: queue.Queue[
-            tuple[int, ContainerMeasurement | None, float | None]
-        ] = queue.Queue(maxsize=1)
+        self._results: queue.Queue[tuple[tuple[int, ContainerMeasurement | None, float | None], tuple]] = queue.Queue(maxsize=1)
+        # The regions the result last returned by latest_result() was measured with.
+        self.latest_key: tuple | None = None
         self._temperature_c: float | None = None
         self._last_temperature_roi: tuple[int, int, int, int] | None = None
         self._last_temperature_quad: tuple[tuple[int, int], ...] | None = None
@@ -94,28 +94,35 @@ class ContainerAnalyzer:
             return None
         return time.monotonic() - self._temperature_updated_at
 
+    def region_key(self) -> tuple:
+        """The regions as they are set now (pot area, contour, thermometer area, face corners)."""
+        return (self.roi, self.outline, self.temperature_roi, self.temperature_quad)
+
     def latest_result(
         self,
     ) -> tuple[int, ContainerMeasurement | None, float | None] | None:
+        """The newest result, or None. ``latest_key`` then says which regions it was measured with:
+        when that is not ``region_key()`` the regions were replaced meanwhile and it is stale."""
         result = None
         while True:
             try:
-                result = self._results.get_nowait()
+                result, self.latest_key = self._results.get_nowait()
             except queue.Empty:
                 return result
 
     def _publish(
-        self, result: tuple[int, ContainerMeasurement | None, float | None]
+        self, result: tuple[int, ContainerMeasurement | None, float | None], key: tuple
     ) -> None:
+        item = (result, key)
         try:
-            self._results.put_nowait(result)
+            self._results.put_nowait(item)
         except queue.Full:
             try:
                 self._results.get_nowait()
             except queue.Empty:
                 pass
             try:
-                self._results.put_nowait(result)
+                self._results.put_nowait(item)
             except queue.Full:
                 pass
 
@@ -127,9 +134,12 @@ class ContainerAnalyzer:
                 self._stop.wait(0.1)
                 continue
             last_frame_number = frame_number
-            if self.roi != self._last_pot_roi or self.outline != self._last_outline:
-                self._last_pot_roi = self.roi
-                self._last_outline = self.outline
+            # One reading of the regions for the whole pass, and the same key on the result.
+            key = self.region_key()
+            roi, outline = key[0], key[1]
+            if roi != self._last_pot_roi or outline != self._last_outline:
+                self._last_pot_roi = roi
+                self._last_outline = outline
                 self._measurement_history.clear()
                 self._geometry_candidates.clear()
                 self._geometry_anchor = None
@@ -140,8 +150,8 @@ class ContainerAnalyzer:
             self.profile = self._profile_selector.update(frame)
             try:
                 measurement = measure_container(
-                    frame, roi=self.roi, vertical_bounds=self.effective_bounds(),
-                    outline=self.outline,
+                    frame, roi=roi, vertical_bounds=self.effective_bounds(),
+                    outline=outline,
                 )
             except cv2.error:
                 measurement = None
@@ -153,8 +163,7 @@ class ContainerAnalyzer:
             measurement = self._stabilize_measurement(measurement)
             self._learn_vessel_bounds(measurement)
             now = time.monotonic()
-            temperature_roi = self.temperature_roi
-            temperature_quad = self.temperature_quad
+            temperature_roi, temperature_quad = key[2], key[3]
             if temperature_roi != self._last_temperature_roi or temperature_quad != self._last_temperature_quad:
                 self._last_temperature_roi = temperature_roi
                 self._last_temperature_quad = temperature_quad
@@ -196,7 +205,7 @@ class ContainerAnalyzer:
                         self._temperature_c = reading
                         self._temperature_updated_at = now
                 # When the display cannot be read, the last good reading stays.
-            self._publish((frame_number, measurement, self._temperature_c))
+            self._publish((frame_number, measurement, self._temperature_c), key)
             self._stop.wait(self.interval_seconds)
 
     def _stabilize_measurement(
