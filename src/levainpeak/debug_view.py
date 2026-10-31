@@ -26,6 +26,7 @@ TITLE_BAR = (62, 68, 66)
 GRID = (74, 80, 78)
 YELLOW, ORANGE, CYAN, GREEN, BLUE, RED = (40, 210, 255), (60, 140, 255), (255, 220, 60), (110, 200, 90), (255, 160, 50), (70, 70, 235)
 WHITE, MUTED = (240, 240, 235), (170, 176, 172)
+AUTO_MARKER = (150, 110, 70)  # the dark band the detector found, when the mark was set by hand
 _FONT_PATHS = ("DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
 
 Text = tuple[int, int, str, tuple[int, int, int], int]  # x, y, text, BGR colour, size
@@ -39,6 +40,25 @@ def _font(size: int) -> ImageFont.ImageFont:
         except OSError:
             continue
     return ImageFont.load_default()
+
+
+def marker_rows(raw: ContainerMeasurement, stable: ContainerMeasurement | None) -> tuple[int | None, int | None, bool]:
+    """(row the app uses, row the detector found, whether the used one was set by hand).
+
+    The raw per-frame detection always sits on the dark band; the mark the user
+    placed lives on the measurement the app settled on, and is the one that counts.
+    """
+    if stable is not None and stable.marker_y is not None:
+        return stable.marker_y, raw.marker_y, bool(stable.marker_manual)
+    return raw.marker_y, raw.marker_y, False
+
+
+def draw_markers(view: "_View", raw: ContainerMeasurement, stable: ContainerMeasurement | None) -> None:
+    used, found, manual = marker_rows(raw, stable)
+    if manual and found is not None and used is not None and abs(found - used) > 1:
+        view.hline(found, AUTO_MARKER, dashed=True)  # where the detector would have put it
+    if used is not None:
+        view.hline(used, BLUE, dashed=True, thickness=2 if manual else 1)
 
 
 class _View:
@@ -158,7 +178,7 @@ def build_debug_mosaic(
 
         if raw is not None:
             _draw_detection(detection_view, raw, stable)
-            _draw_light(light_view, raw, scan, lab, left, top)
+            _draw_light(light_view, raw, scan, lab, left, top, stable)
             _draw_edges(edge_view, raw)
             _draw_columns(column_view, raw, scan, stable, lab, left, top)
         for view, title in (
@@ -208,11 +228,10 @@ def _draw_detection(view: _View, raw: ContainerMeasurement, stable: ContainerMea
     view.hline(raw.surface_y, YELLOW, thickness=2)
     if stable is not None:
         view.hline(stable.surface_y, ORANGE, thickness=1, dashed=True)
-    if raw.marker_y is not None:
-        view.hline(raw.marker_y, BLUE, dashed=True)
+    draw_markers(view, raw, stable)
 
 
-def _draw_light(view: _View, raw, scan, lab: np.ndarray, left: int, top: int) -> None:
+def _draw_light(view: _View, raw, scan, lab: np.ndarray, left: int, top: int, stable=None) -> None:
     canvas = view.canvas
     if scan is not None:
         mask = np.zeros(lab.shape, np.uint8)
@@ -225,8 +244,7 @@ def _draw_light(view: _View, raw, scan, lab: np.ndarray, left: int, top: int) ->
         for x, y in scan.tops:
             cv2.circle(canvas, view.pt(x, y), 2, RED, -1)
     view.hline(raw.surface_y, YELLOW, thickness=2)
-    if raw.marker_y is not None:
-        view.hline(raw.marker_y, BLUE, dashed=True)
+    draw_markers(view, raw, stable)
 
 
 def _draw_edges(view: _View, raw: ContainerMeasurement) -> None:
@@ -262,8 +280,7 @@ def _draw_columns(view: _View, raw, scan, stable, lab: np.ndarray, left: int, to
     view.hline(raw.surface_y, YELLOW, thickness=2)
     if stable is not None:
         view.hline(stable.surface_y, ORANGE, dashed=True)
-    if raw.marker_y is not None:
-        view.hline(raw.marker_y, BLUE, dashed=True)
+    draw_markers(view, raw, stable)
 
 
 def _profile_panel(raw, stable, texts: list[Text], row2_y: int) -> np.ndarray:
@@ -289,8 +306,11 @@ def _profile_panel(raw, stable, texts: list[Text], row2_y: int) -> np.ndarray:
 
     cv2.line(canvas, (0, row_of(raw.surface_y)), (PANEL_W, row_of(raw.surface_y)), YELLOW, 1)
     texts.append((PANEL_W - 70, row_of(raw.surface_y) + TITLE_H + row2_y - TITLE_H - 14, f"{raw.volume_fraction:.0%}", YELLOW, 11))
-    if raw.marker_y is not None:
-        cv2.line(canvas, (0, row_of(raw.marker_y)), (PANEL_W, row_of(raw.marker_y)), BLUE, 1)
+    used, found, manual = marker_rows(raw, stable)
+    if manual and found is not None and used is not None and abs(found - used) > 1:
+        cv2.line(canvas, (0, row_of(found)), (PANEL_W, row_of(found)), AUTO_MARKER, 1)
+    if used is not None:
+        cv2.line(canvas, (0, row_of(used)), (PANEL_W, row_of(used)), BLUE, 2 if manual else 1)
     texts.append((6, row2_y + TITLE_H + 2, "ciano: largura · laranja: volume abaixo da linha", YELLOW, 9))
     return canvas
 
@@ -350,9 +370,11 @@ def _info_strip(texts: list[Text], y: int, raw, scan, stable, temperature_c, the
     elif raw is None:
         lines.append(("Pote: não detectado neste quadro.", RED))
     else:
+        used, found, manual = marker_rows(raw, stable)
+        marker_text = f"{used} (manual; faixa detectada em {found})" if manual else f"{used} (faixa detectada)"
         method = "colunas (claridade)" if scan is not None else "bordas (reserva)"
         lines.append((
-            f"Pote: caixa {raw.left}-{raw.right} × {raw.top}-{raw.bottom}   marcador y={raw.marker_y}   "
+            f"Pote: caixa {raw.left}-{raw.right} × {raw.top}-{raw.bottom}   marcador y={marker_text}   "
             f"superfície (bruta) y={raw.surface_y}   método: {method}",
             WHITE,
         ))
@@ -371,7 +393,7 @@ def _info_strip(texts: list[Text], y: int, raw, scan, stable, temperature_c, the
         + ("" if temperature_c is None else f"   confirmada pelo app {temperature_c:.1f} °C"),
         WHITE,
     ))
-    lines.append(("Legenda: amarelo = superfície bruta · laranja tracejado = estável · azul = marca inicial · ciano = parede", MUTED))
+    lines.append(("Legenda: amarelo = superfície bruta · laranja tracejado = estável · azul = marca inicial usada · azul fraco = faixa detectada · ciano = parede", MUTED))
     for number, (text, colour) in enumerate(lines):
         texts.append((6, y + 4 + number * 17, text, colour, 12))
 

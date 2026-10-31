@@ -41,3 +41,38 @@ def test_inspection_matches_the_plain_reading():
 def test_inspection_without_a_region_is_empty():
     inspection = inspect_temperature(np.zeros((100, 100, 3), np.uint8), None)
     assert inspection.reading is None and inspection.cells == ()
+
+
+def _measurement(marker_y, manual):
+    from levainpeak.vision import ContainerMeasurement
+
+    return ContainerMeasurement(
+        left=10, right=100, top=0, bottom=500, surface_y=250, volume_fraction=0.3,
+        confidence=0.9, marker_y=marker_y, marker_manual=manual,
+    )
+
+
+def test_the_diagnostics_show_the_mark_the_app_uses_not_the_raw_detection():
+    from levainpeak.debug_view import marker_rows
+
+    raw = _measurement(779, manual=False)  # the detector sits on the middle of the dark band
+    stable = _measurement(772, manual=True)  # the user put the mark at the top of the band
+    assert marker_rows(raw, stable) == (772, 779, True)
+
+
+def test_without_a_hand_placed_mark_the_detection_is_what_is_shown():
+    from levainpeak.debug_view import marker_rows
+
+    raw = _measurement(779, manual=False)
+    assert marker_rows(raw, None) == (779, 779, False)
+    assert marker_rows(raw, _measurement(779, manual=False)) == (779, 779, False)
+
+
+def test_mosaic_draws_with_a_hand_placed_mark_that_differs_from_the_detection():
+    import numpy as np
+
+    from levainpeak.debug_view import HEIGHT, WIDTH, build_debug_mosaic
+
+    frame = np.full((1080, 1920, 3), 90, np.uint8)
+    mosaic = build_debug_mosaic(frame, (654, 221, 1259, 1075), None, stable=_measurement(772, True))
+    assert mosaic.shape == (HEIGHT, WIDTH, 3)
