@@ -86,9 +86,14 @@ Apps Script; um painel estático só de leitura mostra os dados.
 - **Descartados:** Firebase (o "ao vivo" de verdade não compensa com envio a cada 2 a 4 min), Gist, página do
   claude.ai.
 
-Pendente: o usuário colar o `Code.gs` novo no Apps Script e criar a nova versão da implantação; ligar o envio na
-aba Configurações. Não validado contra a planilha real: o `o=painel` e o campo `chart` (a implantação ainda estava
-na versão antiga quando isto foi escrito).
+Validado contra a planilha real em 2026-10-31: envio aceito (1000 pontos), `chart` gravado, `o=painel` lido e o
+painel renderizado no Chrome headless com esses dados. A implantação em uso é a criada em "Nova implantação"
+(o `/exec` muda a cada nova implantação; editar a existente e criar **nova versão** mantém a URL). A antiga deve ser
+arquivada.
+
+Pendente: o usuário ligar o envio na aba Configurações; apagar a linha de teste ("teste", 01/01) da aba `serie`;
+abrir o painel de novo pelo link do `python -m levainpeak.phone_config` nos aparelhos que guardaram a URL antiga.
+Ainda não vistos: o painel no celular de verdade e o tema escuro pela preferência do sistema.
 
 ## Limites conhecidos
 

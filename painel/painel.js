@@ -47,7 +47,7 @@ function ageMinutes(iso) {
 
 function ageText(minutos) {
   if (minutos === null) return '—';
-  if (minutos < 1) return 'agora há pouco';
+  if (minutos < 1) return 'agora';
   if (minutos < 90) return `há ${Math.round(minutos)} min`;
   const horas = minutos / 60;
   if (horas < 48) return `há ${horas.toFixed(1).replace('.', ',')} h`;
