@@ -155,3 +155,14 @@ def test_a_seven_drawn_with_the_upper_left_bar_is_still_a_seven(monkeypatch, tex
     monkeypatch.setitem(_DIGITS, 7, "abcf")
     frame, roi = render_display(text)
     assert read_temperature(frame, roi) == pytest.approx(float(text))
+
+
+@pytest.mark.parametrize("angle", [-9, -5, 6, 11])
+@pytest.mark.parametrize("text", ["21.8", "26.6", "23.7"])
+def test_a_display_stuck_on_the_wall_at_a_tilt_is_still_read(text, angle):
+    frame, _ = render_display(text)
+    frame = cv2.copyMakeBorder(frame, 50, 50, 50, 50, cv2.BORDER_CONSTANT, value=(190, 190, 190))  # the wall around it
+    height, width = frame.shape[:2]
+    matrix = cv2.getRotationMatrix2D((width / 2, height / 2), angle, 1.0)
+    tilted = cv2.warpAffine(frame, matrix, (width, height), flags=cv2.INTER_CUBIC, borderValue=(190, 190, 190))
+    assert read_temperature(tilted, (0, 0, width, height)) == pytest.approx(float(text))

@@ -74,7 +74,7 @@ def inspect_temperature(
     if right - left < 30 or bottom - top < 20:
         return TemperatureInspection()
 
-    display = frame[top:bottom, left:right]
+    display = _straighten(frame[top:bottom, left:right])
     gray = cv2.cvtColor(display, cv2.COLOR_BGR2GRAY)
     use_infrared = is_infrared(display) if infrared is None else infrared
     # The manual ROI includes a little bezel for easier selection. Find the
@@ -97,6 +97,43 @@ def inspect_temperature(
         if len(votes[result.reading]) >= 2:
             return votes[result.reading][0]
     return first or TemperatureInspection(display, gray)
+
+
+def _bezel_tilt(gray: np.ndarray) -> float | None:
+    """Tilt in degrees (-45..45) of the display's dark frame, or None when there is no clear frame."""
+    reference = float(np.percentile(gray, 95))
+    dark = (cv2.GaussianBlur(gray, (0, 0), 2) < 0.4 * reference).astype(np.uint8)
+    contours, _ = cv2.findContours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    biggest = max(contours, key=cv2.contourArea)
+    (_, _), (box_width, box_height), angle = cv2.minAreaRect(biggest)
+    area = box_width * box_height
+    if area < 0.2 * gray.size or cv2.contourArea(biggest) < 0.7 * area:
+        return None  # not a frame-like rectangle
+    return ((angle + 45.0) % 90.0) - 45.0
+
+
+def _straighten(display: np.ndarray) -> np.ndarray:
+    """Undo a tilt of the display, which the digit grid (fixed positions) cannot follow.
+
+    A thermometer stuck on a wall is rarely level. The tilt comes from the dark
+    frame; only 1.5 to 25 degrees are corrected, and the turn is kept only if it
+    does make the frame straighter.
+    """
+    gray = cv2.cvtColor(display, cv2.COLOR_BGR2GRAY)
+    tilt = _bezel_tilt(gray)
+    if tilt is None or not 1.5 <= abs(tilt) <= 25:
+        return display
+    height, width = display.shape[:2]
+    best, best_residual = display, abs(tilt)
+    for angle in (tilt, -tilt):
+        matrix = cv2.getRotationMatrix2D((width / 2, height / 2), angle, 1.0)
+        turned = cv2.warpAffine(display, matrix, (width, height), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+        residual = _bezel_tilt(cv2.cvtColor(turned, cv2.COLOR_BGR2GRAY))
+        if residual is not None and abs(residual) < best_residual:
+            best, best_residual = turned, abs(residual)
+    return best
 
 
 def _lcd_face(gray: np.ndarray, threshold: int) -> np.ndarray | None:
