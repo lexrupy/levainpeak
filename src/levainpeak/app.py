@@ -26,7 +26,7 @@ from levainpeak.forecast import DoublingForecaster
 from levainpeak.graph_data import prepare_graph_data, volume_scale
 from levainpeak.graph_phases import (DECLINE, EXPONENTIAL, LATENCY, STATIONARY,
                                      graph_phase_segments)
-from levainpeak.phone_config import load_phone_config, panel_links
+from levainpeak.phone_config import load_phone_config, local_link, online_link
 from levainpeak.phone_push import PhonePusher, make_snapshot
 from levainpeak.sessions import PhaseTracker, SessionLog, latest_session_csv
 from levainpeak.settings import (MAX_PHONE_SECONDS, MAX_RECORD_SECONDS,
@@ -1017,8 +1017,11 @@ class LevainPeakApp:
         ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
         self._phone_status = ttk.Label(phone, text="", foreground="#59645e", wraplength=560, justify="left")
         self._phone_status.grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 0))
-        ttk.Button(phone, text="Copiar link do painel", command=self._copy_panel_link).grid(
-            row=4, column=0, columnspan=3, sticky="w", pady=(8, 0)
+        buttons = ttk.Frame(phone)
+        buttons.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ttk.Button(buttons, text="Copiar link do painel local", command=self._copy_local_link).pack(side="left")
+        ttk.Button(buttons, text="Copiar link do painel online", command=self._copy_online_link).pack(
+            side="left", padx=(8, 0)
         )
         ttk.Label(
             phone, foreground="#59645e", wraplength=560, justify="left",
@@ -1141,16 +1144,32 @@ class LevainPeakApp:
             return None
         return make_snapshot(stream.snapshot()[1], measurement)
 
-    def _copy_panel_link(self) -> None:
+    def _copy_local_link(self) -> None:
+        self._copy_link(
+            local_link,
+            "Link do painel local copiado. Ele só abre com o servidor rodando "
+            "(cd painel && python -m http.server 8000). Carrega o token: não compartilhe.",
+        )
+
+    def _copy_online_link(self) -> None:
+        self._copy_link(
+            online_link,
+            "Link do painel online copiado. Carrega o token: não compartilhe.",
+            missing="Defina panel_url no phone.ini (por exemplo https://lexrupy.github.io/levainpeak/).",
+        )
+
+    def _copy_link(self, make_link, done: str, missing: str = "") -> None:
         try:
-            links = panel_links(load_phone_config())
+            link = make_link(load_phone_config())
         except (FileNotFoundError, ValueError) as exc:
             self._set_message(str(exc))
             return
+        if link is None:
+            self._set_message(missing)
+            return
         self.root.clipboard_clear()
-        # The published page first (it works from any network), else the one on this network.
-        self.root.clipboard_append(next((link for where, link in links if where == "Publicado"), links[-1][1]))
-        self._set_message("Link do painel copiado. Ele carrega o token: não compartilhe.")
+        self.root.clipboard_append(link)
+        self._set_message(done)
 
     def _graph_data(self, path: Path) -> dict:
         """The graph's series, rebuilt only when the CSV file changes."""

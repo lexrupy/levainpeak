@@ -59,17 +59,38 @@ def lan_address() -> str | None:
         probe.close()
 
 
+def _fragment(config: PhoneConfig) -> str:
+    return f"#u={quote(config.url, safe='')}&t={quote(config.token, safe='')}"
+
+
+def online_link(config: PhoneConfig) -> str | None:
+    """The link to the published panel (GitHub Pages), or None when panel_url is not set."""
+    if not config.panel_url:
+        return None
+    base = config.panel_url if config.panel_url.endswith("/") else config.panel_url + "/"
+    return f"{base}{_fragment(config)}"
+
+
+def local_link(config: PhoneConfig, port: int = 8000) -> str:
+    """The link to the panel served from this computer (python -m http.server).
+
+    On the local network when its address is known, which is what a phone needs;
+    otherwise localhost.
+    """
+    host = lan_address() or "localhost"
+    return f"http://{host}:{port}/{_fragment(config)}"
+
+
 def panel_links(config: PhoneConfig, port: int = 8000) -> list[tuple[str, str]]:
     """(where, link) pairs. The settings sit after the #, so they never reach the server."""
-    fragment = f"#u={quote(config.url, safe='')}&t={quote(config.token, safe='')}"
     links = []
-    if config.panel_url:
-        base = config.panel_url if config.panel_url.endswith("/") else config.panel_url + "/"
-        links.append(("Publicado", f"{base}{fragment}"))
-    links.append(("No PC", f"http://localhost:{port}/{fragment}"))
+    published = online_link(config)
+    if published:
+        links.append(("Publicado", published))
+    links.append(("No PC", f"http://localhost:{port}/{_fragment(config)}"))
     address = lan_address()
     if address:
-        links.append(("No celular (mesma rede)", f"http://{address}:{port}/{fragment}"))
+        links.append(("No celular (mesma rede)", f"http://{address}:{port}/{_fragment(config)}"))
     return links
 
 

@@ -1,6 +1,6 @@
 import pytest
 
-from levainpeak.phone_config import PhoneConfig, load_phone_config, panel_links
+from levainpeak.phone_config import PhoneConfig, load_phone_config, local_link, online_link, panel_links
 
 URL = "https://script.google.com/macros/s/AKfycbTESTE/exec"
 TOKEN = "t" * 24
@@ -57,3 +57,15 @@ def test_the_published_panel_address_is_optional_and_comes_first_in_the_links(tm
 def test_an_insecure_panel_address_is_rejected(tmp_path):
     with pytest.raises(ValueError, match="panel_url"):
         load_phone_config(write(tmp_path, f"[phone]\nurl = {URL}\ntoken = {TOKEN}\npanel_url = http://exemplo.com/\n"))
+
+
+def test_the_online_link_exists_only_when_the_published_address_is_set():
+    assert online_link(PhoneConfig(URL, TOKEN)) is None
+    link = online_link(PhoneConfig(URL, TOKEN, panel_url="https://lexrupy.github.io/levainpeak"))
+    assert link.startswith("https://lexrupy.github.io/levainpeak/#u=") and f"t={TOKEN}" in link
+
+
+def test_the_local_link_points_at_this_computer_on_the_chosen_port():
+    link = local_link(PhoneConfig(URL, TOKEN), port=8123)
+    assert link.startswith("http://") and ":8123/#u=" in link and f"t={TOKEN}" in link
+    assert not link.startswith("https://")

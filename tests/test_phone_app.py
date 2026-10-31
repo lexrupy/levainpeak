@@ -53,6 +53,17 @@ def test_the_settings_tab_starts_restarts_and_stops_the_sender(tmp_path, monkeyp
         app._apply_settings()
         assert app._phone_pusher is None and "phone.ini ausente" in app._phone_status.cget("text")
         assert TOKEN not in app._phone_status.cget("text")
+
+        # the two link buttons: local always, online only with panel_url
+        monkeypatch.setattr(app_module, "load_phone_config", lambda: PhoneConfig(server.url, TOKEN))
+        app._copy_local_link()
+        assert root.clipboard_get().startswith("http://") and "Link do painel local copiado" in app.message.cget("text")
+        app._copy_online_link()
+        assert "panel_url" in app.message.cget("text")  # nothing set: it says what to set
+        monkeypatch.setattr(app_module, "load_phone_config",
+                            lambda: PhoneConfig(server.url, TOKEN, panel_url="https://exemplo.github.io/levainpeak/"))
+        app._copy_online_link()
+        assert root.clipboard_get().startswith("https://exemplo.github.io/levainpeak/#u=")
     finally:
         root.destroy()
         server.close()
