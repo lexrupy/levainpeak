@@ -156,8 +156,6 @@ def measure_container(
             return None
         return _empty_outline_measurement(outline_edges)
     surface_y, surface_confidence = surface
-    if outline_edges is not None and _looks_empty(gray, outline_edges, surface_y):
-        return _empty_outline_measurement(outline_edges)
 
     # The vessel's bottom comes from a gradient guess (or from an earlier
     # daylight measurement) and can lie below the glass, on the steel bowl the
@@ -341,33 +339,6 @@ def _outline_edges(
     return top, left, right
 
 
-_EMPTY_RATIO = 1.15
-
-
-def _looks_empty(gray: np.ndarray, outline_edges, surface_y: int) -> bool:
-    """True when what lies below the surface is not opaque levain.
-
-    Levain is opaque and bright: its core is clearly brighter than the wall behind
-    the glass (1.6x to 2.8x on the real frames). Empty glass shows the dim inside of
-    the jar, about as bright as, or darker than, that background (0.8x).
-    """
-    top, left_edges, right_edges = outline_edges
-    rows = range(max(top, surface_y + 15), top + len(left_edges) - 15, 4)
-    width = gray.shape[1]
-    inside, outside = [], []
-    for y in rows:
-        left, right = left_edges[y - top], right_edges[y - top]
-        quarter = (right - left) / 4
-        center = (left + right) / 2
-        inside.append(gray[y, int(center - quarter):int(center + quarter) + 1].mean())
-        sides = [
-            gray[y, max(0, int(left) - 60):max(1, int(left) - 12)].mean(),
-            gray[y, min(width - 1, int(right) + 12):min(width, int(right) + 60)].mean(),
-        ]
-        outside.append(max(sides))
-    if len(inside) < 5:
-        return False
-    return float(np.median(inside)) < _EMPTY_RATIO * max(1.0, float(np.median(outside)))
 
 
 def _empty_outline_measurement(outline_edges) -> ContainerMeasurement:

@@ -137,14 +137,6 @@ def test_a_drawn_outline_measures_a_tapered_jar_the_automatic_search_cannot():
     assert 0.2 < measurement.volume_fraction < 0.5
 
 
-def test_a_drawn_outline_around_an_empty_jar_reports_empty_not_nothing():
-    from levainpeak.vision import measure_container
-
-    measurement = measure_container(_tapered_jar(False), (150, 60, 650, 560), outline=OUTLINE)
-    assert measurement is not None and measurement.empty
-    assert measurement.volume_fraction == 0.0 and measurement.confidence == 0.0
-
-
 def test_the_bounding_box_is_faint_when_the_user_drew_the_contour():
     from levainpeak.vision import ContainerMeasurement, draw_measurement
 
