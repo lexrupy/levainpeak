@@ -179,3 +179,32 @@ def test_a_drawn_face_quad_reads_a_display_seen_at_an_angle(text):
     warped = cv2.warpPerspective(frame, matrix, (frame.shape[1], frame.shape[0]), borderValue=(190, 190, 190))
     quad = tuple((int(x), int(y)) for x, y in seen)
     assert read_temperature(warped, None, face_quad=quad) == pytest.approx(float(text))
+
+
+def _dim_blurred(frame):
+    """What a display out of focus and behind a weak infrared light looks like: little contrast, soft."""
+    low = (150 + (frame.astype(np.float32) - 190) * 0.3).clip(0, 255).astype(np.uint8)
+    return cv2.GaussianBlur(low, (0, 0), 1.5)
+
+
+@pytest.mark.parametrize("text", ["25.6", "21.8", "30.9", "24.0", "29.5"])
+@pytest.mark.parametrize("left_margin", [0.0, 0.10, 0.18])
+def test_a_dim_blurred_face_is_read_wherever_the_user_put_its_left_edge(text, left_margin):
+    frame, _ = render_display(text)
+    frame = _dim_blurred(frame)
+    # the face sits at (30, 30) .. (330, 170); the user's corners may hug the digits more or less
+    x0 = 30 + int(left_margin * FACE_W)
+    quad = ((x0, 30), (330, 30), (330, 170), (x0, 170))
+    assert read_temperature(frame, None, infrared=True, face_quad=quad) == pytest.approx(float(text))
+
+
+def test_the_dim_blurred_face_from_the_diagnostics_window_reads_25_6():
+    """A real face (user's drawn corners, infrared, out of focus), 190 x 90 grey pixels."""
+    from pathlib import Path
+
+    sample = Path(__file__).parent / "data" / "face_ir_desfocada.png"
+    face = cv2.imread(str(sample), cv2.IMREAD_GRAYSCALE)
+    from levainpeak.temperature import _inspect_face
+
+    result = _inspect_face(cv2.cvtColor(face, cv2.COLOR_GRAY2BGR), face, True, drawn=True)
+    assert result.reading == pytest.approx(25.6)

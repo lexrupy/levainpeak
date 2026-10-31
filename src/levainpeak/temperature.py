@@ -97,7 +97,7 @@ def inspect_temperature(
         if face is None:
             return TemperatureInspection()
         use_infrared = is_infrared(face) if infrared is None else infrared
-        return _inspect_face(face, cv2.cvtColor(face, cv2.COLOR_BGR2GRAY), use_infrared)
+        return _inspect_face(face, cv2.cvtColor(face, cv2.COLOR_BGR2GRAY), use_infrared, drawn=True)
     if frame is None or roi is None:
         return TemperatureInspection()
     height, width = frame.shape[:2]
@@ -244,12 +244,16 @@ def _face_candidates(gray: np.ndarray) -> list[np.ndarray]:
     return faces or [gray]
 
 
-def _inspect_face(display: np.ndarray, gray: np.ndarray, infrared: bool) -> TemperatureInspection:
+def _inspect_face(
+    display: np.ndarray, gray: np.ndarray, infrared: bool, drawn: bool = False
+) -> TemperatureInspection:
     """Binarize the LCD face, locate the three digits and read them."""
     # Otsu often selects the bright LCD background on these reflective
     # displays. Threshold relative to the face brightness, then inspect the
     # three fixed digit positions used by this thermometer layout.
-    if infrared:
+    if infrared and drawn:
+        binary = _flat_field_ink(gray)
+    elif infrared:
         binary = _infrared_ink(gray)
     else:
         threshold = int(np.clip(np.percentile(gray, 40), 100, 150))
@@ -258,19 +262,29 @@ def _inspect_face(display: np.ndarray, gray: np.ndarray, infrared: bool) -> Temp
     binary = cv2.resize(binary, None, fx=8, fy=8, interpolation=cv2.INTER_NEAREST)
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
     binary = _deslant(binary)
-    boxes = _digit_cell_boxes(binary)
-    if boxes is None:
-        return TemperatureInspection(display, gray, binary)
-    cells = tuple(binary[top_:bottom_ + 1, left_:right_] for left_, top_, right_, bottom_ in boxes)
-    # Never close the gap by shifting later digits left: that made 21.9 appear
-    # as a different, plausible temperature. One unreadable digit fails the read.
-    digits = tuple(_classify_digit(cell) for cell in cells)
-    occupancy = tuple(_normalized_occupancy(cell) for cell in cells)
-    reading = None
-    if all(digit is not None for digit in digits):
-        value = digits[0] * 10 + digits[1] + digits[2] / 10
-        reading = float(value) if -10 <= value <= 60 else None
-    return TemperatureInspection(display, gray, binary, tuple(boxes), cells, digits, occupancy, reading)
+    # A drawn face may leave any margin around the digits. The usual layout (fixed
+    # positions, slid a little sideways) is tried first because it is the more
+    # exact when it fits; the cells placed by the ink are the second try.
+    strategies = (_digit_cell_boxes, _fit_digit_cells) if drawn else (_digit_cell_boxes,)
+    first: TemperatureInspection | None = None
+    for find_cells in strategies:
+        boxes = find_cells(binary)
+        if boxes is None:
+            continue
+        cells = tuple(binary[top_:bottom_ + 1, left_:right_] for left_, top_, right_, bottom_ in boxes)
+        # Never close the gap by shifting later digits left: that made 21.9 appear
+        # as a different, plausible temperature. One unreadable digit fails the read.
+        digits = tuple(_classify_digit(cell) for cell in cells)
+        occupancy = tuple(_normalized_occupancy(cell) for cell in cells)
+        reading = None
+        if all(digit is not None for digit in digits):
+            value = digits[0] * 10 + digits[1] + digits[2] / 10
+            reading = float(value) if -10 <= value <= 60 else None
+        result = TemperatureInspection(display, gray, binary, tuple(boxes), cells, digits, occupancy, reading)
+        if reading is not None:
+            return result
+        first = first or result
+    return first or TemperatureInspection(display, gray, binary)
 
 
 def _face_threshold(gray: np.ndarray) -> int:
@@ -299,7 +313,70 @@ def _infrared_ink(gray: np.ndarray) -> np.ndarray:
     return (smooth < background - _INFRARED_INK_DELTA).astype(np.uint8) * 255
 
 
+def _flat_field_ink(gray: np.ndarray) -> np.ndarray:
+    """Ink of a dim, blurred display: what is darker than its surroundings by a fraction
+    of the picture's own contrast.
+
+    The fixed offset of ``_infrared_ink`` is made for a sharp, well-lit face. Behind a
+    cold lamp, out of focus, the whole face may differ by only 20 levels, so the cut is
+    taken relative to the contrast actually there.
+    """
+    plain = gray.astype(np.float32)
+    flat = plain - cv2.GaussianBlur(plain, (0, 0), 14)
+    relative = cv2.GaussianBlur(flat / (float(flat.std()) + 1e-6), (0, 0), 1.2)
+    return (relative < -0.3).astype(np.uint8) * 255
+
+
+def _fit_digit_cells(binary: np.ndarray) -> list[tuple[int, int, int, int]] | None:
+    """Three equally spaced digit cells placed where the ink says they are.
+
+    The corners the user draws decide how much margin the face has, so the digits
+    do not sit at fixed fractions of its width. The cells (width, gap, first
+    position) are chosen to hold as much ink as possible while the gaps between
+    them stay empty.
+    """
+    height, width = binary.shape
+    ink = binary > 0
+    columns = ink.sum(axis=0)
+    prefix = np.concatenate(([0.0], np.cumsum(columns, dtype=np.float64)))
+    # A cell wider than its digit would still hold all of its ink, but the segment
+    # boxes would no longer match the strokes: padding of near-empty columns costs.
+    strong = float(np.percentile(columns, 90)) if columns.size else 0.0
+    empty = columns < max(0.02 * height, 0.05 * strong)
+    empty_prefix = np.concatenate(([0.0], np.cumsum(empty, dtype=np.float64)))
+    padding_cost = float(np.median(columns[columns > 0])) if (columns > 0).any() else 1.0
+    best = None
+    step = max(1, width // 100)
+    for cell in range(int(0.12 * width), int(0.31 * width), step):
+        for gap in range(max(2, int(0.02 * width)), int(0.10 * width), max(1, width // 150)):
+            pitch = cell + gap
+            # the decimal point sits between the second and third digits: that step is wider
+            offsets = (0, pitch, pitch + int(round(_DECIMAL_STEP * pitch)))
+            for start in range(0, int(0.35 * width), step):
+                spans = [(start + offset, start + offset + cell) for offset in offsets]
+                if spans[-1][1] > width:
+                    continue
+                inside = sum(prefix[right] - prefix[left] for left, right in spans)
+                between = sum(prefix[spans[i + 1][0]] - prefix[spans[i][1]] for i in range(2))
+                padding = sum(empty_prefix[right] - empty_prefix[left] for left, right in spans)
+                score = inside - 2.5 * between - padding_cost * padding
+                if best is None or score > best[0]:
+                    best = (score, spans)
+    if best is None:
+        return None
+    spans = best[1]
+    region = ink[:, spans[0][0]:spans[-1][1]]
+    rows = region.sum(axis=1) > region.shape[1] * 0.02
+    rows[:round(height * 0.02)] = False
+    rows[round(height * 0.99):] = False
+    filled = np.flatnonzero(rows)
+    if filled.size < height * 0.3:
+        return None
+    return [(left, int(filled[0]), right, int(filled[-1])) for left, right in spans]
+
+
 _CELL_CENTERS = (0.32, 0.53, 0.76)
+_DECIMAL_STEP = (0.76 - 0.53) / (0.53 - 0.32)  # second step over the first, from the fixed layout
 _CELL_WIDTH = 0.16
 
 
