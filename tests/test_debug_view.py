@@ -76,3 +76,28 @@ def test_mosaic_draws_with_a_hand_placed_mark_that_differs_from_the_detection():
     frame = np.full((1080, 1920, 3), 90, np.uint8)
     mosaic = build_debug_mosaic(frame, (654, 221, 1259, 1075), None, stable=_measurement(772, True))
     assert mosaic.shape == (HEIGHT, WIDTH, 3)
+
+
+def test_dragging_the_picture_moves_the_diagnostics_window():
+    import tkinter as tk
+
+    import pytest
+
+    from levainpeak.debug_view import DebugWindow
+
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display available")
+    try:
+        window = DebugWindow(root, lambda: {})
+        root.update()
+        label = window._label
+        x0, y0 = window.window.winfo_x(), window.window.winfo_y()
+        label.event_generate("<ButtonPress-1>", x=50, y=50, rootx=x0 + 50, rooty=y0 + 50)
+        label.event_generate("<B1-Motion>", x=90, y=70, rootx=x0 + 90, rooty=y0 + 70, state=0x100)
+        root.update()
+        assert (window.window.winfo_x() - x0, window.window.winfo_y() - y0) == (40, 20)
+        window.close()
+    finally:
+        root.destroy()

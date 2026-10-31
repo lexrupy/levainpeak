@@ -418,8 +418,12 @@ class DebugWindow:
         self.window.configure(background="#262928")
         self.window.bind("<Escape>", lambda _e: self.close())
         self.window.protocol("WM_DELETE_WINDOW", self.close)
-        self._label = tk.Label(self.window, background="#262928", borderwidth=0)
+        self._label = tk.Label(self.window, background="#262928", borderwidth=0, cursor="fleur")
         self._label.pack(fill="both", expand=True)
+        # Dragging anywhere on the picture moves the window, as in the graph popup.
+        self._drag_origin = (0, 0)
+        self._label.bind("<ButtonPress-1>", self._drag_start, add="+")
+        self._label.bind("<B1-Motion>", self._drag_move, add="+")
         self._photo: ImageTk.PhotoImage | None = None
         self._latest: np.ndarray | None = None
         self._frames: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
@@ -427,6 +431,15 @@ class DebugWindow:
         self._thread = threading.Thread(target=self._work, name="debug-view", daemon=True)
         self._thread.start()
         self.window.after(150, self._poll)
+
+    def _drag_start(self, event: tk.Event) -> None:
+        self._drag_origin = (
+            event.x_root - self.window.winfo_x(), event.y_root - self.window.winfo_y()
+        )
+
+    def _drag_move(self, event: tk.Event) -> None:
+        offset_x, offset_y = self._drag_origin
+        self.window.geometry(f"+{event.x_root - offset_x}+{event.y_root - offset_y}")
 
     @property
     def open(self) -> bool:
