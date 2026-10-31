@@ -28,7 +28,8 @@ from levainpeak.graph_phases import (DECLINE, EXPONENTIAL, LATENCY, STATIONARY,
                                      graph_phase_segments)
 from levainpeak.phone_config import load_phone_config, local_link, online_link
 from levainpeak.phone_push import PhonePusher, make_snapshot
-from levainpeak.sessions import PhaseTracker, SessionLog, latest_session_csv
+from levainpeak.sessions import (GEOMETRY_VERSION, PhaseTracker, SessionLog,
+                                 latest_session_csv)
 from levainpeak.settings import (MAX_PHONE_SECONDS, MAX_RECORD_SECONDS,
                                  MIN_PHONE_SECONDS, MIN_RECORD_SECONDS,
                                  Settings, load_settings, save_settings)
@@ -1407,6 +1408,15 @@ class LevainPeakApp:
         except (KeyError, ValueError, IndexError):
             self._reset_tracking()
             self._session_baseline = None
+        if self._session_log.geometry != GEOMETRY_VERSION:
+            # The volume is measured more accurately now (the jar's real base, not the
+            # steel bowl under it), so the initial level saved with the old measurement
+            # no longer matches. Take it again from the mark, once.
+            self._session_baseline = None
+            try:
+                self._session_log.save_geometry(GEOMETRY_VERSION)
+            except OSError:
+                logging.exception("Falha ao salvar a versão da medição")
         self.session_button.configure(text="Encerrar sessão")
         self.metric_values["Sessão"].configure(
             text=self._session_summary(resumed=True)

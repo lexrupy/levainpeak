@@ -20,6 +20,12 @@ def latest_session_csv(directory: Path | None = None) -> Path | None:
     return max(files, key=lambda path: path.stat().st_mtime, default=None)
 
 
+# How the volume is measured. Bump it when the geometry changes, so a session
+# saved with an older measurement gets its initial level taken again: dividing
+# a new volume by an old initial level is wrong by several percent.
+GEOMETRY_VERSION = 2
+
+
 class SessionLog:
     def __init__(self, directory: Path | None = None, sample_seconds: float = 10.0) -> None:
         self.directory = directory or Path("data/sessions")
@@ -42,6 +48,8 @@ class SessionLog:
         self.vessel_bounds: dict[str, tuple[int, int]] = {}
         # Row (frame pixels) of the initial-level mark the user placed by hand.
         self.manual_marker_y: int | None = None
+        # Version of the volume measurement the saved initial level came from.
+        self.geometry: int = GEOMETRY_VERSION
 
     @property
     def active(self) -> bool:
@@ -97,6 +105,21 @@ class SessionLog:
         payload["session_name"] = self.session_name
         payload["vessel_bounds"] = {name: list(bounds) for name, bounds in self.vessel_bounds.items()}
         payload["marker_y"] = self.manual_marker_y
+        payload["geometry"] = self.geometry
+        self.metadata_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    def save_geometry(self, version: int) -> None:
+        """Record which volume measurement the initial level now comes from."""
+        self.geometry = int(version)
+        if self.metadata_path is None:
+            return
+        try:
+            payload = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+        payload["geometry"] = self.geometry
         self.metadata_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -159,10 +182,12 @@ class SessionLog:
             self.vessel_bounds = {name: (int(v[0]), int(v[1])) for name, v in saved.items() if v}
             marker = raw.get("marker_y")
             self.manual_marker_y = None if marker is None else int(marker)
+            self.geometry = int(raw.get("geometry", 1))  # files from before this existed are version 1
         else:
             self.regions = {"pot": None, "thermometer": None}
             self.vessel_bounds = {}
             self.manual_marker_y = None
+            self.geometry = GEOMETRY_VERSION
         with path.open("r", newline="", encoding="utf-8") as source:
             self._columns = next(csv.reader(source), [])
         # Add newer optional fields when continuing an older log, keeping all

@@ -53,3 +53,43 @@ def test_saving_regions_again_keeps_the_mark(tmp_path):
     saved = json.loads(log.metadata_path.read_text(encoding="utf-8"))
     assert saved["marker_y"] == 790
     log.stop()
+
+
+def test_a_new_session_records_the_current_volume_geometry(tmp_path):
+    from levainpeak.sessions import GEOMETRY_VERSION
+
+    log = SessionLog(tmp_path)
+    log.start(name="teste")
+    log.save_regions(None, None)
+    saved = json.loads(log.metadata_path.read_text(encoding="utf-8"))
+    assert saved["geometry"] == GEOMETRY_VERSION
+    log.stop()
+
+
+def test_an_older_session_file_is_version_one_until_it_is_brought_up_to_date(tmp_path):
+    from levainpeak.sessions import GEOMETRY_VERSION
+
+    log = SessionLog(tmp_path)
+    log.start(name="teste")
+    log.save_regions((1, 2, 3, 4), None)
+    log.save_marker(772)
+    path = log.path
+    log.record(0.0, _row(0.3), "Crescendo")
+    log.stop()
+    metadata = path.with_suffix(".json")
+    saved = json.loads(metadata.read_text(encoding="utf-8"))
+    del saved["geometry"]  # what a session written before the version existed looks like
+    metadata.write_text(json.dumps(saved), encoding="utf-8")
+
+    resumed = SessionLog(tmp_path)
+    resumed.resume(path)
+    assert resumed.geometry == 1 and resumed.manual_marker_y == 772
+    resumed.save_geometry(GEOMETRY_VERSION)
+    assert json.loads(metadata.read_text(encoding="utf-8"))["geometry"] == GEOMETRY_VERSION
+    assert json.loads(metadata.read_text(encoding="utf-8"))["marker_y"] == 772  # nothing else lost
+    resumed.stop()
+
+    again = SessionLog(tmp_path)
+    again.resume(path)
+    assert again.geometry == GEOMETRY_VERSION
+    again.stop()
