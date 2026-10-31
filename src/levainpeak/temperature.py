@@ -55,9 +55,10 @@ def read_temperature(
     roi: tuple[int, int, int, int] | None,
     infrared: bool | None = None,
     face_quad: tuple[tuple[int, int], ...] | None = None,
+    ink_cut: float | None = None,
 ) -> float | None:
     """Read a Celsius value from a manually selected seven-segment display."""
-    return inspect_temperature(frame, roi, infrared, face_quad).reading
+    return inspect_temperature(frame, roi, infrared, face_quad, ink_cut).reading
 
 
 def rectify_face(frame: np.ndarray, quad) -> np.ndarray | None:
@@ -85,19 +86,23 @@ def inspect_temperature(
     roi: tuple[int, int, int, int] | None,
     infrared: bool | None = None,
     face_quad: tuple[tuple[int, int], ...] | None = None,
+    ink_cut: float | None = None,
 ) -> TemperatureInspection:
     """Run the temperature read and keep what each stage produced.
 
     ``infrared`` selects the capture profile; None decides from the picture.
     ``face_quad`` is the LCD face drawn by the user; it replaces the search for
-    the face, the straightening and the cropping.
+    the face, the straightening and the cropping. ``ink_cut`` is the black/white
+    cut for that face: in infrared the fraction of the face's own contrast a stroke
+    must be darker than its surroundings (0.3 by default), by day the percentile of
+    the face's brightness below which a pixel is ink (40 by default).
     """
     if face_quad is not None and frame is not None:
         face = rectify_face(frame, face_quad)
         if face is None:
             return TemperatureInspection()
         use_infrared = is_infrared(face) if infrared is None else infrared
-        return _inspect_face(face, cv2.cvtColor(face, cv2.COLOR_BGR2GRAY), use_infrared, drawn=True)
+        return _inspect_face(face, cv2.cvtColor(face, cv2.COLOR_BGR2GRAY), use_infrared, drawn=True, ink_cut=ink_cut)
     if frame is None or roi is None:
         return TemperatureInspection()
     height, width = frame.shape[:2]
@@ -245,18 +250,20 @@ def _face_candidates(gray: np.ndarray) -> list[np.ndarray]:
 
 
 def _inspect_face(
-    display: np.ndarray, gray: np.ndarray, infrared: bool, drawn: bool = False
+    display: np.ndarray, gray: np.ndarray, infrared: bool, drawn: bool = False,
+    ink_cut: float | None = None,
 ) -> TemperatureInspection:
     """Binarize the LCD face, locate the three digits and read them."""
     # Otsu often selects the bright LCD background on these reflective
     # displays. Threshold relative to the face brightness, then inspect the
     # three fixed digit positions used by this thermometer layout.
     if infrared and drawn:
-        binary = _flat_field_ink(gray)
+        binary = _flat_field_ink(gray, 0.3 if ink_cut is None else ink_cut)
     elif infrared:
         binary = _infrared_ink(gray)
     else:
-        threshold = int(np.clip(np.percentile(gray, 40), 100, 150))
+        percentile = 40 if ink_cut is None or not drawn else ink_cut
+        threshold = int(np.clip(np.percentile(gray, percentile), 100, 150))
         binary = (gray < threshold).astype(np.uint8) * 255
     binary = _drop_edge_ink(binary)
     binary = cv2.resize(binary, None, fx=8, fy=8, interpolation=cv2.INTER_NEAREST)
@@ -314,7 +321,7 @@ def _infrared_ink(gray: np.ndarray) -> np.ndarray:
     return (smooth < background - _INFRARED_INK_DELTA).astype(np.uint8) * 255
 
 
-def _flat_field_ink(gray: np.ndarray) -> np.ndarray:
+def _flat_field_ink(gray: np.ndarray, cut: float = 0.3) -> np.ndarray:
     """Ink of a dim, blurred display: what is darker than its surroundings by a fraction
     of the picture's own contrast.
 
@@ -325,7 +332,7 @@ def _flat_field_ink(gray: np.ndarray) -> np.ndarray:
     plain = gray.astype(np.float32)
     flat = plain - cv2.GaussianBlur(plain, (0, 0), 14)
     relative = cv2.GaussianBlur(flat / (float(flat.std()) + 1e-6), (0, 0), 1.2)
-    return (relative < -0.3).astype(np.uint8) * 255
+    return (relative < -cut).astype(np.uint8) * 255
 
 
 def _fit_digit_cells(binary: np.ndarray) -> list[tuple[int, int, int, int]] | None:

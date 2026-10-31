@@ -225,3 +225,19 @@ def test_a_live_dim_face_from_the_camera_reads_25_6_with_boxes_around_whole_digi
         cell = result.binary[:, left:right] > 0
         assert cell[:, :3].sum() + cell[:, -3:].sum() < 0.02 * cell.size
         assert 0.1 * width < right - left < 0.3 * width
+
+
+def test_the_black_white_cut_of_the_drawn_face_changes_what_counts_as_ink():
+    from pathlib import Path
+
+    from levainpeak.temperature import _flat_field_ink, inspect_temperature
+
+    face = cv2.imread(str(Path(__file__).parent / "data" / "face_ir_viva.png"), cv2.IMREAD_GRAYSCALE)
+    fainter = int((_flat_field_ink(face, 0.15) > 0).sum())
+    default = int((_flat_field_ink(face, 0.3) > 0).sum())
+    stricter = int((_flat_field_ink(face, 0.6) > 0).sum())
+    assert fainter > default > stricter  # a lower cut reads fainter strokes as ink
+    bgr = cv2.cvtColor(face, cv2.COLOR_GRAY2BGR)
+    h, w = bgr.shape[:2]
+    quad = ((0, 0), (w - 1, 0), (w - 1, h - 1), (0, h - 1))
+    assert inspect_temperature(bgr, None, infrared=True, face_quad=quad, ink_cut=0.3).reading == pytest.approx(25.6)

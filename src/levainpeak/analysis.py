@@ -31,6 +31,8 @@ class ContainerAnalyzer:
         self.temperature_roi: tuple[int, int, int, int] | None = None
         self.temperature_quad: tuple[tuple[int, int], ...] | None = None  # LCD face corners drawn by the user
         self.anchor_temperature: float | None = None  # last logged value of a resumed session
+        self.ink_cut_infrared: float = 0.30  # black/white cuts of the drawn face, set from the window
+        self.ink_cut_day: int = 40
         self.interval_seconds = interval_seconds
         self._stop = threading.Event()
         self._results: queue.Queue[tuple[tuple[int, ContainerMeasurement | None, float | None], tuple]] = queue.Queue(maxsize=1)
@@ -185,6 +187,7 @@ class ContainerAnalyzer:
                     reading = read_temperature(
                         frame, temperature_roi, infrared=self.profile.infrared,
                         face_quad=temperature_quad,
+                        ink_cut=self.ink_cut_infrared if self.profile.infrared else self.ink_cut_day,
                     )
                 except cv2.error:
                     reading = None

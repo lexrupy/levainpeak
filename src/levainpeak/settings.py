@@ -16,6 +16,8 @@ MIN_PHONE_SECONDS = 60
 MAX_PHONE_SECONDS = 900
 MIN_OVERLAY_BRIGHTNESS = 10  # percent of the picture's brightness kept outside the marked regions
 MAX_OVERLAY_BRIGHTNESS = 100  # 100: nothing is dimmed
+INK_CUT_INFRARED = (0.10, 0.80)  # fraction of the face's contrast; lower reads fainter strokes
+INK_CUT_DAY = (20, 60)  # brightness percentile of the face below which a pixel is ink
 
 
 @dataclass
@@ -27,6 +29,8 @@ class Settings:
     overlay_brightness: int = 50
     graph_temperature_scale: str = "ampla"
     graph_volume_scale: str = "auto"
+    ink_cut_infrared: float = 0.30
+    ink_cut_day: int = 40
 
     def clamped(self) -> "Settings":
         return Settings(
@@ -45,6 +49,8 @@ class Settings:
                 self.graph_temperature_scale if self.graph_temperature_scale in TEMPERATURE_SCALES else "ampla"
             ),
             graph_volume_scale=self.graph_volume_scale if self.graph_volume_scale in VOLUME_SCALES else "auto",
+            ink_cut_infrared=round(min(INK_CUT_INFRARED[1], max(INK_CUT_INFRARED[0], float(self.ink_cut_infrared))), 2),
+            ink_cut_day=min(INK_CUT_DAY[1], max(INK_CUT_DAY[0], int(self.ink_cut_day))),
         )
 
 
@@ -61,6 +67,8 @@ def load_settings(path: Path = SETTINGS_PATH) -> Settings:
             overlay_brightness=int(data.get("overlay_brightness", defaults.overlay_brightness)),
             graph_temperature_scale=str(data.get("graph_temperature_scale", defaults.graph_temperature_scale)),
             graph_volume_scale=str(data.get("graph_volume_scale", defaults.graph_volume_scale)),
+            ink_cut_infrared=float(data.get("ink_cut_infrared", defaults.ink_cut_infrared)),
+            ink_cut_day=int(data.get("ink_cut_day", defaults.ink_cut_day)),
         ).clamped()
     except FileNotFoundError:
         return defaults

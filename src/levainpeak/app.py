@@ -34,8 +34,8 @@ from levainpeak.phone_push import PhonePusher, make_snapshot
 from levainpeak.sessions import (GEOMETRY_VERSION, PhaseTracker, SessionLog,
                                  latest_session_csv)
 from levainpeak.regions_store import load_regions_file, save_regions_file
-from levainpeak.settings import (MAX_OVERLAY_BRIGHTNESS, MAX_PHONE_SECONDS,
-                                 MAX_RECORD_SECONDS, MIN_OVERLAY_BRIGHTNESS,
+from levainpeak.settings import (INK_CUT_DAY, INK_CUT_INFRARED, MAX_OVERLAY_BRIGHTNESS,
+                                 MAX_PHONE_SECONDS, MAX_RECORD_SECONDS, MIN_OVERLAY_BRIGHTNESS,
                                  MIN_PHONE_SECONDS, MIN_RECORD_SECONDS,
                                  Settings, load_settings, save_settings)
 from levainpeak.stream import RtspStream
@@ -118,6 +118,8 @@ class LevainPeakApp:
             self._stream = RtspStream(load_camera_config())
             self._stream.start()
             self._analyzer = ContainerAnalyzer(self._stream)
+            self._analyzer.ink_cut_infrared = self._settings.ink_cut_infrared
+            self._analyzer.ink_cut_day = self._settings.ink_cut_day
             self._load_saved_regions()
             self._analyzer.start()
             self._set_message("Iniciando conexão com a câmera…")
@@ -336,6 +338,43 @@ class LevainPeakApp:
             lines.append(f"Mistura {self._mix_time.strftime('%d/%m %H:%M')}")
         return "\n".join(lines)
 
+    def _running_infrared(self) -> bool:
+        return self._analyzer is not None and self._analyzer.profile.infrared
+
+    def _ink_cut_of_profile(self) -> float:
+        """The black/white cut of the profile that is running (never the other one's)."""
+        return self._settings.ink_cut_infrared if self._running_infrared() else float(self._settings.ink_cut_day)
+
+    def _ink_control(self) -> dict | None:
+        """What the Diagnóstico slider shows: 0-100%, where more means more of the display read as ink."""
+        if self._temperature_quad is None and self._temperature_roi is None:
+            return None
+        if self._running_infrared():
+            low, high = INK_CUT_INFRARED
+            percent = (high - self._settings.ink_cut_infrared) / (high - low) * 100  # a lower cut reads fainter strokes
+            return {"profile": "infravermelho", "percent": percent}
+        low, high = INK_CUT_DAY
+        return {"profile": "dia", "percent": (self._settings.ink_cut_day - low) / (high - low) * 100}
+
+    def _set_ink_cut(self, percent: float, save: bool) -> None:
+        """Slider moved: apply at once to the running profile; write to disk on release."""
+        percent = min(100.0, max(0.0, percent))
+        if self._running_infrared():
+            low, high = INK_CUT_INFRARED
+            self._settings = replace(self._settings, ink_cut_infrared=round(high - percent / 100 * (high - low), 2)).clamped()
+            if self._analyzer is not None:
+                self._analyzer.ink_cut_infrared = self._settings.ink_cut_infrared
+        else:
+            low, high = INK_CUT_DAY
+            self._settings = replace(self._settings, ink_cut_day=round(low + percent / 100 * (high - low))).clamped()
+            if self._analyzer is not None:
+                self._analyzer.ink_cut_day = self._settings.ink_cut_day
+        if save:
+            try:
+                save_settings(self._settings)
+            except OSError:
+                logging.exception("Falha ao salvar o corte do visor")
+
     def _persist_regions(self) -> None:
         """Write the marked regions (and the mark) to disk now, session or not."""
         try:
@@ -389,7 +428,7 @@ class LevainPeakApp:
         if self._debug_window is not None and self._debug_window.open:
             self._debug_window.lift()
             return
-        self._debug_window = DebugWindow(self.root, self._debug_state)
+        self._debug_window = DebugWindow(self.root, self._debug_state, on_ink_cut=self._set_ink_cut)
 
     def _debug_state(self) -> dict:
         """Read from the diagnostics worker thread: only whole-object reads."""
@@ -404,6 +443,8 @@ class LevainPeakApp:
             "profile": None if self._analyzer is None else self._analyzer.profile,
             "outline": self._pot_outline,
             "face_quad": self._temperature_quad,
+            "ink_cut": self._ink_cut_of_profile(),
+            "ink_control": self._ink_control(),
             "vertical_bounds": None if self._analyzer is None else self._analyzer.effective_bounds(),
         }
 
@@ -1376,7 +1417,10 @@ class LevainPeakApp:
             phone_seconds = int(float(self._phone_interval_var.get()))
         except ValueError:
             phone_seconds = self._settings.phone_interval_seconds
-        self._settings = Settings(
+        # replace(), not a new Settings: the options this tab does not show (graph scales,
+        # the display's black/white cuts) must survive a change here.
+        self._settings = replace(
+            self._settings,
             record_interval_seconds=seconds,
             phone_enabled=self._phone_enabled_var.get(),
             phone_interval_seconds=phone_seconds,

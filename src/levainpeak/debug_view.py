@@ -7,6 +7,7 @@ import queue
 import threading
 import time
 import tkinter as tk
+from tkinter import ttk
 from functools import lru_cache
 from typing import Callable
 
@@ -136,6 +137,7 @@ def build_debug_mosaic(
     vertical_bounds: tuple[int, int] | None = None,
     outline: tuple[tuple[int, int], ...] | None = None,
     face_quad: tuple[tuple[int, int], ...] | None = None,
+    ink_cut: float | None = None,
 ) -> np.ndarray:
     """One BGR image with the stages of the pot, surface and thermometer reads.
 
@@ -198,7 +200,7 @@ def build_debug_mosaic(
     place(width_panel, 0, row2_y, "5 · Largura e volume por linha")
     inspection = (
         inspect_temperature(
-            frame, thermometer_roi, None if profile is None else profile.infrared, face_quad
+            frame, thermometer_roi, None if profile is None else profile.infrared, face_quad, ink_cut
         )
         if frame is not None and thermometer_roi is not None
         else None
@@ -432,6 +434,7 @@ def _diagnostics_worker(
                 stable=state.get("stable"), temperature_c=state.get("temperature_c"),
                 profile=state.get("profile"), vertical_bounds=state.get("vertical_bounds"),
                 outline=state.get("outline"), face_quad=state.get("face_quad"),
+                ink_cut=state.get("ink_cut"),
             )
         except Exception:  # noqa: BLE001 - a diagnostics glitch must not kill the thread
             logging.exception("Falha ao montar o diagnóstico")
@@ -447,10 +450,23 @@ def _diagnostics_worker(
         stop.wait(max(0.5, 5 * (time.perf_counter() - started)))
 
 
+def ink_slider_box() -> tuple[int, int, int]:
+    """(x, y, width) in mosaic pixels of the black/white control: right under the binary picture."""
+    row2_y = TITLE_H + PANEL_H + GAP
+    base_x, base_y = PANEL_W + GAP, row2_y + TITLE_H
+    return base_x + PANEL_W + 4, base_y + 142, PANEL_W - 8
+
+
 class DebugWindow:
     """Floating window that rebuilds the mosaic about twice a second."""
 
-    def __init__(self, root: tk.Tk, get_state: Callable[[], dict]) -> None:
+    def __init__(
+        self, root: tk.Tk, get_state: Callable[[], dict],
+        on_ink_cut: Callable[[float, bool], None] | None = None,
+    ) -> None:
+        self._get_state = get_state
+        self._on_ink_cut = on_ink_cut
+        self._dragging_cut = False
         self.window = tk.Toplevel(root, class_="Pythontkfloating")
         self.window.title("LevainPeak · Diagnóstico")
         self.window.geometry("980x780")
@@ -460,6 +476,13 @@ class DebugWindow:
         self.window.protocol("WM_DELETE_WINDOW", self.close)
         self._label = tk.Label(self.window, background="#262928", borderwidth=0)
         self._label.pack(fill="both", expand=True, padx=BORDER, pady=BORDER)
+        # The black/white control sits on the picture, right under the binary image of the display.
+        self._cut_text = tk.Label(self._label, background="#262928", foreground="#e8c547", font=("TkDefaultFont", 8))
+        self._cut_var = tk.DoubleVar(value=50)
+        self._cut_scale = ttk.Scale(self._label, from_=0, to=100, orient="horizontal", variable=self._cut_var)
+        self._cut_scale.bind("<ButtonPress-1>", lambda _e: setattr(self, "_dragging_cut", True), add="+")
+        self._cut_scale.bind("<B1-Motion>", lambda _e: self._cut_changed(False), add="+")
+        self._cut_scale.bind("<ButtonRelease-1>", lambda _e: self._cut_changed(True), add="+")
         # Drag the picture to move the window, the border to resize it.
         self._controls = FloatingWindowControls(self.window, self._label, on_close=self.close)
         self._photo: ImageTk.PhotoImage | None = None
@@ -496,11 +519,35 @@ class DebugWindow:
             self._show(self._latest)
         self.window.after(150, self._poll)
 
+    def _cut_changed(self, release: bool) -> None:
+        if self._on_ink_cut is not None:
+            self._on_ink_cut(float(self._cut_var.get()), release)
+        if release:
+            self._dragging_cut = False
+
+    def _place_cut_control(self, scale: float, offset: tuple[int, int]) -> None:
+        """Put the control over the picture, or hide it when there is no display marked."""
+        try:
+            control = self._get_state().get("ink_control")
+        except Exception:  # noqa: BLE001 - the window must survive a bad read
+            control = None
+        if not control:
+            self._cut_scale.place_forget()
+            self._cut_text.place_forget()
+            return
+        if not self._dragging_cut:
+            self._cut_var.set(control["percent"])
+        self._cut_text.configure(text=f"traço do visor · perfil {control['profile']} · {control['percent']:.0f}%")
+        x, y, width = ink_slider_box()
+        self._cut_text.place(x=offset[0] + int(x * scale), y=offset[1] + int(y * scale) - 15)
+        self._cut_scale.place(x=offset[0] + int(x * scale), y=offset[1] + int(y * scale), width=max(60, int(width * scale)))
+
     def _show(self, mosaic: np.ndarray) -> None:
         available_w = max(1, self._label.winfo_width())
         available_h = max(1, self._label.winfo_height())
         scale = min(available_w / mosaic.shape[1], available_h / mosaic.shape[0])
         size = (max(1, int(mosaic.shape[1] * scale)), max(1, int(mosaic.shape[0] * scale)))
+        self._place_cut_control(scale, ((available_w - size[0]) // 2, (available_h - size[1]) // 2))
         image = Image.fromarray(cv2.cvtColor(mosaic, cv2.COLOR_BGR2RGB)).resize(size, Image.LANCZOS)
         self._photo = ImageTk.PhotoImage(image)
         self._label.configure(image=self._photo)
