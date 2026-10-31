@@ -1421,7 +1421,7 @@ class LevainPeakApp:
         stream, measurement = self._stream, self._measurement
         if stream is None or measurement is None:
             return None
-        return make_snapshot(stream.snapshot()[1], measurement, outline=self._pot_outline)
+        return make_snapshot(stream.snapshot()[1], measurement, crop=self._manual_pot_roi)
 
     def _copy_local_link(self) -> None:
         self._copy_link(

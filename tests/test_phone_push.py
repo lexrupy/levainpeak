@@ -235,23 +235,17 @@ def test_a_refused_clear_reports_the_reason_without_the_token(receiver, tmp_path
     assert not done and message == "token inválido" and "outro-token" not in message
 
 
-def test_the_snapshot_keeps_only_the_inside_of_the_drawn_contour():
+def test_the_snapshot_is_the_area_the_user_drew_with_pote():
     from levainpeak.vision import ContainerMeasurement
 
-    frame = np.full((600, 800, 3), 200, np.uint8)
-    outline = ((200, 100), (600, 100), (540, 520), (260, 520))
-    rows = range(100, 520)
-    profile = tuple((int(200 + 60 * (y - 100) / 420), int(600 - 60 * (y - 100) / 420)) for y in rows)
+    frame = np.zeros((600, 800, 3), np.uint8)
+    frame[:, :400] = (0, 0, 255)  # left half red, right half blue (BGR)
+    frame[:, 400:] = (255, 0, 0)
     measurement = ContainerMeasurement(
-        left=200, right=600, top=100, bottom=520, surface_y=300, volume_fraction=0.4, confidence=0.9,
-        marker_y=400, edge_profile=profile,
+        left=300, right=500, top=200, bottom=500, surface_y=300, volume_fraction=0.4, confidence=0.9,
     )
-    snapshot = make_snapshot(frame, measurement, width=300, outline=outline)
+    # the box the user drew: all of the left half, taller than the vessel
+    snapshot = make_snapshot(frame, measurement, width=300, crop=(0, 100, 400, 560))
     picture = cv2.imdecode(np.frombuffer(base64.b64decode(snapshot["jpeg_b64"]), np.uint8), cv2.IMREAD_COLOR)
-    scale = picture.shape[1] / (400 * 1.12)
-    # outside the contour (bottom-left corner of the crop, where the jar has narrowed): flat dark grey
-    assert picture[int(picture.shape[0] * 0.9), 2].max() < 80
-    # inside the jar: the picture itself
-    assert picture[int(picture.shape[0] * 0.6), picture.shape[1] // 2].min() > 150
-    plain = cv2.imdecode(np.frombuffer(base64.b64decode(make_snapshot(frame, measurement, width=300)["jpeg_b64"]), np.uint8), cv2.IMREAD_COLOR)
-    assert plain[int(plain.shape[0] * 0.9), 2].min() > 150  # without a contour nothing is masked
+    assert picture.shape[1] == 300 and picture[picture.shape[0] // 2, 250, 2] > 150  # red, not blue: that box, not the vessel's
+    assert picture[picture.shape[0] // 2, 250, 0] < 100
