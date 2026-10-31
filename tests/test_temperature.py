@@ -148,3 +148,10 @@ def test_a_much_larger_region_still_reads_or_gives_up_never_a_wrong_value(paddin
             wrong.append((text, value))
     assert not wrong, f"confident misreads with padding {padding}: {wrong}"
     assert read >= 3
+
+
+@pytest.mark.parametrize("text", ["23.7", "27.0", "20.7", "17.7"])
+def test_a_seven_drawn_with_the_upper_left_bar_is_still_a_seven(monkeypatch, text):
+    monkeypatch.setitem(_DIGITS, 7, "abcf")
+    frame, roi = render_display(text)
+    assert read_temperature(frame, roi) == pytest.approx(float(text))

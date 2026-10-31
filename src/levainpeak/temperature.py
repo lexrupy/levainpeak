@@ -22,6 +22,9 @@ _DIGITS = {
     8: "abcdefg",
     9: "abfgcd",
 }
+# This thermometer draws its 7 with the upper-left bar lit as well (a, b, c, f);
+# the plain three-bar 7 stays accepted.
+_SHAPES = [*_DIGITS.items(), (7, "abcf")]
 _SEGMENTS = {
     "a": (0.32, 0.02, 0.68, 0.24),
     "b": (0.70, 0.10, 0.98, 0.50),
@@ -298,7 +301,7 @@ def _deslant(binary: np.ndarray) -> np.ndarray:
 # real display (69 digit readings), the weakest lit critical segment is the 8's lower-left
 # bar (0.39, weakened by the camera angle) and the strongest dark one is the 9's
 # lower-left (0.29), so the threshold sits between them at 0.34.
-_PATTERNS = {frozenset(pattern) for pattern in _DIGITS.values()}
+_PATTERNS = {frozenset(pattern) for _, pattern in _SHAPES}
 _LIT_THRESHOLD = 0.34
 _MIN_SEPARATION = 0.04
 _MAX_BEST_SCORE = 1.5
@@ -342,22 +345,19 @@ def _classify_digit(glyph: np.ndarray) -> int | None:
     # weakened by the camera angle is still an 8). Otherwise fall back to the
     # closest pattern, which tolerates one cropped bar such as a 2's bottom.
     lit = frozenset(name for name, value in zip(names, occupancy) if value > _LIT_THRESHOLD)
-    digit = next((candidate for candidate, shape in _DIGITS.items() if frozenset(shape) == lit), None)
-    if digit is None:
-        ranked = sorted(
-            (
-                float(np.square(occupancy - [1.0 if name in shape else 0.0 for name in names]).sum()),
-                candidate,
-            )
-            for candidate, shape in _DIGITS.items()
+    match = next(((candidate, shape) for candidate, shape in _SHAPES if frozenset(shape) == lit), None)
+    if match is None:
+        match = min(
+            _SHAPES,
+            key=lambda item: float(
+                np.square(occupancy - [1.0 if name in item[1] else 0.0 for name in names]).sum()
+            ),
         )
-        digit = ranked[0][1]
-    best = float(
-        np.square(occupancy - [1.0 if name in _DIGITS[digit] else 0.0 for name in names]).sum()
-    )
+    digit, shape = match
+    best = float(np.square(occupancy - [1.0 if name in shape else 0.0 for name in names]).sum())
     if best > _MAX_BEST_SCORE:
         return None
-    pattern = frozenset(_DIGITS[digit])
+    pattern = frozenset(shape)
     for name, value in zip(names, occupancy, strict=True):
         if pattern ^ {name} not in _PATTERNS:
             continue
