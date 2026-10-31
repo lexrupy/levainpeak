@@ -72,9 +72,13 @@ O usuário pediu para **não implementar o app ainda**. Decisões já tomadas:
 - **Leitura:** `GET ?token=...&o=ao_vivo | serie&limite=N | snapshot`. A primeira versão pode dispensar o PWA
   (olhar a planilha e um gráfico do Sheets no celular). O PWA entra para mostrar a imagem e o gráfico do app.
 - **Descartados:** página do claude.ai (o app não grava nela sozinho), Gist (revisões demais, cache de minutos).
-- **Cuidados do cliente Python:** o Apps Script responde ao `POST` com um redirecionamento 302 que deve ser
-  seguido com `GET` (o `urllib` já faz isso). O token vai no corpo do `POST` e na URL do `GET`. Depois de editar
-  o script é preciso criar uma **nova versão** da implantação.
+- **Cuidados do cliente:** o Apps Script executa o `POST` e responde com um redirecionamento 302 que deve ser
+  seguido com `GET`. O `urllib` do Python faz isso sozinho (verificado contra a implantação real, 2026-10-31).
+  No `curl`, usar `-L -d ...` e **não** `-X POST`, que força um segundo `POST` e devolve 405. O token vai no corpo
+  do `POST` e na URL do `GET`. Depois de editar o script é preciso criar uma **nova versão** da implantação.
+- **Implantação:** "Executar como: Eu" e "Quem pode acessar: Qualquer pessoa" (com "Conta do Google" ou
+  "usuário com acesso" o app recebe uma página de login). Já feita e verificada: `GET` com token falso devolve
+  `{"ok":false,"erro":"token inválido"}`. A URL `/exec` e o token ficarão num `phone.ini` local, fora do git.
 
 Pendente: o usuário rodar o script e testar com `curl`; decidir quem lê (token no PWA); depois implementar o
 envio no app (módulo de envio, opções em Configurações) e, se quiser, o PWA. Plano técnico: extrair o preparo
