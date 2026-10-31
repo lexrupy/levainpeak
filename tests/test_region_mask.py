@@ -9,7 +9,8 @@ def test_region_mask_keeps_the_whole_picture_while_drawing_a_new_region():
     frame = np.full((200, 300, 3), 200, np.uint8)
     app = SimpleNamespace(_manual_pot_roi=(10, 10, 100, 150), _temperature_roi=(120, 20, 200, 80), _roi_mode=False,
                          _outline_mode=False, _outline_points=[], _pot_outline=None,
-                         _outline_target="pot", _temperature_quad=None)
+                         _outline_target="pot", _temperature_quad=None,
+                         _settings=SimpleNamespace(overlay_brightness=50))
     dimmed = LevainPeakApp._apply_region_mask(app, frame)
     assert 60 < dimmed[190, 290].max() < 140  # outside the regions: dimmed, but still readable
     app._roi_mode = True
@@ -23,7 +24,8 @@ def test_the_outline_is_drawn_on_the_picture_with_handles_while_editing():
     points = [[60, 30], [240, 30], [210, 170], [90, 170]]
     app = SimpleNamespace(_manual_pot_roi=None, _temperature_roi=None, _roi_mode=False,
                           _outline_mode=True, _outline_points=points, _pot_outline=None,
-                          _outline_target="pot", _temperature_quad=None)
+                          _outline_target="pot", _temperature_quad=None,
+                         _settings=SimpleNamespace(overlay_brightness=50))
     shown = LevainPeakApp._apply_region_mask(app, frame)
     assert shown[100, 150].tolist() == [200, 200, 200]  # not dimmed
     assert shown[30, 60].tolist() != [200, 200, 200]  # a corner handle
@@ -38,9 +40,25 @@ def test_the_thermometer_face_is_outlined_in_its_own_color_and_edited_on_its_own
     face = [[20, 20], [80, 20], [80, 50], [20, 50]]
     app = SimpleNamespace(_manual_pot_roi=None, _temperature_roi=None, _roi_mode=False,
                           _outline_mode=True, _outline_points=face, _pot_outline=pot,
-                          _outline_target="thermometer", _temperature_quad=None)
+                          _outline_target="thermometer", _temperature_quad=None,
+                          _settings=SimpleNamespace(overlay_brightness=50))
     shown = LevainPeakApp._apply_region_mask(app, frame)
     assert shown[20, 20].tolist() != [200, 200, 200]  # the face corner being edited
     assert shown[30, 150].tolist() != [200, 200, 200]  # the saved pot outline stays visible
     assert LevainPeakApp._outline_is_valid(face, 40 * 20)
     assert not LevainPeakApp._outline_is_valid(face)  # too small for a pot
+
+
+def test_the_hole_in_the_overlay_is_the_outer_box_and_the_brightness_is_a_setting():
+    frame = np.full((200, 300, 3), 200, np.uint8)
+    pot_box = (50, 20, 250, 180)
+    outline = ((70, 40), (230, 40), (200, 160), (100, 160))  # inside the box
+    def app(brightness):
+        return SimpleNamespace(_manual_pot_roi=pot_box, _temperature_roi=None, _roi_mode=False,
+                               _outline_mode=False, _outline_points=[], _pot_outline=outline,
+                               _outline_target="pot", _temperature_quad=None,
+                               _settings=SimpleNamespace(overlay_brightness=brightness))
+    shown = LevainPeakApp._apply_region_mask(app(30), frame)
+    assert shown[100, 60].tolist() == [200, 200, 200]  # inside the outer box but outside the contour: not dimmed
+    assert shown[100, 10].tolist() == [60, 60, 60]  # outside the box: 30% of 200
+    assert LevainPeakApp._apply_region_mask(app(100), frame)[100, 10].tolist() == [200, 200, 200]  # 100%: nothing dimmed

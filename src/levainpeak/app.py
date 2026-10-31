@@ -31,7 +31,8 @@ from levainpeak.phone_config import load_phone_config, local_link, online_link
 from levainpeak.phone_push import PhonePusher, make_snapshot
 from levainpeak.sessions import (GEOMETRY_VERSION, PhaseTracker, SessionLog,
                                  latest_session_csv)
-from levainpeak.settings import (MAX_PHONE_SECONDS, MAX_RECORD_SECONDS,
+from levainpeak.settings import (MAX_OVERLAY_BRIGHTNESS, MAX_PHONE_SECONDS,
+                                 MAX_RECORD_SECONDS, MIN_OVERLAY_BRIGHTNESS,
                                  MIN_PHONE_SECONDS, MIN_RECORD_SECONDS,
                                  Settings, load_settings, save_settings)
 from levainpeak.stream import RtspStream
@@ -1033,17 +1034,13 @@ class LevainPeakApp:
             # ones, so keep the whole picture visible and only outline them.
             result = frame.copy()
         else:
-            # Dim everything, then put the selected regions back as they were: the
-            # drawn contour where there is one, otherwise the rectangle.
-            result = cv2.convertScaleAbs(frame, alpha=0.5)
-            keep = np.zeros((height, width), np.uint8)
-            for region, shape in ((self._manual_pot_roi, drawn["pot"]), (self._temperature_roi, drawn["thermometer"])):
-                if shape:
-                    cv2.fillPoly(keep, [np.asarray(shape, np.int32)], 255)
-                elif region:
-                    left, top, right, bottom = region
-                    keep[max(0, top):min(height, bottom), max(0, left):min(width, right)] = 255
-            result[keep > 0] = frame[keep > 0]
+            # Dim everything (by the brightness set in Configurações), then put the
+            # outer boxes (drawn, or the box around a drawn contour) back as they were.
+            result = cv2.convertScaleAbs(frame, alpha=self._settings.overlay_brightness / 100)
+            for left, top, right, bottom in regions:
+                top, bottom = max(0, top), min(height, bottom)
+                left, right = max(0, left), min(width, right)
+                result[top:bottom, left:right] = frame[top:bottom, left:right]
         for region, color, label, shape in (
             (self._manual_pot_roi, (50, 220, 130), "POTE", drawn["pot"]),
             (self._temperature_roi, (40, 190, 245), "TERMÔMETRO", drawn["thermometer"]),
@@ -1249,6 +1246,25 @@ class LevainPeakApp:
         )
         self._settings_note.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
+        video = ttk.LabelFrame(parent, text="Vídeo", padding=12)
+        video.pack(fill="x", pady=(12, 0))
+        ttk.Label(video, text="Brilho fora das regiões marcadas").grid(row=0, column=0, sticky="w")
+        self._overlay_var = tk.IntVar(value=self._settings.overlay_brightness)
+        self._overlay_value = ttk.Label(video, text=f"{self._settings.overlay_brightness}%", width=5)
+        slider = ttk.Scale(
+            video, from_=MIN_OVERLAY_BRIGHTNESS, to=MAX_OVERLAY_BRIGHTNESS, orient="horizontal", length=220,
+            variable=self._overlay_var,
+            command=lambda value: self._overlay_value.configure(text=f"{int(float(value))}%"),
+        )
+        slider.grid(row=0, column=1, padx=8)
+        slider.bind("<ButtonRelease-1>", lambda _e: self._apply_settings(), add="+")
+        slider.bind("<KeyRelease>", lambda _e: self._apply_settings(), add="+")
+        self._overlay_value.grid(row=0, column=2, sticky="w")
+        ttk.Label(
+            video, foreground="#59645e",
+            text=f"{MAX_OVERLAY_BRIGHTNESS}% não escurece nada. O escurecimento só aparece depois de marcar o pote ou o visor.",
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
         phone = ttk.LabelFrame(parent, text="Celular (Google Sheets)", padding=12)
         phone.pack(fill="x", pady=(12, 0))
         self._phone_enabled_var = tk.BooleanVar(value=self._settings.phone_enabled)
@@ -1302,7 +1318,9 @@ class LevainPeakApp:
             phone_enabled=self._phone_enabled_var.get(),
             phone_interval_seconds=phone_seconds,
             phone_snapshot=self._phone_snapshot_var.get(),
+            overlay_brightness=int(float(self._overlay_var.get())),
         ).clamped()
+        self._overlay_var.set(self._settings.overlay_brightness)
         self._interval_var.set(str(self._settings.record_interval_seconds))
         self._phone_interval_var.set(str(self._settings.phone_interval_seconds))
         self._session_log.sample_seconds = self._settings.record_interval_seconds

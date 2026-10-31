@@ -12,6 +12,8 @@ MIN_RECORD_SECONDS = 10
 MAX_RECORD_SECONDS = 120
 MIN_PHONE_SECONDS = 60
 MAX_PHONE_SECONDS = 900
+MIN_OVERLAY_BRIGHTNESS = 10  # percent of the picture's brightness kept outside the marked regions
+MAX_OVERLAY_BRIGHTNESS = 100  # 100: nothing is dimmed
 
 
 @dataclass
@@ -20,6 +22,7 @@ class Settings:
     phone_enabled: bool = False
     phone_interval_seconds: int = 120
     phone_snapshot: bool = False
+    overlay_brightness: int = 50
 
     def clamped(self) -> "Settings":
         return Settings(
@@ -31,6 +34,9 @@ class Settings:
                 MAX_PHONE_SECONDS, max(MIN_PHONE_SECONDS, int(self.phone_interval_seconds))
             ),
             phone_snapshot=bool(self.phone_snapshot),
+            overlay_brightness=min(
+                MAX_OVERLAY_BRIGHTNESS, max(MIN_OVERLAY_BRIGHTNESS, int(self.overlay_brightness))
+            ),
         )
 
 
@@ -44,6 +50,7 @@ def load_settings(path: Path = SETTINGS_PATH) -> Settings:
             phone_enabled=bool(data.get("phone_enabled", defaults.phone_enabled)),
             phone_interval_seconds=int(data.get("phone_interval_seconds", defaults.phone_interval_seconds)),
             phone_snapshot=bool(data.get("phone_snapshot", defaults.phone_snapshot)),
+            overlay_brightness=int(data.get("overlay_brightness", defaults.overlay_brightness)),
         ).clamped()
     except FileNotFoundError:
         return defaults
