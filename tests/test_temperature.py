@@ -17,7 +17,7 @@ CENTERS = (0.32, 0.53, 0.76)
 CELL = 0.16
 
 
-def render_display(text: str, *, noise: float = 0.0, glare: bool = False, seed: int = 0, weak: str = ""):
+def render_display(text: str, *, noise: float = 0.0, glare: bool = False, seed: int = 0, weak: str = "", weak_scale: float = 0.22):
     """Dark bezel around a bright LCD face with three seven-segment digits."""
     face = np.full((FACE_H, FACE_W), 190, np.uint8)
     for center, char in zip(CENTERS, text.replace(".", ""), strict=True):
@@ -27,7 +27,7 @@ def render_display(text: str, *, noise: float = 0.0, glare: bool = False, seed: 
         for name in _DIGITS[int(char)]:
             sx0, sy0, sx1, sy1 = DRAW[name]
             if name in weak:  # a bar dimmed by the viewing angle: smaller footprint
-                cx, cy, half_w, half_h = (sx0 + sx1) / 2, (sy0 + sy1) / 2, (sx1 - sx0) * 0.375, (sy1 - sy0) * 0.375
+                cx, cy, half_w, half_h = (sx0 + sx1) / 2, (sy0 + sy1) / 2, (sx1 - sx0) * weak_scale, (sy1 - sy0) * weak_scale
                 sx0, sx1, sy0, sy1 = cx - half_w, cx + half_w, cy - half_h, cy + half_h
             cv2.rectangle(
                 face,
@@ -81,11 +81,18 @@ def test_glare_never_yields_a_confident_wrong_value():
         assert value is None or value == pytest.approx(float(text))
 
 
-def test_an_eight_with_bars_dimmed_by_the_angle_is_still_an_eight():
-    frame, roi = render_display("21.8", weak="ce")
+def test_an_eight_with_a_bar_dimmed_by_the_angle_is_still_an_eight():
+    # lower-left bar at ~0.46 of the strongest: the old 0.45 threshold refused this
+    frame, roi = render_display("21.8", weak="e")
     assert read_temperature(frame, roi) == pytest.approx(21.8)
 
 
-def test_a_nine_is_not_mistaken_for_that_dimmed_eight():
+def test_a_bar_too_dim_to_judge_is_never_turned_into_another_digit():
+    # lower-left bar at ~0.37: the old threshold read this 8 as a 9 (21.9)
+    frame, roi = render_display("21.8", weak="e", weak_scale=0.16)
+    assert read_temperature(frame, roi) in (None, pytest.approx(21.8))
+
+
+def test_a_nine_is_still_a_nine_next_to_dimmed_bars():
     frame, roi = render_display("21.9", weak="c")
     assert read_temperature(frame, roi) == pytest.approx(21.9)
