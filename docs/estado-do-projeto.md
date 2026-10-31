@@ -37,6 +37,11 @@ a fase e a temperatura lida do visor de um termômetro. Grava uma linha de CSV a
 
 - **Volume relativo:** fração da capacidade do pote, integrando a largura ao quadrado até a superfície.
   0% do gráfico é o nível inicial. 100% é o dobro, até ele ser alcançado, e depois o pico da sessão.
+- **Base do pote (geometria 2):** o volume só conta o pote até onde o levain claro termina na base (a claridade
+  despenca na borda do vidro, ~y=905), não até o fim da caixa (~930, que pega a tigela de aço). Isso e um nível
+  inicial gravado com a medição antiga faziam o fator de crescimento sair ~14% abaixo do real (1,87 em vez de 2,14
+  na mesma imagem). `GEOMETRY_VERSION` (em `sessions.py`) fica no JSON da sessão; ao retomar uma sessão de versão
+  menor, o nível inicial é refeito uma vez a partir da marca. **Mudou a forma de medir? Suba a versão.**
 - **Marca de início:** pode ser manual. Fica no JSON da sessão (`marker_y`) e volta ao retomar.
   O nível inicial da retomada vem da última linha do CSV.
 - **Perfis:** em infravermelho a imagem é cinza (cor média 0,00 contra ~10 de dia). O topo e o fundo do pote
