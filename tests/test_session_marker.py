@@ -111,3 +111,19 @@ def test_the_drawn_pot_outline_is_saved_and_comes_back_on_resume(tmp_path):
     resumed.save_regions((0, 0, 320, 420), None, outline=None)  # back to automatic detection
     assert json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))["pot_outline"] is None
     resumed.stop()
+
+
+def test_the_thermometer_face_corners_are_saved_and_come_back_on_resume(tmp_path):
+    quad = ((40, 50), (200, 60), (195, 130), (38, 120))
+    outline = ((10, 20), (300, 20), (260, 400), (50, 400))
+    log = SessionLog(tmp_path)
+    log.start(name="teste")
+    log.save_regions((0, 0, 320, 420), (30, 40, 210, 140), outline=outline, face_quad=quad)
+    log.save_regions((0, 0, 320, 420), (30, 40, 210, 140), outline=outline)  # leaving the quad out keeps it
+    path = log.path
+    log.record(0.0, _row(0.3), "Crescendo")
+    log.stop()
+    resumed = SessionLog(tmp_path)
+    resumed.resume(path)
+    assert resumed.face_quad == quad and resumed.pot_outline == outline
+    resumed.stop()

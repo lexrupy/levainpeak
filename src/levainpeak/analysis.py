@@ -29,6 +29,7 @@ class ContainerAnalyzer:
         self.outline: tuple[tuple[int, int], ...] | None = None  # the pot's inner contour drawn by the user
         self.empty_pot: ContainerMeasurement | None = None  # outline known, no levain in it (whole-object reads only)
         self.temperature_roi: tuple[int, int, int, int] | None = None
+        self.temperature_quad: tuple[tuple[int, int], ...] | None = None  # LCD face corners drawn by the user
         self.interval_seconds = interval_seconds
         self._stop = threading.Event()
         self._results: queue.Queue[
@@ -36,6 +37,7 @@ class ContainerAnalyzer:
         ] = queue.Queue(maxsize=1)
         self._temperature_c: float | None = None
         self._last_temperature_roi: tuple[int, int, int, int] | None = None
+        self._last_temperature_quad: tuple[tuple[int, int], ...] | None = None
         self._last_temperature_read = 0.0
         self._last_temperature_success = 0.0
         self._temperature_updated_at: float | None = None
@@ -151,8 +153,10 @@ class ContainerAnalyzer:
             self._learn_vessel_bounds(measurement)
             now = time.monotonic()
             temperature_roi = self.temperature_roi
-            if temperature_roi != self._last_temperature_roi:
+            temperature_quad = self.temperature_quad
+            if temperature_roi != self._last_temperature_roi or temperature_quad != self._last_temperature_quad:
                 self._last_temperature_roi = temperature_roi
+                self._last_temperature_quad = temperature_quad
                 self._temperature_c = None
                 self._temperature_updated_at = None
                 self._last_temperature_read = 0.0
@@ -165,7 +169,8 @@ class ContainerAnalyzer:
                 self._last_temperature_read = now
                 try:
                     reading = read_temperature(
-                        frame, temperature_roi, infrared=self.profile.infrared
+                        frame, temperature_roi, infrared=self.profile.infrared,
+                        face_quad=temperature_quad,
                     )
                 except cv2.error:
                     reading = None

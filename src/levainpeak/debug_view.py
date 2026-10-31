@@ -135,6 +135,7 @@ def build_debug_mosaic(
     profile=None,
     vertical_bounds: tuple[int, int] | None = None,
     outline: tuple[tuple[int, int], ...] | None = None,
+    face_quad: tuple[tuple[int, int], ...] | None = None,
 ) -> np.ndarray:
     """One BGR image with the stages of the pot, surface and thermometer reads.
 
@@ -196,7 +197,9 @@ def build_debug_mosaic(
     width_panel = _profile_panel(raw, stable, texts, row2_y)
     place(width_panel, 0, row2_y, "5 · Largura e volume por linha")
     inspection = (
-        inspect_temperature(frame, thermometer_roi, None if profile is None else profile.infrared)
+        inspect_temperature(
+            frame, thermometer_roi, None if profile is None else profile.infrared, face_quad
+        )
         if frame is not None and thermometer_roi is not None
         else None
     )
@@ -428,7 +431,7 @@ def _diagnostics_worker(
                 state.get("frame"), state.get("pot_roi"), state.get("thermometer_roi"),
                 stable=state.get("stable"), temperature_c=state.get("temperature_c"),
                 profile=state.get("profile"), vertical_bounds=state.get("vertical_bounds"),
-                outline=state.get("outline"),
+                outline=state.get("outline"), face_quad=state.get("face_quad"),
             )
         except Exception:  # noqa: BLE001 - a diagnostics glitch must not kill the thread
             logging.exception("Falha ao montar o diagnóstico")

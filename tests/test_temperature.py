@@ -166,3 +166,16 @@ def test_a_display_stuck_on_the_wall_at_a_tilt_is_still_read(text, angle):
     matrix = cv2.getRotationMatrix2D((width / 2, height / 2), angle, 1.0)
     tilted = cv2.warpAffine(frame, matrix, (width, height), flags=cv2.INTER_CUBIC, borderValue=(190, 190, 190))
     assert read_temperature(tilted, (0, 0, width, height)) == pytest.approx(float(text))
+
+
+@pytest.mark.parametrize("text", ["21.8", "26.6", "23.7", "30.9"])
+def test_a_drawn_face_quad_reads_a_display_seen_at_an_angle(text):
+    frame, _ = render_display(text)
+    frame = cv2.copyMakeBorder(frame, 80, 80, 80, 80, cv2.BORDER_CONSTANT, value=(190, 190, 190))
+    face = np.float32([(110, 110), (110 + FACE_W, 110), (110 + FACE_W, 110 + FACE_H), (110, 110 + FACE_H)])
+    # seen from the side and a little rotated: a perspective warp, as a wall-mounted display is
+    seen = np.float32([(130, 120), (400, 150), (395, 290), (125, 270)])
+    matrix = cv2.getPerspectiveTransform(face, seen)
+    warped = cv2.warpPerspective(frame, matrix, (frame.shape[1], frame.shape[0]), borderValue=(190, 190, 190))
+    quad = tuple((int(x), int(y)) for x, y in seen)
+    assert read_temperature(warped, None, face_quad=quad) == pytest.approx(float(text))

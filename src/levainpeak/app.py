@@ -69,6 +69,8 @@ class LevainPeakApp:
         self._roi_preview_item: int | None = None
         self._manual_pot_roi: tuple[int, int, int, int] | None = None
         self._pot_outline: tuple[tuple[int, int], ...] | None = None  # pot contour drawn by the user
+        self._temperature_quad: tuple[tuple[int, int], ...] | None = None  # LCD face corners drawn by the user
+        self._outline_target = "pot"
         self._outline_mode = False
         self._outline_points: list[list[int]] = []
         self._outline_drag: int | None = None
@@ -237,16 +239,19 @@ class LevainPeakApp:
         files = group("Arquivos", 1, 0)
         session = group("Sessão", 1, 1)
         self.draw_pot_button = button(
-            regions, "Pote", lambda: self._toggle_roi_mode("pot"), width=11
+            regions, "Pote", lambda: self._toggle_roi_mode("pot"), width=8
         )
         self.draw_outline_button = button(
-            regions, "Contorno", self._toggle_outline_mode, width=11
+            regions, "Contorno", lambda: self._toggle_outline_mode("pot"), width=9
         )
         self.draw_thermometer_button = button(
             regions, "Termômetro", lambda: self._toggle_roi_mode("thermometer"), width=11
         )
+        self.draw_face_button = button(
+            regions, "Visor", lambda: self._toggle_outline_mode("thermometer"), width=8
+        )
         self.auto_pot_button = button(
-            regions, "Automático", self._use_automatic_detection, width=11,
+            regions, "Automático", self._use_automatic_detection, width=10,
             state="disabled",
         )
         self.marker_button = button(
@@ -355,6 +360,7 @@ class LevainPeakApp:
             "temperature_c": self._temperature_c,
             "profile": None if self._analyzer is None else self._analyzer.profile,
             "outline": self._pot_outline,
+            "face_quad": self._temperature_quad,
             "vertical_bounds": None if self._analyzer is None else self._analyzer.effective_bounds(),
         }
 
@@ -541,9 +547,12 @@ class LevainPeakApp:
         target_text = "pote" if target == "pot" else "visor do termômetro"
         self._set_message(f"Arraste uma área um pouco maior que o {target_text}.")
 
-    def _toggle_outline_mode(self) -> None:
-        """First press: put a four-corner contour on the picture to adjust. Second press: use it."""
-        if self._outline_mode:
+    def _toggle_outline_mode(self, target: str = "pot") -> None:
+        """First press: put four corners on the picture to adjust. Second press: use them.
+
+        ``target`` is the pot's inner contour or the thermometer's LCD face.
+        """
+        if self._outline_mode and self._outline_target == target:
             self._apply_outline()
             return
         if self._source_frame_size is None:
@@ -552,19 +561,35 @@ class LevainPeakApp:
         if self._marker_mode:
             self._cancel_marker_mode()
         self._cancel_roi_mode()
-        self._outline_points = [list(point) for point in (self._pot_outline or self._default_outline())]
+        current = self._pot_outline if target == "pot" else self._temperature_quad
+        self._outline_target = target
+        self._outline_points = [list(point) for point in (current or self._default_outline(target))]
         self._outline_mode = True
         self._outline_drag = None
-        self.draw_outline_button.configure(text="Confirmar")
+        (self.draw_outline_button if target == "pot" else self.draw_face_button).configure(text="Confirmar")
         self.video.configure(cursor="crosshair")
         self._set_message(
             "Arraste os cantos até o contorno interno do pote (a parede do vidro). "
-            "Confirmar usa o contorno; Esc cancela."
+            "Confirmar usa o contorno; Esc cancela." if target == "pot" else
+            "Arraste os cantos até a face do visor (o vidro claro com os números, sem a moldura). "
+            "Confirmar usa; Esc cancela."
         )
 
-    def _default_outline(self) -> tuple[tuple[int, int], ...]:
-        """A trapezoid inside the pot region, or in the middle of the picture, to start from."""
+    def _default_outline(self, target: str = "pot") -> tuple[tuple[int, int], ...]:
+        """Corners inside the region of the pot (a trapezoid) or of the display (a rectangle), to start from."""
         width, height = self._source_frame_size
+        if target == "thermometer":
+            if self._temperature_roi is not None:
+                left, top, right, bottom = self._temperature_roi
+            else:
+                left, top, right, bottom = width * 0.1, height * 0.45, width * 0.3, height * 0.75
+            span_x, span_y = right - left, bottom - top
+            return (
+                (int(left + 0.12 * span_x), int(top + 0.15 * span_y)),
+                (int(right - 0.12 * span_x), int(top + 0.15 * span_y)),
+                (int(right - 0.12 * span_x), int(bottom - 0.15 * span_y)),
+                (int(left + 0.12 * span_x), int(bottom - 0.15 * span_y)),
+            )
         if self._manual_pot_roi is not None:
             left, top, right, bottom = self._manual_pot_roi
         else:
@@ -583,6 +608,7 @@ class LevainPeakApp:
         self._outline_drag = None
         if hasattr(self, "draw_outline_button"):
             self.draw_outline_button.configure(text="Contorno")
+            self.draw_face_button.configure(text="Visor")
         if was_active and hasattr(self, "video"):
             self.video.configure(cursor="")
 
@@ -608,13 +634,13 @@ class LevainPeakApp:
         self._redraw_current_frame()
 
     @staticmethod
-    def _outline_is_valid(points: list[list[int]]) -> bool:
+    def _outline_is_valid(points: list[list[int]], min_area: float = 80 * 120) -> bool:
         """A simple quadrilateral of a sensible size: no crossed sides, not a sliver."""
         polygon = np.asarray(points, dtype=np.float64)
         if len(polygon) < 3:
             return False
         area = 0.5 * abs(np.dot(polygon[:, 0], np.roll(polygon[:, 1], -1)) - np.dot(polygon[:, 1], np.roll(polygon[:, 0], -1)))
-        if area < 80 * 120:
+        if area < min_area:
             return False
         signs = []
         for index in range(len(polygon)):
@@ -623,8 +649,12 @@ class LevainPeakApp:
         return abs(sum(signs)) == len(signs)  # all turns the same way: convex, not crossed
 
     def _apply_outline(self) -> None:
-        if not self._outline_is_valid(self._outline_points):
-            self._set_message("O contorno ficou cruzado ou pequeno demais; ajuste os cantos.")
+        pot = self._outline_target == "pot"
+        if not self._outline_is_valid(self._outline_points, 80 * 120 if pot else 40 * 20):
+            self._set_message("Os cantos ficaram cruzados ou o desenho ficou pequeno demais; ajuste.")
+            return
+        if not pot:
+            self._apply_face_quad()
             return
         outline = tuple((int(x), int(y)) for x, y in self._outline_points)
         width, height = self._source_frame_size
@@ -649,6 +679,27 @@ class LevainPeakApp:
             self._reset_tracking()
             self._session_log.save_regions(roi, self._temperature_roi, outline=outline)
         self._set_message("Contorno do pote definido. Procurando o nível do levain dentro dele.")
+
+    def _apply_face_quad(self) -> None:
+        quad = tuple((int(x), int(y)) for x, y in self._outline_points)
+        width, height = self._source_frame_size
+        xs, ys = [x for x, _ in quad], [y for _, y in quad]
+        margin = int(0.12 * max(max(xs) - min(xs), max(ys) - min(ys)))
+        roi = (max(0, min(xs) - margin), max(0, min(ys) - margin),
+               min(width, max(xs) + margin), min(height, max(ys) + margin))
+        self._cancel_outline_mode()
+        self._temperature_quad = quad
+        self._temperature_roi = roi
+        if self._analyzer is not None:
+            self._analyzer.temperature_roi = roi
+            self._analyzer.temperature_quad = quad
+        if self._session_log.active:
+            self._session_log.save_regions(
+                self._manual_pot_roi, roi, outline=self._pot_outline, face_quad=quad
+            )
+        self._temperature_c = None
+        self._update_temperature_label()
+        self._set_message("Face do visor definida; procurando a temperatura.")
 
     def _cancel_roi_mode(self) -> None:
         self._cancel_outline_mode()
@@ -722,27 +773,46 @@ class LevainPeakApp:
         selected_roi = (left, top, right, bottom)
         if self._roi_target == "pot":
             self._manual_pot_roi = selected_roi
-            self._pot_outline = None  # a rectangle replaces a drawn contour
+            # The same pot in a new search area: the drawn contour (and the mark placed
+            # for it) still hold when the contour lies inside the area.
+            keep_outline = self._pot_outline is not None and all(
+                left <= x <= right and top <= y <= bottom for x, y in self._pot_outline
+            )
+            if not keep_outline:
+                self._pot_outline = None
             if self._analyzer is not None:
                 self._analyzer.roi = selected_roi
-                self._analyzer.outline = None
-                self._analyzer.vessel_bounds.clear()  # a different pot: measure again by day
-            self._manual_marker_y = None
-            self._persist_marker()
+                if not keep_outline:
+                    self._analyzer.outline = None
+                    self._analyzer.vessel_bounds.clear()  # a different pot: measure again by day
+            if not keep_outline:
+                self._manual_marker_y = None
+                self._persist_marker()
             self._last_container_box = None
             self._measurement = None
             if self._session_log.active:
-                self._session_baseline = None
-                self._reset_tracking()
-                self._session_log.save_regions(self._manual_pot_roi, self._temperature_roi, outline=self._pot_outline)
+                if not keep_outline:
+                    self._session_baseline = None
+                    self._reset_tracking()
+                self._session_log.save_regions(self._manual_pot_roi, self._temperature_roi, outline=self._pot_outline, face_quad=self._temperature_quad)
             self.auto_pot_button.configure(state="normal")
-            message = "Área de busca do pote definida."
+            message = "Área de busca do pote definida." + (" O contorno foi mantido." if keep_outline else "")
         else:
             self._temperature_roi = selected_roi
+            keep_quad = self._temperature_quad is not None and all(
+                left <= x <= right and top <= y <= bottom for x, y in self._temperature_quad
+            )
+            if not keep_quad:
+                self._temperature_quad = None
             if self._analyzer is not None:
                 self._analyzer.temperature_roi = selected_roi
+                if not keep_quad:
+                    self._analyzer.temperature_quad = None
             if self._session_log.active:
-                self._session_log.save_regions(self._manual_pot_roi, self._temperature_roi, outline=self._pot_outline)
+                self._session_log.save_regions(
+                    self._manual_pot_roi, self._temperature_roi, outline=self._pot_outline,
+                    face_quad=self._temperature_quad,
+                )
             self._temperature_c = None
             self._update_temperature_label()
             message = "Área do visor definida; procurando a temperatura."
@@ -961,7 +1031,7 @@ class LevainPeakApp:
             result = frame.copy()
         else:
             # Dim everything, then put the selected regions back as they were.
-            result = cv2.convertScaleAbs(frame, alpha=0.24)
+            result = cv2.convertScaleAbs(frame, alpha=0.5)
             for left, top, right, bottom in regions:
                 top, bottom = max(0, top), min(height, bottom)
                 left, right = max(0, left), min(width, right)
@@ -975,11 +1045,17 @@ class LevainPeakApp:
                 cv2.rectangle(result, (left, top), (right, bottom), color, 2)
                 cv2.putText(result, label, (left, max(22, top - 8)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2, cv2.LINE_AA)
-        outline = self._outline_points if self._outline_mode else self._pot_outline
-        if outline:
-            color = (0, 235, 255) if self._outline_mode else (50, 220, 130)
+        for target, saved, base_color in (
+            ("pot", self._pot_outline, (50, 220, 130)),
+            ("thermometer", self._temperature_quad, (40, 190, 245)),
+        ):
+            editing = self._outline_mode and self._outline_target == target
+            outline = self._outline_points if editing else saved
+            if not outline:
+                continue
+            color = (0, 235, 255) if editing else base_color
             cv2.polylines(result, [np.asarray(outline, np.int32)], True, color, 2, cv2.LINE_AA)
-            if self._outline_mode:
+            if editing:
                 for x, y in outline:
                     cv2.circle(result, (int(x), int(y)), 12, color, -1, cv2.LINE_AA)
                     cv2.circle(result, (int(x), int(y)), 12, (0, 0, 0), 2, cv2.LINE_AA)
@@ -1039,7 +1115,7 @@ class LevainPeakApp:
                 return
             self._session_name = name.strip() or suggested_name
             session_id = self._session_log.start(self._mix_time, self._session_name)
-            self._session_log.save_regions(self._manual_pot_roi, self._temperature_roi, outline=self._pot_outline)
+            self._session_log.save_regions(self._manual_pot_roi, self._temperature_roi, outline=self._pot_outline, face_quad=self._temperature_quad)
             self._persist_marker()
         except OSError as exc:
             logging.exception("Não foi possível iniciar o registro da sessão")
@@ -1556,7 +1632,9 @@ class LevainPeakApp:
         self._manual_pot_roi = regions.get("pot")
         self._temperature_roi = regions.get("thermometer")
         self._pot_outline = self._session_log.pot_outline
+        self._temperature_quad = self._session_log.face_quad
         if self._analyzer is not None:
+            self._analyzer.temperature_quad = self._temperature_quad
             self._analyzer.outline = self._pot_outline
             self._analyzer.roi = self._manual_pot_roi
             self._analyzer.temperature_roi = self._temperature_roi

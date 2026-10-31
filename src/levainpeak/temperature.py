@@ -51,19 +51,53 @@ class TemperatureInspection:
 
 
 def read_temperature(
-    frame: np.ndarray, roi: tuple[int, int, int, int] | None, infrared: bool | None = None
+    frame: np.ndarray,
+    roi: tuple[int, int, int, int] | None,
+    infrared: bool | None = None,
+    face_quad: tuple[tuple[int, int], ...] | None = None,
 ) -> float | None:
     """Read a Celsius value from a manually selected seven-segment display."""
-    return inspect_temperature(frame, roi, infrared).reading
+    return inspect_temperature(frame, roi, infrared, face_quad).reading
+
+
+def rectify_face(frame: np.ndarray, quad) -> np.ndarray | None:
+    """The LCD face seen straight on: the user's four corners (top-left, top-right,
+    bottom-right, bottom-left, frame pixels) warped to a rectangle.
+
+    It removes tilt and perspective, and it is the face itself, so no search for
+    the face is needed (that search fails when the glass is as dark as its frame).
+    """
+    corners = np.asarray(quad, dtype=np.float32)
+    if corners.shape != (4, 2) or frame is None:
+        return None
+    width = max(float(np.hypot(*(corners[1] - corners[0]))), float(np.hypot(*(corners[2] - corners[3]))))
+    height = max(float(np.hypot(*(corners[3] - corners[0]))), float(np.hypot(*(corners[2] - corners[1]))))
+    if width < 30 or height < 15:
+        return None
+    size = (int(round(width)), int(round(height)))
+    target = np.float32([(0, 0), (size[0], 0), (size[0], size[1]), (0, size[1])])
+    matrix = cv2.getPerspectiveTransform(corners, target)
+    return cv2.warpPerspective(frame, matrix, size, flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
 
 
 def inspect_temperature(
-    frame: np.ndarray, roi: tuple[int, int, int, int] | None, infrared: bool | None = None
+    frame: np.ndarray,
+    roi: tuple[int, int, int, int] | None,
+    infrared: bool | None = None,
+    face_quad: tuple[tuple[int, int], ...] | None = None,
 ) -> TemperatureInspection:
     """Run the temperature read and keep what each stage produced.
 
     ``infrared`` selects the capture profile; None decides from the picture.
+    ``face_quad`` is the LCD face drawn by the user; it replaces the search for
+    the face, the straightening and the cropping.
     """
+    if face_quad is not None and frame is not None:
+        face = rectify_face(frame, face_quad)
+        if face is None:
+            return TemperatureInspection()
+        use_infrared = is_infrared(face) if infrared is None else infrared
+        return _inspect_face(face, cv2.cvtColor(face, cv2.COLOR_BGR2GRAY), use_infrared)
     if frame is None or roi is None:
         return TemperatureInspection()
     height, width = frame.shape[:2]

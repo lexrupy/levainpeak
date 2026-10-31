@@ -46,6 +46,8 @@ class SessionLog:
         }
         # Inner contour of the pot the user drew (frame pixels), or None.
         self.pot_outline: tuple[tuple[int, int], ...] | None = None
+        # Four corners of the thermometer's LCD face the user drew, or None.
+        self.face_quad: tuple[tuple[int, int], ...] | None = None
         # Vessel (top, bottom) in frame pixels for each capture profile.
         self.vessel_bounds: dict[str, tuple[int, int]] = {}
         # Row (frame pixels) of the initial-level mark the user placed by hand.
@@ -97,10 +99,13 @@ class SessionLog:
         pot: tuple[int, int, int, int] | None,
         thermometer: tuple[int, int, int, int] | None,
         outline: tuple[tuple[int, int], ...] | None = ...,  # type: ignore[assignment]
+        face_quad: tuple[tuple[int, int], ...] | None = ...,  # type: ignore[assignment]
     ) -> None:
         self.regions = {"pot": pot, "thermometer": thermometer}
         if outline is not ...:
             self.pot_outline = None if outline is None else tuple((int(x), int(y)) for x, y in outline)
+        if face_quad is not ...:
+            self.face_quad = None if face_quad is None else tuple((int(x), int(y)) for x, y in face_quad)
         if self.metadata_path is None:
             return
         payload = {
@@ -112,6 +117,7 @@ class SessionLog:
         payload["marker_y"] = self.manual_marker_y
         payload["geometry"] = self.geometry
         payload["pot_outline"] = None if self.pot_outline is None else [list(point) for point in self.pot_outline]
+        payload["face_quad"] = None if self.face_quad is None else [list(point) for point in self.face_quad]
         self.metadata_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -202,12 +208,15 @@ class SessionLog:
             self.vessel_bounds = {name: (int(v[0]), int(v[1])) for name, v in saved.items() if v}
             outline = raw.get("pot_outline")
             self.pot_outline = tuple((int(x), int(y)) for x, y in outline) if outline else None
+            quad = raw.get("face_quad")
+            self.face_quad = tuple((int(x), int(y)) for x, y in quad) if quad else None
             marker = raw.get("marker_y")
             self.manual_marker_y = None if marker is None else int(marker)
             self.geometry = int(raw.get("geometry", 1))  # files from before this existed are version 1
         else:
             self.regions = {"pot": None, "thermometer": None}
             self.pot_outline = None
+            self.face_quad = None
             self.vessel_bounds = {}
             self.manual_marker_y = None
             self.geometry = GEOMETRY_VERSION
