@@ -16,7 +16,7 @@ from levainpeak.temperature import inspect_temperature
 from levainpeak.vision import ContainerMeasurement, column_scan, measure_container
 
 PANEL_W, PANEL_H, TITLE_H, GAP = 230, 380, 22, 8
-SECOND_ROW_H, INFO_H = 240, 96
+SECOND_ROW_H, INFO_H = 240, 114
 WIDTH = 4 * PANEL_W + 3 * GAP
 HEIGHT = TITLE_H + PANEL_H + GAP + TITLE_H + SECOND_ROW_H + GAP + INFO_H
 
@@ -109,6 +109,8 @@ def build_debug_mosaic(
     *,
     stable: ContainerMeasurement | None = None,
     temperature_c: float | None = None,
+    profile=None,
+    vertical_bounds: tuple[int, int] | None = None,
 ) -> np.ndarray:
     """One BGR image with the stages of the pot, surface and thermometer reads.
 
@@ -129,7 +131,7 @@ def build_debug_mosaic(
     raw = None
     if frame is not None:
         try:
-            raw = measure_container(frame, roi=pot_roi)
+            raw = measure_container(frame, roi=pot_roi, vertical_bounds=vertical_bounds)
         except cv2.error:
             raw = None
     scan = None
@@ -167,12 +169,12 @@ def build_debug_mosaic(
             index = (detection_view, light_view, edge_view, column_view).index(view)
             place(view.canvas, index * (PANEL_W + GAP), 0, title)
 
-    profile = _profile_panel(raw, stable, texts, row2_y)
-    place(profile, 0, row2_y, "5 · Largura e volume por linha")
-    thermo = _thermometer_panel(frame, thermometer_roi, texts, row2_y)
+    width_panel = _profile_panel(raw, stable, texts, row2_y)
+    place(width_panel, 0, row2_y, "5 · Largura e volume por linha")
+    thermo = _thermometer_panel(frame, thermometer_roi, texts, row2_y, profile)
     place(thermo, PANEL_W + GAP, row2_y, "6 · Termômetro: recorte · face · binário · dígitos")
 
-    _info_strip(texts, info_y, raw, scan, stable, temperature_c, thermometer_roi, frame)
+    _info_strip(texts, info_y, raw, scan, stable, temperature_c, thermometer_roi, frame, profile, vertical_bounds)
     return _render_texts(mosaic, texts)
 
 
@@ -287,14 +289,14 @@ def _profile_panel(raw, stable, texts: list[Text], row2_y: int) -> np.ndarray:
     return canvas
 
 
-def _thermometer_panel(frame, roi, texts: list[Text], row2_y: int) -> np.ndarray:
+def _thermometer_panel(frame, roi, texts: list[Text], row2_y: int, profile=None) -> np.ndarray:
     width = 3 * PANEL_W + 2 * GAP
     canvas = np.full((SECOND_ROW_H, width, 3), BACKGROUND, np.uint8)
     base_x, base_y = PANEL_W + GAP, row2_y + TITLE_H
     if frame is None or roi is None:
         texts.append((base_x + 8, base_y + 8, "marque a região do termômetro", MUTED, 11))
         return canvas
-    inspection = inspect_temperature(frame, roi)
+    inspection = inspect_temperature(frame, roi, None if profile is None else profile.infrared)
     if inspection.roi_image is not None:
         shown = _View(inspection.roi_image, (0, 0), PANEL_W - 8, 118)
         canvas[0:118, 0:PANEL_W - 8] = shown.canvas
@@ -329,8 +331,15 @@ def _thermometer_panel(frame, roi, texts: list[Text], row2_y: int) -> np.ndarray
     return canvas
 
 
-def _info_strip(texts: list[Text], y: int, raw, scan, stable, temperature_c, thermometer_roi, frame) -> None:
+def _info_strip(texts: list[Text], y: int, raw, scan, stable, temperature_c, thermometer_roi, frame, profile=None, vertical_bounds=None) -> None:
     lines: list[tuple[str, tuple[int, int, int]]] = []
+    if profile is not None:
+        imposed = (
+            "topo e fundo detectados pela imagem"
+            if vertical_bounds is None
+            else f"topo e fundo do pote fixados em y={vertical_bounds[0]}–{vertical_bounds[1]} (medidos de dia)"
+        )
+        lines.append((f"Perfil de captura: {profile.name} · {imposed}", YELLOW))
     if frame is None:
         lines.append(("Sem imagem da câmera.", RED))
     elif raw is None:
@@ -352,7 +361,9 @@ def _info_strip(texts: list[Text], y: int, raw, scan, stable, temperature_c, the
             ))
     reading = None
     if frame is not None and thermometer_roi is not None:
-        reading = inspect_temperature(frame, thermometer_roi).reading
+        reading = inspect_temperature(
+            frame, thermometer_roi, None if profile is None else profile.infrared
+        ).reading
     lines.append((
         "Termômetro: "
         + ("região não marcada" if thermometer_roi is None else f"leitura deste quadro {reading if reading is not None else 'ilegível'}")
@@ -413,6 +424,7 @@ class DebugWindow:
                 mosaic = build_debug_mosaic(
                     state.get("frame"), state.get("pot_roi"), state.get("thermometer_roi"),
                     stable=state.get("stable"), temperature_c=state.get("temperature_c"),
+                    profile=state.get("profile"), vertical_bounds=state.get("vertical_bounds"),
                 )
             except Exception:  # noqa: BLE001 - a diagnostics glitch must not kill the thread
                 import logging

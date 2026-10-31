@@ -274,6 +274,17 @@ class LevainPeakApp:
         )
         self._redraw_current_frame()
 
+    def _sync_vessel_bounds(self) -> None:
+        """Keep what daylight measured about the vessel in the session file."""
+        if self._analyzer is None or not self._session_log.active:
+            return
+        bounds = dict(self._analyzer.vessel_bounds)
+        if bounds and bounds != self._session_log.vessel_bounds:
+            try:
+                self._session_log.save_vessel_bounds(bounds)
+            except OSError:
+                logging.exception("Falha ao salvar os limites do pote")
+
     def _open_debug_view(self) -> None:
         if self._debug_window is not None and self._debug_window.open:
             self._debug_window.lift()
@@ -289,6 +300,8 @@ class LevainPeakApp:
             "thermometer_roi": self._temperature_roi,
             "stable": self._measurement,
             "temperature_c": self._temperature_c,
+            "profile": None if self._analyzer is None else self._analyzer.profile,
+            "vertical_bounds": None if self._analyzer is None else self._analyzer.effective_bounds(),
         }
 
     def _reset_tracking(self, baseline: float | None = None) -> None:
@@ -301,7 +314,10 @@ class LevainPeakApp:
     def _refresh(self) -> None:
         if self._stream is not None:
             status = self._stream.status
-            self.status_value.configure(text=status)
+            profile = self._analyzer.profile.name if self._analyzer is not None else None
+            self.status_value.configure(
+                text=status if profile is None else f"{status} · perfil {profile}"
+            )
             if status != self._last_stream_status:
                 self._last_stream_status = status
                 if self._measurement is None:
@@ -318,6 +334,7 @@ class LevainPeakApp:
                     else:
                         self._temperature_c = self._last_known_temperature
                     self._update_temperature_label()
+                    self._sync_vessel_bounds()
                     self._handle_container_change(self._measurement)
                     if self._measurement is not None and self._manual_marker_y is not None:
                         self._measurement = set_initial_marker(
@@ -515,6 +532,7 @@ class LevainPeakApp:
             self._manual_pot_roi = selected_roi
             if self._analyzer is not None:
                 self._analyzer.roi = selected_roi
+                self._analyzer.vessel_bounds.clear()  # a different pot: measure again by day
             self._manual_marker_y = None
             self._last_container_box = None
             self._measurement = None
@@ -540,6 +558,7 @@ class LevainPeakApp:
         self._manual_pot_roi = None
         if self._analyzer is not None:
             self._analyzer.roi = None
+            self._analyzer.vessel_bounds.clear()
         self._manual_marker_y = None
         self._last_container_box = None
         self._measurement = None
@@ -1236,6 +1255,7 @@ class LevainPeakApp:
         if self._analyzer is not None:
             self._analyzer.roi = self._manual_pot_roi
             self._analyzer.temperature_roi = self._temperature_roi
+            self._analyzer.vessel_bounds = dict(self._session_log.vessel_bounds)
         self._mix_time = self._session_log.mix_time
         self._reset_tracking()
         self._session_baseline = None

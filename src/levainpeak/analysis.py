@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 
 from levainpeak.filters import OutlierGate
+from levainpeak.profiles import DAY, CaptureProfile, ProfileSelector
 from levainpeak.stream import RtspStream
 from levainpeak.temperature import read_temperature
 from levainpeak.vision import ContainerMeasurement, measure_container
@@ -47,6 +48,12 @@ class ContainerAnalyzer:
         self._volume_gate = OutlierGate(max_jump=0.03, confirmations=40)
         self._temperature_gate = OutlierGate(max_jump=3.0, confirmations=3)
         self._previous_reading: float | None = None
+        # Capture profile (day or infrared) and the vessel's top and bottom per
+        # profile. Daylight finds them by shading that vanishes in infrared, so
+        # the camera and pot being fixed, infrared reuses what daylight measured.
+        self._profile_selector = ProfileSelector()
+        self.profile: CaptureProfile = DAY
+        self.vessel_bounds: dict[str, tuple[int, int]] = {}
         self._thread = threading.Thread(target=self._run, name="container-analyzer", daemon=True)
 
     def start(self) -> None:
@@ -54,6 +61,20 @@ class ContainerAnalyzer:
 
     def stop(self) -> None:
         self._stop.set()
+
+    def effective_bounds(self) -> tuple[int, int] | None:
+        """Vessel top and bottom to impose, or None to detect them from the picture."""
+        if not self.profile.infrared:
+            return None
+        return self.vessel_bounds.get(self.profile.name) or self.vessel_bounds.get(DAY.name)
+
+    def _learn_vessel_bounds(self, measurement: ContainerMeasurement | None) -> None:
+        if measurement is None or self.profile.infrared or measurement.confidence < 0.6:
+            return
+        learned = (measurement.top, measurement.bottom)
+        known = self.vessel_bounds.get(DAY.name)
+        if known is None or max(abs(a - b) for a, b in zip(learned, known)) > 2:
+            self.vessel_bounds[DAY.name] = learned
 
     def temperature_age_seconds(self) -> float | None:
         """Seconds since the temperature was last read; None if it never was."""
@@ -103,11 +124,15 @@ class ContainerAnalyzer:
                 self._missing_measurements = 0
                 self._filtered_surface_y = None
                 self._volume_gate.reset()
+            self.profile = self._profile_selector.update(frame)
             try:
-                measurement = measure_container(frame, roi=self.roi)
+                measurement = measure_container(
+                    frame, roi=self.roi, vertical_bounds=self.effective_bounds()
+                )
             except cv2.error:
                 measurement = None
             measurement = self._stabilize_measurement(measurement)
+            self._learn_vessel_bounds(measurement)
             now = time.monotonic()
             temperature_roi = self.temperature_roi
             if temperature_roi != self._last_temperature_roi:
@@ -121,7 +146,9 @@ class ContainerAnalyzer:
             if temperature_roi is not None and now - self._last_temperature_read >= 2.0:
                 self._last_temperature_read = now
                 try:
-                    reading = read_temperature(frame, temperature_roi)
+                    reading = read_temperature(
+                        frame, temperature_roi, infrared=self.profile.infrared
+                    )
                 except cv2.error:
                     reading = None
                 if reading is not None and not MIN_TEMPERATURE_C <= reading <= MAX_TEMPERATURE_C:

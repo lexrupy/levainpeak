@@ -7,6 +7,8 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from levainpeak.imaging import is_infrared
+
 
 _DIGITS = {
     0: "abcdef",
@@ -46,16 +48,19 @@ class TemperatureInspection:
 
 
 def read_temperature(
-    frame: np.ndarray, roi: tuple[int, int, int, int] | None
+    frame: np.ndarray, roi: tuple[int, int, int, int] | None, infrared: bool | None = None
 ) -> float | None:
     """Read a Celsius value from a manually selected seven-segment display."""
-    return inspect_temperature(frame, roi).reading
+    return inspect_temperature(frame, roi, infrared).reading
 
 
 def inspect_temperature(
-    frame: np.ndarray, roi: tuple[int, int, int, int] | None
+    frame: np.ndarray, roi: tuple[int, int, int, int] | None, infrared: bool | None = None
 ) -> TemperatureInspection:
-    """Run the temperature read and keep what each stage produced."""
+    """Run the temperature read and keep what each stage produced.
+
+    ``infrared`` selects the capture profile; None decides from the picture.
+    """
     if frame is None or roi is None:
         return TemperatureInspection()
     height, width = frame.shape[:2]
@@ -100,8 +105,11 @@ def inspect_temperature(
     # Otsu often selects the bright LCD background on these reflective
     # displays. Threshold relative to the face brightness, then inspect the
     # three fixed digit positions used by this thermometer layout.
-    threshold = int(np.clip(np.percentile(gray, 40), 100, 150))
-    binary = (gray < threshold).astype(np.uint8) * 255
+    if is_infrared(display) if infrared is None else infrared:
+        binary = _infrared_ink(gray)
+    else:
+        threshold = int(np.clip(np.percentile(gray, 40), 100, 150))
+        binary = (gray < threshold).astype(np.uint8) * 255
     binary = cv2.resize(binary, None, fx=8, fy=8, interpolation=cv2.INTER_NEAREST)
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
     binary = _deslant(binary)
@@ -120,6 +128,18 @@ def inspect_temperature(
     return TemperatureInspection(display, gray, binary, tuple(boxes), cells, digits, occupancy, reading)
 
 
+# In infrared the picture is blurrier, the LCD face is brighter and lit from one
+# side, and the digits are faint mid-grays. Ink is whatever is clearly darker
+# than the smooth local background, so a brightness gradient does not matter.
+_INFRARED_INK_DELTA = 9
+
+
+def _infrared_ink(gray: np.ndarray) -> np.ndarray:
+    smooth = cv2.GaussianBlur(gray, (0, 0), 1.0).astype(np.float32)
+    background = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), max(6, min(gray.shape) / 3))
+    return (smooth < background - _INFRARED_INK_DELTA).astype(np.uint8) * 255
+
+
 _CELL_CENTERS = (0.32, 0.53, 0.76)
 _CELL_WIDTH = 0.16
 
@@ -132,10 +152,25 @@ def _digit_cell_boxes(binary: np.ndarray) -> list[tuple[int, int, int, int]] | N
     a slightly different crop does not shift the segment grid.
     """
     height, width = binary.shape
-    span = [
-        (round((center - _CELL_WIDTH / 2) * width), round((center + _CELL_WIDTH / 2) * width))
-        for center in _CELL_CENTERS
-    ]
+
+    def spans_for(shift: float) -> list[tuple[int, int]]:
+        return [
+            (
+                max(0, round((center + shift - _CELL_WIDTH / 2) * width)),
+                min(width, round((center + shift + _CELL_WIDTH / 2) * width)),
+            )
+            for center in _CELL_CENTERS
+        ]
+
+    # The crop of the LCD face is not identical in every light, which slides the
+    # digits sideways a little. Slide the three cells together to where they
+    # capture the most ink, so a digit's outer bar is not cut off.
+    column_ink = (binary > 0).sum(axis=0)
+    shift = max(
+        np.linspace(-0.05, 0.05, 21),
+        key=lambda candidate: sum(int(column_ink[left:right].sum()) for left, right in spans_for(candidate)),
+    )
+    span = spans_for(float(shift))
     ink = binary[:, span[0][0]:span[-1][1]] > 0
     rows = ink.sum(axis=1) > ink.shape[1] * 0.02
     # Ignore the thin bezel edges at the very top and bottom of the crop.

@@ -34,8 +34,12 @@ def measure_container(
     preferred_width: float = 0.22,
     width_weight: float = 280.0,
     support_weight: float = 220.0,
+    vertical_bounds: tuple[int, int] | None = None,
 ) -> ContainerMeasurement | None:
     """Find a prominent vessel and estimate its filled-volume fraction.
+
+    ``vertical_bounds`` (top, bottom in frame coordinates) replaces the
+    detection of the vessel's top and bottom, which relies on daylight shading.
 
     This first pass is tuned for the current fixed side view. It assumes a
     mostly round, transparent pot and a visible color/texture transition at the
@@ -59,6 +63,11 @@ def measure_container(
             preferred_width=0.52,
             width_weight=600.0,
             support_weight=80.0,
+            vertical_bounds=(
+                None
+                if vertical_bounds is None
+                else (vertical_bounds[0] - y0, vertical_bounds[1] - y0)
+            ),
         )
         if local is None:
             return None
@@ -89,7 +98,10 @@ def measure_container(
     if pair is None:
         return None
     left, right, edge_confidence = pair
-    pot_top, pot_bottom = _container_bounds(frame, left, right)
+    if vertical_bounds is not None:
+        pot_top, pot_bottom = vertical_bounds
+    else:
+        pot_top, pot_bottom = _container_bounds(frame, left, right)
     if pot_bottom - pot_top < int(height * 0.3):
         return None
 
