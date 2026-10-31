@@ -240,17 +240,28 @@ async function load() {
     const url = `${cfg.u}?token=${encodeURIComponent(cfg.t)}&o=painel&snap=${encodeURIComponent(snap)}`;
     const resposta = await fetch(url, { cache: 'no-store' });
     const dados = await resposta.json();
-    if (!dados.ok) throw new Error(dados.erro || 'resposta inválida');
+    if (!dados.ok) {
+      const falha = new Error(dados.erro || 'resposta inválida');
+      falha.tipo = /token/i.test(falha.message) ? 'recusado' : (/desconhecido/i.test(falha.message) ? 'desatualizado' : 'erro');
+      throw falha;
+    }
     // O servidor não repete a imagem que já temos: reaproveita a guardada.
     if (dados.snapshot && dados.snapshot.igual && guardado && guardado.snapshot) dados.snapshot = guardado.snapshot;
     store.set('ultimo', dados);
     showWarning('');
     render(dados, false);
   } catch (erro) {
-    const recusado = /token/i.test(String(erro.message));
-    showWarning(recusado ? 'O token foi recusado. Confira o token na configuração.' : `Sem conexão com a planilha (${erro.message}).`);
-    if (recusado) showSetup();
-    else if (guardado) render(guardado, true);
+    const tipo = erro.tipo || 'rede'; // sem 'tipo': a requisição nem chegou (rede, endereço errado)
+    if (tipo === 'recusado') {
+      showWarning('O token foi recusado. Confira o token na configuração.');
+      showSetup();
+      return;
+    }
+    if (tipo === 'desatualizado') showWarning('O script do Google Sheets está desatualizado e não conhece o painel. Cole o Code.gs novo no Apps Script e crie uma nova versão da implantação.');
+    else if (tipo === 'erro') showWarning(`A planilha respondeu com erro: ${erro.message}.`);
+    else showWarning(`Sem conexão com a planilha (${erro.message}).`);
+    if (guardado) render(guardado, true);
+    else $('subtitulo').textContent = 'Sem dados.';
   }
 }
 
