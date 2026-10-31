@@ -26,8 +26,11 @@ from levainpeak.forecast import DoublingForecaster
 from levainpeak.graph_data import prepare_graph_data, volume_scale
 from levainpeak.graph_phases import (DECLINE, EXPONENTIAL, LATENCY, STATIONARY,
                                      graph_phase_segments)
+from levainpeak.phone_config import load_phone_config, panel_links
+from levainpeak.phone_push import PhonePusher, make_snapshot
 from levainpeak.sessions import PhaseTracker, SessionLog, latest_session_csv
-from levainpeak.settings import (MAX_RECORD_SECONDS, MIN_RECORD_SECONDS,
+from levainpeak.settings import (MAX_PHONE_SECONDS, MAX_RECORD_SECONDS,
+                                 MIN_PHONE_SECONDS, MIN_RECORD_SECONDS,
                                  Settings, load_settings, save_settings)
 from levainpeak.stream import RtspStream
 from levainpeak.vision import (ContainerMeasurement, draw_measurement,
@@ -87,6 +90,10 @@ class LevainPeakApp:
         self._session_name = ""
         self._show_detail = False
         self._debug_window: DebugWindow | None = None
+        self._phone_pusher: PhonePusher | None = None
+        self._phone_applied: tuple | None = None
+        self._phone_status_text = ""
+        self._live_state: dict = {}
         self._phase_tracker = PhaseTracker()
         self._forecaster = DoublingForecaster()
         self._phase = "Aguardando sessão"
@@ -105,6 +112,8 @@ class LevainPeakApp:
             self._set_message(str(exc))
             self.status_value.configure(text="Configuração necessária", foreground="#a43d32")
 
+        self._apply_phone_settings()
+        self._tick_phone_status()
         self.root.after(40, self._refresh)
         if resume_last:
             self.root.after(200, self._resume_latest_session)
@@ -399,6 +408,7 @@ class LevainPeakApp:
                     self._update_session(self._measurement)
                     self._update_measurement_labels()
                     analysis_changed = True
+                    self._publish_live_state()
             frame_number, frame = self._stream.snapshot()
             if frame is not None and (
                 frame_number != self._last_displayed_frame_number or analysis_changed
@@ -831,6 +841,8 @@ class LevainPeakApp:
             )
 
     def close(self) -> None:
+        if self._phone_pusher is not None:
+            self._phone_pusher.stop(wait=False)
         if self._debug_window is not None and self._debug_window.open:
             self._debug_window.close()
         if self._session_log.active:
@@ -981,18 +993,163 @@ class LevainPeakApp:
         )
         self._settings_note.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
+        phone = ttk.LabelFrame(parent, text="Celular (Google Sheets)", padding=12)
+        phone.pack(fill="x", pady=(12, 0))
+        self._phone_enabled_var = tk.BooleanVar(value=self._settings.phone_enabled)
+        ttk.Checkbutton(
+            phone, text="Enviar os dados para o celular",
+            variable=self._phone_enabled_var, command=self._apply_settings,
+        ).grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(phone, text="Enviar um pacote a cada").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        self._phone_interval_var = tk.StringVar(value=str(self._settings.phone_interval_seconds))
+        phone_spinbox = ttk.Spinbox(
+            phone, from_=MIN_PHONE_SECONDS, to=MAX_PHONE_SECONDS, increment=30, width=5,
+            textvariable=self._phone_interval_var, command=self._apply_settings,
+        )
+        phone_spinbox.grid(row=1, column=1, padx=6, pady=(8, 0))
+        phone_spinbox.bind("<Return>", lambda _e: self._apply_settings(), add="+")
+        phone_spinbox.bind("<FocusOut>", lambda _e: self._apply_settings(), add="+")
+        ttk.Label(phone, text="segundos").grid(row=1, column=2, sticky="w", pady=(8, 0))
+        self._phone_snapshot_var = tk.BooleanVar(value=self._settings.phone_snapshot)
+        ttk.Checkbutton(
+            phone, text="Incluir uma imagem do pote em cada pacote",
+            variable=self._phone_snapshot_var, command=self._apply_settings,
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        self._phone_status = ttk.Label(phone, text="", foreground="#59645e", wraplength=560, justify="left")
+        self._phone_status.grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ttk.Button(phone, text="Copiar link do painel", command=self._copy_panel_link).grid(
+            row=4, column=0, columnspan=3, sticky="w", pady=(8, 0)
+        )
+        ttk.Label(
+            phone, foreground="#59645e", wraplength=560, justify="left",
+            text="Precisa do phone.ini (modelo: phone.ini.example) e do script no Google Sheets. "
+                 "O painel roda com: cd painel && python -m http.server 8000",
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
     def _apply_settings(self) -> None:
         try:
             seconds = int(float(self._interval_var.get()))
         except ValueError:
             seconds = self._settings.record_interval_seconds
-        self._settings = Settings(record_interval_seconds=seconds).clamped()
+        try:
+            phone_seconds = int(float(self._phone_interval_var.get()))
+        except ValueError:
+            phone_seconds = self._settings.phone_interval_seconds
+        self._settings = Settings(
+            record_interval_seconds=seconds,
+            phone_enabled=self._phone_enabled_var.get(),
+            phone_interval_seconds=phone_seconds,
+            phone_snapshot=self._phone_snapshot_var.get(),
+        ).clamped()
         self._interval_var.set(str(self._settings.record_interval_seconds))
+        self._phone_interval_var.set(str(self._settings.phone_interval_seconds))
         self._session_log.sample_seconds = self._settings.record_interval_seconds
         try:
             save_settings(self._settings)
         except OSError as exc:
             self._set_message(f"Não foi possível salvar as configurações: {exc}")
+        self._apply_phone_settings()
+
+    # ------------------------------------------------------------ celular
+
+    def _apply_phone_settings(self) -> None:
+        """Start, restart or stop the sender when its settings change."""
+        settings = self._settings
+        wanted = (settings.phone_enabled, settings.phone_interval_seconds, settings.phone_snapshot)
+        if wanted == self._phone_applied:
+            return
+        self._phone_applied = wanted
+        if self._phone_pusher is not None:
+            self._phone_pusher.stop(wait=False)
+            self._phone_pusher = None
+        self._phone_status_text = "Desligado."
+        if settings.phone_enabled:
+            try:
+                config = load_phone_config()
+            except (FileNotFoundError, ValueError) as exc:
+                self._phone_status_text = f"Não foi possível ligar: {exc}"
+            else:
+                self._phone_pusher = PhonePusher(
+                    config, self._phone_live, self._phone_csv,
+                    self._phone_snapshot if settings.phone_snapshot else None,
+                    interval_seconds=settings.phone_interval_seconds,
+                )
+                self._phone_pusher.start()
+        self._render_phone_status()
+
+    def _render_phone_status(self) -> None:
+        pusher = self._phone_pusher
+        if pusher is None:
+            text = self._phone_status_text
+        else:
+            status = pusher.status
+            parts = ["Ligado"]
+            if status.last_ok is None:
+                parts.append("aguardando o primeiro envio")
+            else:
+                parts.append(f"último envio há {self._elapsed_text(time.time() - status.last_ok)}")
+            if status.last_error:
+                parts.append(f"falha: {status.last_error}")
+            text = " · ".join(parts)
+        if hasattr(self, "_phone_status"):
+            self._phone_status.configure(text=text)
+
+    def _tick_phone_status(self) -> None:
+        self._render_phone_status()
+        self.root.after(5000, self._tick_phone_status)
+
+    @staticmethod
+    def _elapsed_text(seconds: float) -> str:
+        if seconds < 60:
+            return "alguns segundos"
+        if seconds < 90 * 60:
+            return f"{round(seconds / 60)} min"
+        return f"{seconds / 3600:.1f} h".replace(".", ",")
+
+    def _publish_live_state(self) -> None:
+        """What the phone panel shows as 'now'; the sender thread only reads it."""
+        if self._phone_pusher is None:
+            return
+        measurement = self._measurement
+        age = None if self._analyzer is None else self._analyzer.temperature_age_seconds()
+        note = ""
+        if self._temperature_c is not None and (self._temperature_filled or (age is not None and age > 60)):
+            note = "última leitura" + (f" há {self._elapsed_text(age)}" if age is not None and age >= 60 else "")
+        self._live_state = {
+            "sessao": self._session_name or "",
+            "volume_pct": None if measurement is None else round(measurement.volume_fraction * 100, 1),
+            "crescimento": None if measurement is None or measurement.growth_factor is None
+            else round(measurement.growth_factor, 2),
+            "fase": self._phase,
+            "temperatura_c": self._temperature_c,
+            "temperatura_nota": note,
+            "previsao": self.metric_values["Previsão do dobro"].cget("text"),
+            "perfil": None if self._analyzer is None else self._analyzer.profile.name,
+            "status": None if self._stream is None else self._stream.status,
+            "intervalo_s": self._settings.phone_interval_seconds,
+        }
+
+    def _phone_live(self) -> dict:
+        return dict(self._live_state)
+
+    def _phone_csv(self) -> Path | None:
+        return self._session_log.path if self._session_log.active else None
+
+    def _phone_snapshot(self) -> dict | None:
+        stream, measurement = self._stream, self._measurement
+        if stream is None or measurement is None:
+            return None
+        return make_snapshot(stream.snapshot()[1], measurement)
+
+    def _copy_panel_link(self) -> None:
+        try:
+            links = panel_links(load_phone_config())
+        except (FileNotFoundError, ValueError) as exc:
+            self._set_message(str(exc))
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(links[-1][1])  # the phone's link when the network address is known
+        self._set_message("Link do painel copiado. Ele carrega o token: não compartilhe.")
 
     def _graph_data(self, path: Path) -> dict:
         """The graph's series, rebuilt only when the CSV file changes."""

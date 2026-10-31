@@ -161,9 +161,11 @@ class PhonePusher:
         self._thread = threading.Thread(target=self._run, name="phone-push", daemon=True)
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, wait: bool = True) -> None:
+        """Ask the sender to finish. ``wait=False`` is for the UI thread: a request
+        in flight can take a minute, and the window must not freeze meanwhile."""
         self._stop.set()
-        if self._thread is not None:
+        if wait and self._thread is not None:
             self._thread.join(timeout=5)
 
     def _run(self) -> None:
