@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4f1e8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1c211f" media="(prefers-color-scheme: dark)">
+  <title>LevainPeak</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="painel.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1 id="sessao">LevainPeak</h1>
+        <p id="subtitulo">Carregando…</p>
+      </div>
+      <button id="atualizar" type="button" aria-label="Atualizar agora">↻</button>
+    </header>
+
+    <p id="aviso" role="status" hidden></p>
+
+    <section id="configurar" hidden>
+      <h2>Ligar à planilha</h2>
+      <p>Cole o endereço <code>/exec</code> do Apps Script e o token. Ficam só neste aparelho.</p>
+      <label>Endereço <input id="cfg-url" type="url" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off"></label>
+      <label>Token <input id="cfg-token" type="password" autocomplete="off"></label>
+      <button id="cfg-salvar" type="button">Salvar</button>
+    </section>
+
+    <section id="painel" hidden>
+      <div class="cartoes">
+        <article><h2>Volume</h2><p id="volume" class="grande">—</p><p id="volume-nota" class="nota"></p></article>
+        <article><h2>Fase</h2><p id="fase" class="grande">—</p><p id="fase-nota" class="nota"></p></article>
+        <article><h2>Temperatura</h2><p id="temperatura" class="grande">—</p><p id="temperatura-nota" class="nota"></p></article>
+        <article><h2>Previsão do dobro</h2><p id="previsao" class="medio">—</p></article>
+      </div>
+
+      <figure id="grafico-area">
+        <figcaption id="grafico-titulo"></figcaption>
+        <div id="grafico" role="img" aria-label="Gráfico do volume e da temperatura ao longo da sessão"></div>
+      </figure>
+
+      <figure id="imagem-area" hidden>
+        <img id="imagem" alt="Última imagem do pote recebida">
+        <figcaption id="imagem-legenda"></figcaption>
+      </figure>
+
+      <p id="rodape" class="nota"></p>
+    </section>
+  </main>
+  <script src="painel.js"></script>
+</body>
+</html>

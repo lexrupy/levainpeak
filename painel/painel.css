@@ -1,0 +1,141 @@
+:root {
+  --fundo: #f4f1e8;
+  --papel: #fffefa;
+  --texto: #202723;
+  --suave: #59645e;
+  --linha: #e1e4dc;
+  --volume: #397a9b;
+  --temperatura: #c46b35;
+  --ok: #2f7d4f;
+  --alerta: #a43d32;
+  --faixa-inicial: #f2f0e8;
+  --faixa-crescimento: #e6f0e8;
+  --faixa-pico: #f7efd9;
+  --faixa-declinio: #f3e3de;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fundo: #1c211f;
+    --papel: #252b29;
+    --texto: #ecebe4;
+    --suave: #a3aca7;
+    --linha: #3a423f;
+    --volume: #6fb3d6;
+    --temperatura: #e39a6a;
+    --ok: #6fc592;
+    --alerta: #ee8b80;
+    --faixa-inicial: #2a302d;
+    --faixa-crescimento: #28362f;
+    --faixa-pico: #3a3526;
+    --faixa-declinio: #3b2d2a;
+  }
+}
+
+* { box-sizing: border-box; }
+
+/* Sem isto, um display: grid/flex do autor vence o atributo hidden. */
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  background: var(--fundo);
+  color: var(--texto);
+  font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: max(16px, env(safe-area-inset-top)) 16px 32px;
+}
+
+header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+h1 { margin: 0; font-size: 1.5rem; }
+h2 { margin: 0 0 4px; font-size: 0.8rem; font-weight: 600; color: var(--suave); text-transform: uppercase; letter-spacing: 0.04em; }
+p { margin: 0; }
+
+#subtitulo { color: var(--suave); font-size: 0.9rem; }
+#subtitulo.velho { color: var(--alerta); font-weight: 600; }
+#subtitulo.fresco { color: var(--ok); }
+
+button {
+  font: inherit;
+  color: var(--texto);
+  background: var(--papel);
+  border: 1px solid var(--linha);
+  border-radius: 10px;
+  padding: 8px 14px;
+  min-height: 44px;
+  cursor: pointer;
+}
+#atualizar { min-width: 44px; font-size: 1.3rem; padding: 0; }
+
+#aviso {
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  background: var(--papel);
+  border: 1px solid var(--alerta);
+  color: var(--alerta);
+  font-size: 0.9rem;
+}
+
+.cartoes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+@media (max-width: 340px) { .cartoes { grid-template-columns: 1fr; } }
+
+article, figure, #configurar {
+  background: var(--papel);
+  border: 1px solid var(--linha);
+  border-radius: 12px;
+  padding: 12px;
+  margin: 0;
+}
+
+.grande { font-size: 1.6rem; font-weight: 650; line-height: 1.15; }
+.medio { font-size: 1rem; white-space: pre-line; }
+.nota { color: var(--suave); font-size: 0.82rem; margin-top: 2px; }
+
+figure { margin-bottom: 16px; }
+figcaption { color: var(--suave); font-size: 0.85rem; margin-bottom: 6px; }
+
+#grafico svg { width: 100%; height: auto; display: block; }
+#grafico .eixo { fill: var(--suave); font-size: 10px; }
+#grafico .grade { stroke: var(--linha); stroke-width: 1; }
+#grafico .fase-nome { fill: var(--suave); font-size: 10px; font-style: italic; }
+#grafico .vol { fill: none; stroke: var(--volume); stroke-width: 2.6; stroke-linejoin: round; stroke-linecap: round; }
+#grafico .temp { fill: none; stroke: var(--temperatura); stroke-width: 1.5; stroke-linejoin: round; }
+#grafico .ponta { fill: var(--volume); }
+#grafico .faixa-fase-inicial { fill: var(--faixa-inicial); }
+#grafico .faixa-crescimento { fill: var(--faixa-crescimento); }
+#grafico .faixa-pico { fill: var(--faixa-pico); }
+#grafico .faixa-declinio { fill: var(--faixa-declinio); }
+#grafico .divisor { stroke: var(--suave); stroke-width: 0.8; stroke-dasharray: 4 3; opacity: 0.6; }
+
+#imagem-area img { width: 100%; height: auto; max-height: 70vh; object-fit: contain; border-radius: 8px; display: block; }
+#imagem-area figcaption { margin: 6px 0 0; }
+
+#configurar { display: grid; gap: 10px; }
+#configurar label { display: grid; gap: 4px; font-size: 0.85rem; color: var(--suave); }
+#configurar input {
+  font: inherit;
+  color: var(--texto);
+  background: var(--fundo);
+  border: 1px solid var(--linha);
+  border-radius: 8px;
+  padding: 10px;
+  min-height: 44px;
+}
+code { font-size: 0.9em; }
