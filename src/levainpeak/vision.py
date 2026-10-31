@@ -530,9 +530,26 @@ def _find_surface_by_columns(
     if scan is None:
         return None
     found = np.asarray([y for _, y in scan.tops])
-    median = float(np.median(found))
-    confidence = float(np.mean(np.abs(found - median) <= 6))
-    return int(round(median)), confidence
+    level = _surface_cluster(found)
+    confidence = float(np.mean(np.abs(found - level) <= 6))
+    return int(round(level)), confidence
+
+
+def _surface_cluster(tops: np.ndarray, radius: int = 6, min_share: float = 0.25) -> float:
+    """Median of the lowest group of column tops that enough columns agree on.
+
+    Pale things above the surface (a label, bright background seen through the
+    empty glass) make a column's scan run past the real surface, never stop
+    short of it. So the surface is the lowest level in the image with solid
+    support, not the median of everything, which those columns drag upward.
+    """
+    ordered = np.sort(tops)
+    need = max(5, int(np.ceil(len(ordered) * min_share)))
+    for index in range(len(ordered) - 1, -1, -1):
+        group = ordered[(ordered >= ordered[index] - 2 * radius) & (ordered <= ordered[index])]
+        if len(group) >= need:
+            return float(np.median(group))
+    return float(np.median(ordered))
 
 
 def _find_surface(

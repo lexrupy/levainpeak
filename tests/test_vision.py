@@ -98,3 +98,11 @@ def test_the_levain_base_gives_up_when_the_mass_never_ends_before_the_bottom():
 
     frame = _jar_with_a_base(base_row=620)  # pale all the way down
     assert _levain_base(frame, 300, 580, surface_y=400, marker_y=480, bottom=600) is None
+
+
+def test_surface_cluster_ignores_columns_that_ran_past_the_surface():
+    from levainpeak.vision import _surface_cluster
+
+    tops = np.array([704] * 40 + [705] * 10 + [616] * 15 + [660, 682, 643, 689, 671, 684] * 3)
+    assert 703 <= _surface_cluster(tops) <= 705
+    assert _surface_cluster(np.array([500, 501, 499, 502, 500, 498, 503])) == 500
