@@ -217,8 +217,8 @@ class LevainPeakApp:
 
         regions = group("Marcar Regiões", 0, 0)
         level = group("Nível inicial", 0, 1)
-        session = group("Sessão", 1, 0)
-        files = group("Arquivos", 1, 1)
+        files = group("Arquivos", 1, 0)
+        session = group("Sessão", 1, 1)
         self.draw_pot_button = button(
             regions, "Pote", lambda: self._toggle_roi_mode("pot"), width=16
         )
@@ -239,8 +239,8 @@ class LevainPeakApp:
         self.session_button = button(
             session, "Iniciar sessão", self._toggle_session, width=15
         )
-        self.resume_button = button(files, "Retomar sessão", self._resume_session, width=14)
-        self.open_csv_button = button(files, "Abrir CSV", self._open_session_csv, width=10)
+        self.resume_button = button(files, "Retomar", self._resume_session, width=9)
+        self.open_csv_button = button(files, "CSV", self._open_session_csv, width=6)
         self.graph_button = button(files, "Gráfico", self._show_session_graph, width=9)
         self.debug_button = button(files, "Diagnóstico", self._open_debug_view, width=11)
 
