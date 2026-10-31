@@ -208,3 +208,20 @@ def test_the_dim_blurred_face_from_the_diagnostics_window_reads_25_6():
 
     result = _inspect_face(cv2.cvtColor(face, cv2.COLOR_GRAY2BGR), face, True, drawn=True)
     assert result.reading == pytest.approx(25.6)
+
+
+def test_a_live_dim_face_from_the_camera_reads_25_6_with_boxes_around_whole_digits():
+    """Out of focus, infrared, seen through the corners drawn by the user (a live frame, 217 x 126 grey pixels)."""
+    from pathlib import Path
+
+    from levainpeak.temperature import _inspect_face
+
+    face = cv2.imread(str(Path(__file__).parent / "data" / "face_ir_viva.png"), cv2.IMREAD_GRAYSCALE)
+    result = _inspect_face(cv2.cvtColor(face, cv2.COLOR_GRAY2BGR), face, True, drawn=True)
+    assert result.reading == pytest.approx(25.6)
+    # each box holds its whole digit: the ink does not run past the box edges
+    width = result.binary.shape[1]
+    for left, _, right, _ in result.cell_boxes:
+        cell = result.binary[:, left:right] > 0
+        assert cell[:, :3].sum() + cell[:, -3:].sum() < 0.02 * cell.size
+        assert 0.1 * width < right - left < 0.3 * width

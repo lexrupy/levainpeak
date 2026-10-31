@@ -262,10 +262,10 @@ def _inspect_face(
     binary = cv2.resize(binary, None, fx=8, fy=8, interpolation=cv2.INTER_NEAREST)
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
     binary = _deslant(binary)
-    # A drawn face may leave any margin around the digits. The usual layout (fixed
-    # positions, slid a little sideways) is tried first because it is the more
-    # exact when it fits; the cells placed by the ink are the second try.
-    strategies = (_digit_cell_boxes, _fit_digit_cells) if drawn else (_digit_cell_boxes,)
+    # A drawn face may leave any margin around the digits: the cells are cut at the
+    # gaps between digits; the usual layout (fixed positions) and cells fitted to
+    # the ink are the next tries.
+    strategies = (_glyph_cells, _digit_cell_boxes, _fit_digit_cells) if drawn else (_digit_cell_boxes,)
     first: TemperatureInspection | None = None
     for find_cells in strategies:
         boxes = find_cells(binary)
@@ -350,22 +350,64 @@ def _fit_digit_cells(binary: np.ndarray) -> list[tuple[int, int, int, int]] | No
     for cell in range(int(0.12 * width), int(0.31 * width), step):
         for gap in range(max(2, int(0.02 * width)), int(0.10 * width), max(1, width // 150)):
             pitch = cell + gap
-            # the decimal point sits between the second and third digits: that step is wider
-            offsets = (0, pitch, pitch + int(round(_DECIMAL_STEP * pitch)))
-            for start in range(0, int(0.35 * width), step):
-                spans = [(start + offset, start + offset + cell) for offset in offsets]
-                if spans[-1][1] > width:
-                    continue
-                inside = sum(prefix[right] - prefix[left] for left, right in spans)
-                between = sum(prefix[spans[i + 1][0]] - prefix[spans[i][1]] for i in range(2))
-                padding = sum(empty_prefix[right] - empty_prefix[left] for left, right in spans)
-                score = inside - 2.5 * between - padding_cost * padding
-                if best is None or score > best[0]:
-                    best = (score, spans)
+            # Evenly spaced digits, or a wider step before the third (the decimal point).
+            for last_step in (1.0, _DECIMAL_STEP):
+                offsets = (0, pitch, pitch + int(round(last_step * pitch)))
+                for start in range(0, int(0.35 * width), step):
+                    spans = [(start + offset, start + offset + cell) for offset in offsets]
+                    if spans[-1][1] > width:
+                        continue
+                    inside = sum(prefix[right] - prefix[left] for left, right in spans)
+                    between = sum(prefix[spans[i + 1][0]] - prefix[spans[i][1]] for i in range(2))
+                    padding = sum(empty_prefix[right] - empty_prefix[left] for left, right in spans)
+                    score = inside - 2.5 * between - padding_cost * padding
+                    if best is None or score > best[0]:
+                        best = (score, spans)
     if best is None:
         return None
     spans = best[1]
     region = ink[:, spans[0][0]:spans[-1][1]]
+    rows = region.sum(axis=1) > region.shape[1] * 0.02
+    rows[:round(height * 0.02)] = False
+    rows[round(height * 0.99):] = False
+    filled = np.flatnonzero(rows)
+    if filled.size < height * 0.3:
+        return None
+    return [(left, int(filled[0]), right, int(filled[-1])) for left, right in spans]
+
+
+def _glyph_cells(binary: np.ndarray) -> list[tuple[int, int, int, int]] | None:
+    """Three digit cells cut at the gaps between the digits' ink.
+
+    The ink of a seven-segment digit is a block; between two digits there is a
+    stretch of empty columns. The three heaviest consecutive blocks are the digits
+    (the unit mark to the right is lighter). All cells get the width of the widest
+    digit, so the segment boxes line up; a narrow one (1) keeps its bar on the right.
+    """
+    height, width = binary.shape
+    core = (binary[int(0.1 * height):int(0.9 * height)] > 0).sum(axis=0).astype(np.float64)  # ignore the frame strips
+    kernel = max(3, width // 60)
+    smooth = np.convolve(core, np.ones(kernel) / kernel, mode="same")
+    if smooth.max() <= 0:
+        return None
+    present = smooth > 0.12 * smooth.max()
+    edges = np.flatnonzero(np.diff(np.concatenate(([0], present.astype(int), [0]))))
+    blocks = [(int(a), int(b)) for a, b in zip(edges[::2], edges[1::2]) if b - a >= 0.05 * width]
+    if len(blocks) < 3:
+        return None
+    mass = [float(core[a:b].sum()) for a, b in blocks]
+    first = max(range(len(blocks) - 2), key=lambda i: sum(mass[i:i + 3]))
+    digits = blocks[first:first + 3]
+    digit_width = max(b - a for a, b in digits)
+    pad = int(0.05 * digit_width)
+    spans = []
+    for a, b in digits:
+        if b - a >= 0.75 * digit_width:
+            left, right = a - pad, b + pad
+        else:
+            left, right = b - digit_width - pad, b + pad
+        spans.append((max(0, left), min(width, right)))
+    region = (binary[:, spans[0][0]:spans[-1][1]] > 0)
     rows = region.sum(axis=1) > region.shape[1] * 0.02
     rows[:round(height * 0.02)] = False
     rows[round(height * 0.99):] = False
