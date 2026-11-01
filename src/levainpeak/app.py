@@ -1190,13 +1190,13 @@ class LevainPeakApp:
             self.video.itemconfigure(self._video_image_item, image=self._image)
 
     def _draw_recording_state(self, image):
-        """A translucent "registrando", "pausado" or "parado" in the top right corner of what is shown."""
+        """A translucent "Registrando", "Pausado" or "Parado" in the top right corner of what is shown."""
         if not self._session_log.active:
-            text, color = "parado", (200, 200, 200)
+            text, color = "Parado", (200, 200, 200)
         elif self._paused:
-            text, color = "pausado", (60, 60, 255)
+            text, color = "Pausado", (60, 60, 255)
         else:
-            text, color = "registrando", (90, 200, 90)
+            text, color = "Registrando", (90, 200, 90)
         height, width = image.shape[:2]
         scale = max(0.5, min(1.1, width / 900))
         thickness = max(1, round(scale * 2))
