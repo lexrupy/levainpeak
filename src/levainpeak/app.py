@@ -1923,6 +1923,8 @@ class LevainPeakApp:
     def _update_session(self, measurement: ContainerMeasurement | None) -> None:
         if not self._session_log.active or measurement is None:
             return
+        if self._analyzer is not None and self._analyzer.alignment_status:
+            return  # the pot is out of its place (lifted, covered): what is read now is not the levain
         now = time.monotonic()
         self._phase = self._phase_tracker.update(
             now, measurement.volume_fraction, measurement.initial_volume_fraction
