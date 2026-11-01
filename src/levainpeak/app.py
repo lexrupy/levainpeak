@@ -630,7 +630,7 @@ class LevainPeakApp:
     def _volume_text(measurement: ContainerMeasurement) -> str:
         capacity = f"≈ {measurement.volume_fraction:.0%} da capacidade"
         if measurement.growth_factor is not None:
-            return f"{capacity}\n≈ {measurement.growth_factor:.1f}× do nível inicial"
+            return f"{capacity}\n≈ {measurement.growth_factor:.2f}× do nível inicial"
         return capacity
 
     def _handle_container_change(self, measurement: ContainerMeasurement | None) -> None:
