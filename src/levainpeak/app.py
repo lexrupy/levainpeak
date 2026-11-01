@@ -1193,10 +1193,11 @@ class LevainPeakApp:
         gap = max(8, round(scale * 12))
         x_end = width - gap
         x_text = x_end - text_width
-        y_text = gap + text_height
+        top = gap + 8  # px of air above the box
+        y_text = top + text_height
         layer = image.copy()
         cv2.rectangle(
-            layer, (x_text - 2 * dot - gap, gap // 2), (x_end + gap // 2, y_text + baseline + gap // 2),
+            layer, (x_text - 2 * dot - gap, top - gap // 2), (x_end + gap // 2, y_text + baseline + gap // 2),
             (0, 0, 0), -1,
         )
         shown = cv2.addWeighted(layer, 0.35, image, 0.65, 0)
