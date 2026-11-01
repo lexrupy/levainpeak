@@ -140,7 +140,9 @@ def measure_container(
             frame, left, right, inner_top, inner_bottom
         )
     surface = None
-    if marker_confidence >= 0.2:
+    if outline_edges is not None:
+        surface = _find_surface_from_below(gray, left, right, inner_top, inner_bottom)
+    if surface is None and marker_confidence >= 0.2:
         surface = _find_surface_by_columns(frame, left, right, inner_top, inner_bottom, marker_y)
     if surface is None:
         surface = _find_surface(
@@ -607,6 +609,38 @@ def column_scan(
     return ColumnScan(
         tuple(int(x) for x in columns), tuple(tops), levain, glass, float(threshold)
     )
+
+
+def _find_surface_from_below(
+    gray: np.ndarray, left: int, right: int, top: int, bottom: int
+) -> tuple[int, float] | None:
+    """The top of the opaque, bright levain, found by climbing from the bottom of the jar.
+
+    Clear glass above the levain shows the dim inside of the jar, and the far rim of the
+    jar shows up in it as a bright reflection. An edge search takes that reflection for
+    the surface; here the surface is the first sustained dim stretch met climbing up from
+    the levain, so what lies above that stretch is ignored. A bright label on the glass
+    does not stop the climb (only a dim stretch does).
+    """
+    height = bottom - top
+    if height < 100:
+        return None
+    width = right - left
+    columns = gray[top:bottom, left + width // 4:right - width // 4]
+    profile = cv2.GaussianBlur(np.median(columns, axis=1).astype(np.float32).reshape(-1, 1), (1, 9), 0).ravel()
+    levain = float(np.median(profile[int(height * 0.75):int(height * 0.92)]))
+    glass = float(np.percentile(profile[: int(height * 0.6)], 10))
+    if levain <= 0 or levain - glass < 0.2 * levain:
+        return None  # nothing dimmer than the levain above it: no surface to find
+    limit = glass + 0.6 * (levain - glass)
+    # A stretch of clear glass is long; a dark band or ring on the levain is thin and
+    # darker than any glass, so neither stops the climb.
+    run = max(16, height // 25)
+    dim = profile < limit
+    for y in range(int(height * 0.92), run, -1):
+        if dim[y - run:y].all() and float(np.median(profile[y - run:y])) >= 0.6 * glass:
+            return top + y, 0.9
+    return None
 
 
 def _find_surface_by_columns(
