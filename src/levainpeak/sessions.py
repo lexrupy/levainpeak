@@ -366,6 +366,7 @@ class PhaseTracker:
         self._flags_key: tuple | None = None
         self._plateau_since: float | None = None
         self._decline_since: float | None = None
+        self._topped_out = False  # the volume has levelled off since it last made a new high
         self.state = self.WAITING
 
     def set_baseline(self, baseline: float | None) -> None:
@@ -390,6 +391,8 @@ class PhaseTracker:
         if self.baseline is None:
             self.baseline = smooth
         if self.peak_fraction is None or smooth > self.peak_fraction:
+            if self.peak_fraction is not None and smooth > self.peak_fraction + self.decline_fraction / 2:
+                self._topped_out = False  # a clearly new high: the top must level off again
             self.peak_fraction = smooth
 
         if (
@@ -420,6 +423,13 @@ class PhaseTracker:
             return self.state
 
         drop = self.peak_fraction - smooth
+        # A real decline always follows a stretch of stable readings at the top. A drop with no such
+        # stretch before it (the pot lifted out, a lamp coming on) is not a decline.
+        if drop >= self.decline_fraction and slope <= -self.decline_slope_per_minute and not self._topped_out:
+            self._decline_since = None
+            self._plateau_since = None
+            self.state = self.RISING if self.state == self.RISING else self.WAITING if self.state == self.WAITING else self.state
+            return self.state
         if drop >= self.decline_fraction and slope <= -self.decline_slope_per_minute:
             if self._decline_since is None:
                 self._decline_since = monotonic_time
@@ -450,6 +460,7 @@ class PhaseTracker:
                 if monotonic_time - self._plateau_since >= self.plateau_seconds
                 else self.PLATEAU
             )
+            self._topped_out = True
         elif trend > 0:
             self._plateau_since = None
             self.state = self.RISING

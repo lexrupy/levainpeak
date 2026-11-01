@@ -40,8 +40,17 @@ def test_late_rise_after_a_plateau_is_called_rising_again():
 def test_persistent_fall_is_degradation():
     tracker = PhaseTracker()
     run(tracker, lambda m: 0.2 + 0.2 * min(1, m / 30), 30)
-    states = run(tracker, lambda m: 0.4 - 0.002 * m, 30, start=1800)
+    run(tracker, lambda m: 0.4, 25, start=1800, noise=0.001)  # the top levels off first
+    states = run(tracker, lambda m: 0.4 - 0.002 * (m - 55), 30, start=3300)
     assert states[-1] == PhaseTracker.FALLING
+
+
+def test_a_sudden_drop_while_still_rising_is_not_a_decline():
+    """The pot lifted out, or a lamp coming on: the volume falls in seconds, with no top before it."""
+    tracker = PhaseTracker()
+    run(tracker, lambda m: 0.2 + 0.2 * min(1, m / 30), 30)
+    states = run(tracker, lambda m: 0.23, 8, start=1800)  # 0.17 lower for eight minutes
+    assert PhaseTracker.FALL_CHECK not in states and PhaseTracker.FALLING not in states
 
 
 def test_a_dip_that_recovers_never_becomes_a_decline():
