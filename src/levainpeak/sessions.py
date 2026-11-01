@@ -319,7 +319,7 @@ class SessionLog:
 class PhaseTracker:
     """Detects sustained rise, a probable plateau peak, then confirmed decline."""
 
-    WAITING = "Aguardando crescimento"
+    WAITING = "Aquecimento"
     RISING = "Crescendo"
     PLATEAU = "Estabilizando"
     PEAK = "Pico provável"

@@ -6,7 +6,7 @@ from datetime import datetime
 
 from levainpeak.sessions import PhaseTracker
 
-LATENCY = "Fase inicial"
+LATENCY = "Aquecimento"
 EXPONENTIAL = "Crescimento"
 STATIONARY = "Pico"
 DECLINE = "Declínio"

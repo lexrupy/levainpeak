@@ -60,7 +60,8 @@ const dataHora = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-di
 // ---------------------------------------------------------------- gráfico
 
 const CLASSE_DA_FASE = {
-  'Fase inicial': 'faixa-fase-inicial',
+  'Aquecimento': 'faixa-fase-inicial',
+  'Fase inicial': 'faixa-fase-inicial', // nome antigo, de gráficos já enviados
   'Crescimento': 'faixa-crescimento',
   'Pico': 'faixa-pico',
   'Declínio': 'faixa-declinio',
