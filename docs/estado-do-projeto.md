@@ -58,13 +58,19 @@ a fase e a temperatura lida do visor de um termômetro. Grava uma linha de CSV a
   do pote que o usuário desenhou, se ela ainda contiver o contorno novo.
 - **Alinhamento do pote (`alignment.py`):** uma referência de bordas por perfil (`data/pot_reference_<perfil>.npz`).
   Contorno, caixa e marca acompanham o pote quando ele é movido; abaixo de `MIN_SCORE` (0,70) a gravação pausa
-  ("pote não localizado").
+  ("pote não localizado"). A referência é só uma faixa ao longo das paredes e da base, mais a tampa: o fundo visto
+  através do vidro não anda com o pote e, incluído, segurava o encontro no lugar antigo (`VERSION` do `.npz`
+  invalida referências antigas).
 - **Marca "+" ou "X" (`target.py`, opcional):** liga no menu de botão direito do vídeo. Só de dia, só traço escuro
-  sobre fundo claro. Corrige só a altura (o pote redondo gira com a etiqueta). Desenha um círculo ou quadrado
+  sobre fundo claro. Com as bordas achadas corrige a altura e guarda quanto a etiqueta andou de lado (giro);
+  sem as bordas move o desenho também na horizontal, descontando esse giro. Desenha um círculo ou quadrado
   vermelho translúcido (configurável) quando detecta.
 - **Emenda do volume:** a cada troca dia/IR e ao retomar, o volume novo é juntado ao último (`_join_volume`).
   Sessão nova zera isso (`reset_join`) e o nível inicial anda junto com o volume, para a marca ler 1,00×.
   Sessão retomada herda a emenda; sessão nova herda só contorno e marca de `data/regions.json`.
+- **Diagnóstico:** o painel 5 mostra o contorno desenhado (ciano) e, em magenta, as paredes que a busca
+  automática acharia sem ele. Em pote cônico ela não acha nada, e o painel diz isso.
+- **Apps Script:** `versao()` no editor e `?o=versao` na implantação dizem qual `Code.gs` está publicado.
 - **Snapshots:** a cada 10 min o quadro bruto vai para `data/sessions/<sessão>_fotos/`.
 - **Visor de dia:** o corte do OCR fica dentro da faixa de brilho do próprio visor. Piso fixo de 100 lia "888"
   quando o LED escurecia o fundo da face.
