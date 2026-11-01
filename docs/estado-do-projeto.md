@@ -53,6 +53,21 @@ a fase e a temperatura lida do visor de um termômetro. Grava uma linha de CSV a
   com borrão forte em teste sintético.
 - **Interface:** o vídeo é reduzido à resolução da tela antes de processar. O gráfico só é recalculado quando o
   CSV muda. Os cartões reservam 3 linhas e a mensagem 2.
+- **Contorno desenhado:** o app confia no polígono (sem teste de "pote vazio"). A superfície é achada subindo do
+  fundo, com corte próprio para dia e infravermelho (`_find_surface_from_below`). Refazer o contorno mantém a caixa
+  do pote que o usuário desenhou, se ela ainda contiver o contorno novo.
+- **Alinhamento do pote (`alignment.py`):** uma referência de bordas por perfil (`data/pot_reference_<perfil>.npz`).
+  Contorno, caixa e marca acompanham o pote quando ele é movido; abaixo de `MIN_SCORE` (0,70) a gravação pausa
+  ("pote não localizado").
+- **Marca "+" ou "X" (`target.py`, opcional):** liga no menu de botão direito do vídeo. Só de dia, só traço escuro
+  sobre fundo claro. Corrige só a altura (o pote redondo gira com a etiqueta). Desenha um círculo ou quadrado
+  vermelho translúcido (configurável) quando detecta.
+- **Emenda do volume:** a cada troca dia/IR e ao retomar, o volume novo é juntado ao último (`_join_volume`).
+  Sessão nova zera isso (`reset_join`) e o nível inicial anda junto com o volume, para a marca ler 1,00×.
+  Sessão retomada herda a emenda; sessão nova herda só contorno e marca de `data/regions.json`.
+- **Snapshots:** a cada 10 min o quadro bruto vai para `data/sessions/<sessão>_fotos/`.
+- **Visor de dia:** o corte do OCR fica dentro da faixa de brilho do próprio visor. Piso fixo de 100 lia "888"
+  quando o LED escurecia o fundo da face.
 
 ## Preferências de trabalho do usuário
 
@@ -123,3 +138,15 @@ Publicado em 2026-10-31 em **github.com/lexrupy/levainpeak** (público, MIT). Re
 - A leitura do termômetro em infravermelho foi ajustada em um único valor (21.8).
 - A janela mínima exige ~903 px. O gerenciador de janelas do usuário (tiling) pode abrir a janela mais estreita.
 - O gráfico lê as fases recalculadas, mas o CSV guarda os estados detalhados do rastreador.
+
+## Pendências (1/11/2026)
+
+- Afrouxar o filtro de saltos do volume: 94% das linhas repetem o valor anterior, e a série sai em degraus.
+- Fases: exigir subida mínima antes de aceitar platô/pico (≥1,3× ou ≥0,06) e registrar o pico retroativamente na
+  hora do máximo suavizado. Simulação em `sim_pico.py` (scratchpad, não versionada): falsos alarmes de platô na fase
+  lenta e "Queda em confirmação" por degrau de -0,02.
+- Lente de +8 a +10 dioptrias sobre a câmera (foco a 10 cm). Depois: redesenhar contorno, caixa, marca e visor, e
+  rever os cortes de superfície (IR 0,40, dia 0,65).
+- Publicar o `Code.gs` novo no Apps Script, limpar a aba `serie` e trocar o token (sem colar no chat).
+- Opcionais: faixa de aviso sobre o vídeo, `data/` no `.gitignore`, marca de polaridade invertida, salvar gráfico
+  como PNG.
