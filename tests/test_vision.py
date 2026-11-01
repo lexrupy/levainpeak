@@ -157,3 +157,14 @@ def test_a_reflection_in_the_clear_glass_above_the_levain_is_not_the_surface():
     measurement = measure_container(frame, (150, 60, 650, 560), outline=OUTLINE)
     assert measurement is not None
     assert abs(measurement.surface_y - 330) <= 12  # not the reflection at 160
+
+
+def test_a_pale_band_at_the_top_of_the_levain_is_read_at_its_near_edge_not_the_far_one():
+    from levainpeak.vision import _find_surface_from_below
+
+    gray = np.full((500, 400), 100, np.uint8)  # clear glass, dim
+    gray[200:260] = 175  # the surface seen from a little above: a pale band, far edge at 200
+    gray[260:500] = 200  # the pale body of the levain begins at the near edge, 260
+    gray = cv2.GaussianBlur(gray, (0, 0), 3)
+    found = _find_surface_from_below(gray, 0, 400, 0, 500)
+    assert found is not None and abs(found[0] - 260) <= 12

@@ -612,6 +612,12 @@ def column_scan(
     )
 
 
+_INFRARED_CUT = 0.4
+_DAY_CUT = 0.65
+_FRONT_REACH = 0.12  # of the jar's width: how far below the cut the front edge of the surface may lie
+_FRONT_STEP = 0.18  # of the levain-to-glass difference: the rise that marks that front edge
+
+
 def _find_surface_from_below(
     gray: np.ndarray, left: int, right: int, top: int, bottom: int, infrared: bool = False
 ) -> tuple[int, float] | None:
@@ -635,15 +641,31 @@ def _find_surface_from_below(
         return None  # nothing dimmer than the levain above it: no surface to find
     # Infrared shows the levain's edge sharply, so its middle is the surface; by day the
     # foam's pale rim makes the transition wider and the edge sits nearer the levain.
-    limit = glass + (0.4 if infrared else 0.65) * (levain - glass)
+    limit = glass + (_INFRARED_CUT if infrared else _DAY_CUT) * (levain - glass)
     # A stretch of clear glass is long; a dark band or ring on the levain is thin and
     # darker than any glass, so neither stops the climb.
     run = max(16, height // 25)
     dim = profile < limit
     for y in range(int(height * 0.92), run, -1):
         if dim[y - run:y].all() and float(np.median(profile[y - run:y])) >= 0.6 * glass:
+            if not infrared:
+                y = _front_edge(profile, y, int(_FRONT_REACH * width), _FRONT_STEP * (levain - glass))
             return top + y, 0.9
     return None
+
+
+def _front_edge(profile: np.ndarray, y: int, reach: int, step: float) -> int:
+    """Seen from a little above, the surface is a band: its far edge is higher in the picture than
+    its near edge. The cut may land on the far edge when the foam is bright (a pale band against
+    the clear glass); the series is read at the near edge, where the pale body begins. If a clear
+    rise follows within ``reach`` rows, that is the edge."""
+    window = 16  # the edge is soft: judge the rise over a stretch, not a single row
+    end = min(len(profile) - window - 1, y + reach)
+    if end <= y:
+        return y
+    rise = profile[y + window:end + window] - profile[y:end]
+    best = int(np.argmax(rise))
+    return y + best + window // 2 if float(rise[best]) >= step and best > 8 else y
 
 
 def _find_surface_by_columns(
