@@ -414,6 +414,8 @@ class LevainPeakApp:
             self._analyzer.outline = self._pot_outline
             self._analyzer.temperature_roi = self._temperature_roi
             self._analyzer.temperature_quad = self._temperature_quad
+            self._analyzer.marker_y = self._manual_marker_y
+            self._analyzer.load_references()
         if hasattr(self, "auto_pot_button") and self._manual_pot_roi:
             self.auto_pot_button.configure(state="normal")
 
@@ -426,6 +428,31 @@ class LevainPeakApp:
             self._session_log.save_marker(self._manual_marker_y)
         except OSError:
             logging.exception("Falha ao salvar a marca de início")
+
+    def _capture_pot_reference(self) -> None:
+        """The pot as drawn is where it is now: remember how it looks, to find it if it is moved."""
+        if self._analyzer is None or self._stream is None:
+            return
+        self._analyzer.set_reference(
+            self._stream.snapshot()[1], self._pot_outline, self._manual_pot_roi, self._manual_marker_y
+        )
+
+    def _take_alignment(self) -> None:
+        """The analyzer carried the drawing to where the pot now is: follow it in the window and on disk."""
+        aligned = self._analyzer.aligned if self._analyzer is not None else None
+        if aligned is None:
+            return
+        self._analyzer.aligned = None
+        self._pot_outline, self._manual_pot_roi, marker = aligned
+        if marker is not None:
+            self._manual_marker_y = marker
+        self._persist_marker()
+        if self._session_log.active:
+            self._session_log.save_regions(
+                self._manual_pot_roi, self._temperature_roi, outline=self._pot_outline,
+                face_quad=self._temperature_quad,
+            )
+        self._set_message("O pote mudou de lugar: o contorno e a marca acompanharam.")
 
     def _sync_vessel_bounds(self) -> None:
         """Keep what daylight measured about the vessel in the session file."""
@@ -481,9 +508,14 @@ class LevainPeakApp:
         if self._stream is not None:
             status = self._stream.status
             profile = self._analyzer.profile.name if self._analyzer is not None else None
+            lost = self._analyzer is not None and self._analyzer.alignment_status
             self.status_value.configure(
-                text=status if profile is None else f"{status} · perfil {profile}"
+                text=(status if profile is None else f"{status} · perfil {profile}")
+                + (f" · {lost}" if lost else "")
             )
+            if self._analyzer is not None:
+                self._analyzer.align_enabled = not (self._roi_mode or self._outline_mode)
+                self._take_alignment()
             if status != self._last_stream_status:
                 self._last_stream_status = status
                 if self._measurement is None:
@@ -771,6 +803,7 @@ class LevainPeakApp:
             self._analyzer.vessel_bounds.clear()
         self._manual_marker_y = None
         self._persist_marker()
+        self._capture_pot_reference()
         self._last_container_box = None
         self._measurement = None
         self.auto_pot_button.configure(state="normal")
@@ -889,6 +922,8 @@ class LevainPeakApp:
             if not keep_outline:
                 self._manual_marker_y = None
                 self._persist_marker()
+            self._persist_regions()
+            self._capture_pot_reference()
             self._last_container_box = None
             self._measurement = None
             if self._session_log.active:
@@ -1002,6 +1037,7 @@ class LevainPeakApp:
             return
         self._manual_marker_y = source_y
         self._persist_marker()
+        self._capture_pot_reference()
         self._measurement = set_initial_marker(measurement, source_y)
         if self._session_log.active:
             now = time.monotonic()
@@ -1815,6 +1851,8 @@ class LevainPeakApp:
             self._analyzer.temperature_roi = self._temperature_roi
             self._analyzer.vessel_bounds = dict(self._session_log.vessel_bounds)
             self._analyzer.volume_offset = self._session_log.volume_offset
+            self._analyzer.marker_y = self._session_log.manual_marker_y
+            self._analyzer.load_references()
         self._manual_marker_y = self._session_log.manual_marker_y
         # Resuming by itself at start-up (--resume): regions marked since that session was
         # last saved are newer than the ones in its file, so they win. Picking a session

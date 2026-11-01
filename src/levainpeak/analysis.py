@@ -12,6 +12,10 @@ from statistics import median
 import cv2
 import numpy as np
 
+from levainpeak.alignment import (
+    MIN_SCORE, PotReference, carry, load_reference, locate, make_reference,
+    reference_path, save_reference,
+)
 from levainpeak.filters import OutlierGate
 from levainpeak.profiles import DAY, INFRARED, CaptureProfile, ProfileSelector
 from levainpeak.stream import RtspStream
@@ -34,6 +38,16 @@ class ContainerAnalyzer:
         self.anchor_temperature: float | None = None  # last logged value of a resumed session
         self.ink_cut_infrared: float = 0.30  # black/white cuts of the drawn face, set from the window
         self.ink_cut_day: int = 40
+        self.marker_y: int | None = None  # the hand-placed mark, carried along with the pot
+        # Following the pot when it is moved: one reference per camera profile (the
+        # infrared and day pictures do not look alike), made when the drawing is set.
+        self.align_enabled = True
+        self.alignment_status: str | None = None  # a short text when the pot cannot be found
+        self.aligned: tuple | None = None  # (outline, roi, marker_y) the drawing was carried to; the window takes it
+        self._references: dict[str, PotReference] = {}
+        self._reference_generation = 0
+        self._last_alignment = 0.0
+        self._alignment_candidate: tuple | None = None
         self.interval_seconds = interval_seconds
         self._stop = threading.Event()
         self._results: queue.Queue[tuple[tuple[int, ContainerMeasurement | None, float | None], tuple]] = queue.Queue(maxsize=1)
@@ -97,6 +111,79 @@ class ContainerAnalyzer:
             return None
         return time.monotonic() - self._temperature_updated_at
 
+    def set_reference(self, frame, outline, roi, marker_y) -> None:
+        """The pot, as drawn, is where it is in this frame: later frames are matched to it."""
+        self._reference_generation += 1
+        self._references.clear()
+        self.aligned = None
+        self._alignment_candidate = None
+        self.alignment_status = None
+        self.marker_y = marker_y
+        if frame is None or outline is None:
+            return
+        reference = make_reference(frame, outline, roi, marker_y)
+        if reference is not None:
+            self._store_reference(self.profile.name, reference)
+
+    def load_references(self) -> None:
+        """The references of an earlier run, so a pot moved while the app was off is found."""
+        for profile in (DAY, INFRARED):
+            reference = load_reference(reference_path(profile.name))
+            if reference is not None:
+                self._references[profile.name] = reference
+
+    def _store_reference(self, name: str, reference: PotReference) -> None:
+        self._references[name] = reference
+        try:
+            save_reference(reference, reference_path(name))
+        except OSError:
+            pass
+
+    def _follow_pot(self, frame) -> None:
+        """Carry the drawn contour to where the pot is now, when it has moved or come closer or farther."""
+        outline, roi = self.outline, self.roi
+        if not self.align_enabled or outline is None or roi is None:
+            return
+        now = time.monotonic()
+        if now - self._last_alignment < 3.0:
+            return
+        self._last_alignment = now
+        name, generation = self.profile.name, self._reference_generation
+        reference = self._references.get(name)
+        if reference is None:
+            # A first look in this picture profile: the pot is taken to be where it is drawn.
+            reference = make_reference(frame, outline, roi, self.marker_y)
+            if reference is not None:
+                self._store_reference(name, reference)
+            return
+        found = locate(reference, frame)
+        if found is None or found.score < MIN_SCORE:
+            self.alignment_status = "pote não localizado"
+            self._alignment_candidate = None
+            return
+        self.alignment_status = None
+        moved = carry(reference, found)
+        if generation != self._reference_generation:
+            return  # the drawing was replaced while this was being searched
+        shift = max(
+            max(abs(a - c), abs(b - d)) for (a, b), (c, d) in zip(moved[0], outline, strict=True)
+        )
+        if shift < 3:
+            self._alignment_candidate = None
+            return
+        # Two searches in a row must agree, so a hand passing over the pot does not move the drawing.
+        candidate = self._alignment_candidate
+        if candidate is None or max(
+            max(abs(a - c), abs(b - d)) for (a, b), (c, d) in zip(moved[0], candidate[0], strict=True)
+        ) > 3:
+            self._alignment_candidate = moved
+            return
+        self._alignment_candidate = None
+        self.outline, self.roi = moved[0], moved[1]
+        if moved[2] is not None:
+            self.marker_y = moved[2]
+        self.aligned = (moved[0], moved[1], self.marker_y)
+
     def region_key(self) -> tuple:
         """The regions as they are set now (pot area, contour, thermometer area, face corners)."""
         return (self.roi, self.outline, self.temperature_roi, self.temperature_quad)
@@ -137,6 +224,10 @@ class ContainerAnalyzer:
                 self._stop.wait(0.1)
                 continue
             last_frame_number = frame_number
+            try:
+                self._follow_pot(frame)
+            except cv2.error:
+                pass
             # One reading of the regions for the whole pass, and the same key on the result.
             key = self.region_key()
             roi, outline = key[0], key[1]
