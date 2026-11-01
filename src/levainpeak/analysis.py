@@ -13,10 +13,11 @@ import cv2
 import numpy as np
 
 from levainpeak.alignment import (
-    MIN_SCORE, PotReference, carry, load_reference, locate, make_reference,
+    MIN_SCORE, Alignment, PotReference, carry, load_reference, locate, make_reference,
     reference_path, save_reference,
 )
 from levainpeak.filters import OutlierGate
+from levainpeak.target import find_plus
 from levainpeak.profiles import DAY, INFRARED, CaptureProfile, ProfileSelector
 from levainpeak.stream import RtspStream
 from levainpeak.temperature import read_temperature
@@ -24,6 +25,9 @@ from levainpeak.vision import ContainerMeasurement, measure_container
 
 MIN_TEMPERATURE_C = 0.0
 MAX_TEMPERATURE_C = 60.0
+
+
+MAX_PLUS_CORRECTION = 25  # px the "+" may correct the edges' height by; more is a false find
 
 
 class ContainerAnalyzer:
@@ -49,6 +53,7 @@ class ContainerAnalyzer:
         self._joined_profile: str | None = None
         self._last_volume: float | None = None
         self.align_enabled = True
+        self.use_mark = False  # follow the pot's height by the "+" or "X" on its label
         self.alignment_status: str | None = None  # a short text when the pot cannot be found
         self.aligned: tuple | None = None  # (outline, roi, marker_y) the drawing was carried to; the window takes it
         self._references: dict[str, PotReference] = {}
@@ -147,9 +152,16 @@ class ContainerAnalyzer:
         self.marker_y = marker_y
         if frame is None or outline is None:
             return
-        reference = make_reference(frame, outline, roi, marker_y)
+        reference = make_reference(frame, outline, roi, marker_y, self._plus_in(frame, roi))
         if reference is not None:
             self._store_reference(self.profile.name, reference)
+
+    def _plus_in(self, frame, roi) -> tuple[float, float] | None:
+        """Where the "+" on the label is, by day. In infrared it is too faint to be found."""
+        if self.profile.infrared or not self.use_mark:
+            return None
+        found = find_plus(frame, roi)
+        return None if found is None else (found.x, found.y)
 
     def load_references(self) -> None:
         """The references of an earlier run, so a pot moved while the app was off is found."""
@@ -178,11 +190,12 @@ class ContainerAnalyzer:
         reference = self._references.get(name)
         if reference is None:
             # A first look in this picture profile: the pot is taken to be where it is drawn.
-            reference = make_reference(frame, outline, roi, self.marker_y)
+            reference = make_reference(frame, outline, roi, self.marker_y, self._plus_in(frame, roi))
             if reference is not None:
                 self._store_reference(name, reference)
             return
         found = locate(reference, frame)
+        found = self._with_plus(reference, found, frame, roi)
         if found is None or found.score < MIN_SCORE:
             self.alignment_status = "pote não localizado"
             self._alignment_candidate = None
@@ -209,6 +222,31 @@ class ContainerAnalyzer:
         if moved[2] is not None:
             self.marker_y = moved[2]
         self.aligned = (moved[0], moved[1], self.marker_y)
+
+    def _with_plus(self, reference: PotReference, found: Alignment | None, frame, roi) -> Alignment | None:
+        """Use the "+" on the label, when it is in view, for the pot's height.
+
+        Only the vertical position is taken from it: a round pot can turn in place, and the
+        label (and the "+") with it, while the contour stays where it is. The edges give the
+        rest; when they find nothing (a lamp changed the light) the "+" alone moves the
+        drawing up or down.
+        """
+        if reference.plus is None:
+            return found
+        seen = self._plus_in(frame, roi)
+        if seen is None:
+            return found
+        origin_x, origin_y = reference.origin
+        if found is not None and found.score >= MIN_SCORE:
+            expected = found.dy + (reference.plus[1] - origin_y) * found.scale
+            correction = seen[1] - expected
+            if abs(correction) > MAX_PLUS_CORRECTION:
+                return found
+            return Alignment(found.scale, found.dx, found.dy + correction, found.score)
+        rise = seen[1] - reference.plus[1]
+        if abs(rise) > MAX_PLUS_CORRECTION * 3:
+            return found
+        return Alignment(1.0, float(origin_x), float(origin_y) + rise, MIN_SCORE)
 
     def region_key(self) -> tuple:
         """The regions as they are set now (pot area, contour, thermometer area, face corners)."""

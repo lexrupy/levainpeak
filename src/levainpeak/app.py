@@ -122,6 +122,7 @@ class LevainPeakApp:
             self._analyzer = ContainerAnalyzer(self._stream)
             self._analyzer.ink_cut_infrared = self._settings.ink_cut_infrared
             self._analyzer.ink_cut_day = self._settings.ink_cut_day
+            self._analyzer.use_mark = self._settings.mark_alignment
             self._load_saved_regions()
             self._analyzer.start()
             self._set_message("Iniciando conexão com a câmera…")
@@ -163,6 +164,13 @@ class LevainPeakApp:
             height=270,
         )
         self.video.pack(fill="both", expand=True)
+        self._mark_var = tk.BooleanVar(value=self._settings.mark_alignment)
+        self._video_menu = tk.Menu(self.video, tearoff=False)
+        self._video_menu.add_checkbutton(
+            label='Detectar marca "+" ou "X" no pote (alinha a altura)',
+            variable=self._mark_var, command=self._toggle_mark_alignment,
+        )
+        self.video.bind("<Button-3>", lambda event: self._video_menu.tk_popup(event.x_root, event.y_root))
         self._placeholder_item = self.video.create_text(
             240,
             135,
@@ -795,6 +803,22 @@ class LevainPeakApp:
             a, b, c = polygon[index], polygon[(index + 1) % len(polygon)], polygon[(index + 2) % len(polygon)]
             signs.append(np.sign((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])))
         return abs(sum(signs)) == len(signs)  # all turns the same way: convex, not crossed
+
+    def _toggle_mark_alignment(self) -> None:
+        enabled = bool(self._mark_var.get())
+        self._settings = replace(self._settings, mark_alignment=enabled)
+        if self._analyzer is not None:
+            self._analyzer.use_mark = enabled
+            # References taken without the mark have none to compare with: take them again.
+            if enabled and self._analyzer.outline is not None:
+                self._capture_pot_reference()
+        try:
+            save_settings(self._settings)
+        except OSError:
+            logging.exception("Falha ao salvar a opção da marca")
+        self._set_message(
+            'Marca "+" ou "X" ligada: o app a procura no pote, de dia.' if enabled else "Marca no pote desligada."
+        )
 
     def _apply_outline(self) -> None:
         pot = self._outline_target == "pot"

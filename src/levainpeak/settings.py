@@ -33,6 +33,7 @@ class Settings:
     graph_volume_scale: str = "auto"
     ink_cut_infrared: float = DEFAULT_INK_CUT_INFRARED
     ink_cut_day: int = DEFAULT_INK_CUT_DAY
+    mark_alignment: bool = False  # follow the pot's height by the "+" or "X" on its label
 
     def clamped(self) -> "Settings":
         return Settings(
@@ -53,6 +54,7 @@ class Settings:
             graph_volume_scale=self.graph_volume_scale if self.graph_volume_scale in VOLUME_SCALES else "auto",
             ink_cut_infrared=round(min(INK_CUT_INFRARED[1], max(INK_CUT_INFRARED[0], float(self.ink_cut_infrared))), 2),
             ink_cut_day=min(INK_CUT_DAY[1], max(INK_CUT_DAY[0], int(self.ink_cut_day))),
+            mark_alignment=bool(self.mark_alignment),
         )
 
 
@@ -71,6 +73,7 @@ def load_settings(path: Path = SETTINGS_PATH) -> Settings:
             graph_volume_scale=str(data.get("graph_volume_scale", defaults.graph_volume_scale)),
             ink_cut_infrared=float(data.get("ink_cut_infrared", defaults.ink_cut_infrared)),
             ink_cut_day=int(data.get("ink_cut_day", defaults.ink_cut_day)),
+            mark_alignment=bool(data.get("mark_alignment", defaults.mark_alignment)),
         ).clamped()
     except FileNotFoundError:
         return defaults

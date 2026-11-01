@@ -38,6 +38,7 @@ class PotReference:
     outline: tuple[tuple[int, int], ...]
     roi: tuple[int, int, int, int] | None
     marker_y: int | None
+    plus: tuple[float, float] | None = None  # the "+" on the label when this was taken (day only)
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ def make_reference(
     outline: tuple[tuple[int, int], ...],
     roi: tuple[int, int, int, int] | None,
     marker_y: int | None,
+    plus: tuple[float, float] | None = None,
 ) -> PotReference | None:
     if frame is None or frame.ndim != 3 or len(outline) < 3:
         return None
@@ -82,7 +84,7 @@ def make_reference(
     cv2.fillPoly(mask, [np.round(inside).astype(np.int32)], 0)
     return PotReference(
         edges=crop * (mask > 0), mask=mask, origin=(left, top),
-        outline=tuple((int(x), int(y)) for x, y in outline), roi=roi, marker_y=marker_y,
+        outline=tuple((int(x), int(y)) for x, y in outline), roi=roi, marker_y=marker_y, plus=plus,
     )
 
 
@@ -160,6 +162,7 @@ def save_reference(reference: PotReference, path: Path) -> None:
         origin=np.asarray(reference.origin), outline=np.asarray(reference.outline),
         roi=np.asarray(reference.roi if reference.roi is not None else (-1, -1, -1, -1)),
         marker_y=np.asarray(-1 if reference.marker_y is None else reference.marker_y),
+        plus=np.asarray(reference.plus if reference.plus is not None else (-1.0, -1.0)),
     )
     temporary.replace(path)
 
@@ -169,11 +172,13 @@ def load_reference(path: Path) -> PotReference | None:
         with np.load(path) as saved:
             roi = tuple(int(v) for v in saved["roi"])
             marker = int(saved["marker_y"])
+            plus = tuple(float(v) for v in saved["plus"]) if "plus" in saved.files else (-1.0, -1.0)
             return PotReference(
                 edges=saved["edges"], mask=saved["mask"],
                 origin=(int(saved["origin"][0]), int(saved["origin"][1])),
                 outline=tuple((int(x), int(y)) for x, y in saved["outline"]),
                 roi=None if roi[0] < 0 else roi, marker_y=None if marker < 0 else marker,
+                plus=None if plus[0] < 0 else plus,
             )
     except (OSError, ValueError, KeyError):
         return None
