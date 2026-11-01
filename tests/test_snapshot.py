@@ -14,3 +14,20 @@ def test_a_snapshot_is_kept_beside_the_session_every_ten_minutes(tmp_path):
     assert log.snapshot(599.0, frame) is None
     assert log.snapshot(600.0, frame) is not None
     assert log.snapshot(601.0, None) is None
+
+
+def test_the_last_volume_written_is_kept_for_a_pause(tmp_path):
+    from datetime import datetime
+
+    from levainpeak.sessions import SessionLog
+    from levainpeak.vision import ContainerMeasurement
+
+    log = SessionLog(tmp_path)
+    log.start(datetime.now().astimezone(), "t")
+    assert log.last_volume is None
+    measurement = ContainerMeasurement(
+        left=0, right=1, top=0, bottom=1, surface_y=0, volume_fraction=0.37, confidence=1.0
+    )
+    log.record(0.0, measurement, "Aquecendo")
+    assert log.last_volume == 0.37
+    log.stop()

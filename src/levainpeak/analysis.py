@@ -155,6 +155,11 @@ class ContainerAnalyzer:
         """How far the series is moved from the raw reading (join across contours and profiles)."""
         return self.volume_offset + self._join_offset
 
+    def rejoin(self) -> None:
+        """Join the series again at the next reading, to ``anchor_volume`` (after a pause)."""
+        self._last_volume = None
+        self._joined_profile = None
+
     def _join_volume(self, raw: float) -> float:
         name = self.profile.name
         if self._joined_profile != name:

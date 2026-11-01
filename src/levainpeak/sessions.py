@@ -57,6 +57,7 @@ class SessionLog:
         # Added to every measured volume of this session: joins the series across a
         # change in how the pot is read (redrawn contour) that would show as a step.
         self.volume_offset: float = 0.0
+        self.last_volume: float | None = None  # the volume of the last row written this run
         # Version of the volume measurement the saved initial level came from.
         self.geometry: int = GEOMETRY_VERSION
 
@@ -284,6 +285,7 @@ class SessionLog:
         self._file.flush()
         self._last_write_time = monotonic_time
         self._last_phase = phase
+        self.last_volume = measurement.volume_fraction
         return True
 
     def snapshot(self, monotonic_time: float, frame) -> Path | None:

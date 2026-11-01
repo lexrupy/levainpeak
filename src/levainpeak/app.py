@@ -113,6 +113,7 @@ class LevainPeakApp:
         )
         self._forecaster = DoublingForecaster()
         self._phase = "Aguardando sessão"
+        self._paused = False  # the session is open but nothing is logged (the fermenter is being handled)
         self._mix_time: datetime | None = None
         self._line_height = tkfont.nametofont("TkDefaultFont").metrics("linespace")
         self._build_layout()
@@ -289,6 +290,7 @@ class LevainPeakApp:
         self.session_button = button(
             session, "Iniciar sessão", self._toggle_session, width=15
         )
+        self.pause_button = button(session, "Pausar", self._toggle_pause, width=8, state="disabled")
         self.resume_button = button(files, "Retomar", self._resume_session, width=9)
         self.open_csv_button = button(files, "CSV", self._open_session_csv, width=6)
         self.graph_button = ttk.Menubutton(files, text="Gráfico ▾", width=9, direction="below")
@@ -1298,6 +1300,8 @@ class LevainPeakApp:
     def _toggle_session(self) -> None:
         if self._session_log.active:
             path = self._session_log.stop()
+            self._set_paused(False)
+            self.pause_button.configure(state="disabled")
             self.session_button.configure(text="Iniciar sessão")
             self.metric_values["Sessão"].configure(text="Sessão encerrada")
             self._phase = "Aguardando sessão"
@@ -1343,6 +1347,7 @@ class LevainPeakApp:
         self._reset_tracking(baseline)
         self._phase = PhaseTracker.WAITING
         self.session_button.configure(text="Encerrar sessão")
+        self.pause_button.configure(state="normal")
         self.mix_time_button.configure(
             text=f"Mistura: {self._mix_time.strftime('%d/%m %H:%M')}"
         )
@@ -1999,6 +2004,7 @@ class LevainPeakApp:
             except OSError:
                 logging.exception("Falha ao salvar a versão da medição")
         self.session_button.configure(text="Encerrar sessão")
+        self.pause_button.configure(state="normal")
         self.metric_values["Sessão"].configure(
             text=self._session_summary(resumed=True)
         )
@@ -2009,8 +2015,27 @@ class LevainPeakApp:
         self.auto_pot_button.configure(state="normal" if self._manual_pot_roi else "disabled")
         self._set_message(f"Sessão retomada; as próximas medições serão acrescentadas em {self._session_log.path}.")
 
-    def _update_session(self, measurement: ContainerMeasurement | None) -> None:
+    def _toggle_pause(self) -> None:
         if not self._session_log.active:
+            return
+        self._set_paused(not self._paused)
+        if self._paused:
+            self._set_message("Sessão pausada: nada é gravado até continuar. Pode mexer na fermentadora.")
+            return
+        # The pot may have been moved and put back: carry the series on from the last logged level.
+        if self._analyzer is not None and self._session_log.last_volume is not None:
+            self._analyzer.anchor_volume = self._session_log.last_volume
+            self._analyzer.rejoin()
+        self._set_message("Sessão retomada.")
+
+    def _set_paused(self, paused: bool) -> None:
+        self._paused = paused
+        self.pause_button.configure(text="Continuar" if paused else "Pausar")
+        if self._session_log.active:
+            self.metric_values["Estado do levain"].configure(text="Pausada" if paused else self._phase)
+
+    def _update_session(self, measurement: ContainerMeasurement | None) -> None:
+        if not self._session_log.active or self._paused:
             return
         try:
             self._session_log.snapshot(time.monotonic(), self._last_raw_frame)
