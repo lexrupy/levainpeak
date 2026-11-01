@@ -1284,7 +1284,7 @@ class LevainPeakApp:
             session_id = self._session_log.start(self._mix_time, self._session_name)
             self._session_log.volume_offset = 0.0
             if self._analyzer is not None:
-                self._analyzer.volume_offset = 0.0
+                self._analyzer.reset_join()
             self._session_log.save_regions(self._manual_pot_roi, self._temperature_roi, outline=self._pot_outline, face_quad=self._temperature_quad)
             self._persist_marker()
         except OSError as exc:

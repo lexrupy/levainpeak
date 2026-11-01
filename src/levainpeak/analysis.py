@@ -118,6 +118,14 @@ class ContainerAnalyzer:
             return None
         return time.monotonic() - self._temperature_updated_at
 
+    def reset_join(self) -> None:
+        """Forget the series of the previous session: a new one starts from what is read."""
+        self.volume_offset = 0.0
+        self.anchor_volume = None
+        self._join_offset = 0.0
+        self._joined_profile = None
+        self._last_volume = None
+
     def _join_volume(self, raw: float) -> float:
         name = self.profile.name
         if self._joined_profile != name:
@@ -430,7 +438,8 @@ class ContainerAnalyzer:
         initial_fraction = None
         if marker_y is not None and volume_profile:
             marker_index = int(np.clip(marker_y - top, 0, len(volume_profile) - 1))
-            initial_fraction = volume_profile[marker_index]
+            # In the same frame as the volume, so a joined series still reads 1.00x at the mark.
+            initial_fraction = volume_profile[marker_index] + self.volume_offset + self._join_offset
         growth_factor = (
             volume_fraction / initial_fraction
             if initial_fraction is not None and initial_fraction > 0.01
