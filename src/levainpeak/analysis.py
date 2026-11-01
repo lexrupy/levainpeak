@@ -134,6 +134,11 @@ class ContainerAnalyzer:
         self._joined_profile = None
         self._last_volume = None
 
+    @property
+    def volume_shift(self) -> float:
+        """How far the series is moved from the raw reading (join across contours and profiles)."""
+        return self.volume_offset + self._join_offset
+
     def _join_volume(self, raw: float) -> float:
         name = self.profile.name
         if self._joined_profile != name:

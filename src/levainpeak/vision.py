@@ -222,14 +222,17 @@ def measure_container(
 
 
 def set_initial_marker(
-    measurement: ContainerMeasurement, marker_y: int, *, manual: bool = True
+    measurement: ContainerMeasurement, marker_y: int, *, manual: bool = True, shift: float = 0.0
 ) -> ContainerMeasurement:
-    """Set the starter's initial-height reference and recompute its growth ratio."""
+    """Set the starter's initial-height reference and recompute its growth ratio.
+
+    ``shift`` is what the series was moved by (joined across a redrawn contour or a day/infrared
+    change); the mark is read in the same frame as the volume, so a mark at the surface reads 1.00x."""
     if not measurement.volume_below_profile:
         return measurement
     y = int(np.clip(marker_y, measurement.top, measurement.bottom - 1))
     index = int(np.clip(y - measurement.top, 0, len(measurement.volume_below_profile) - 1))
-    initial_fraction = measurement.volume_below_profile[index]
+    initial_fraction = measurement.volume_below_profile[index] + shift
     growth_factor = (
         measurement.volume_fraction / initial_fraction if initial_fraction > 0.01 else None
     )

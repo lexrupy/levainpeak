@@ -168,3 +168,16 @@ def test_a_pale_band_at_the_top_of_the_levain_is_read_at_its_near_edge_not_the_f
     gray = cv2.GaussianBlur(gray, (0, 0), 3)
     found = _find_surface_from_below(gray, 0, 400, 0, 500)
     assert found is not None and abs(found[0] - 260) <= 12
+
+
+def test_a_mark_at_the_surface_reads_one_even_when_the_series_is_shifted():
+    from levainpeak.vision import ContainerMeasurement, set_initial_marker
+
+    profile = tuple(i / 100 for i in range(100))
+    shift = -0.13  # the series was joined across a contour or a day/infrared change
+    measurement = ContainerMeasurement(
+        left=0, right=10, top=0, bottom=100, surface_y=40, volume_fraction=0.40 + shift,
+        confidence=1.0, volume_below_profile=profile,
+    )
+    marked = set_initial_marker(measurement, 40, shift=shift)
+    assert abs(marked.growth_factor - 1.0) < 1e-9

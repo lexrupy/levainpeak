@@ -553,7 +553,8 @@ class LevainPeakApp:
                     self._handle_container_change(self._measurement)
                     if self._measurement is not None and self._manual_marker_y is not None:
                         self._measurement = set_initial_marker(
-                            self._measurement, self._manual_marker_y
+                            self._measurement, self._manual_marker_y,
+                            shift=self._analyzer.volume_shift if self._analyzer else 0.0,
                         )
                     if (
                         self._measurement is not None
@@ -1077,7 +1078,9 @@ class LevainPeakApp:
         self._manual_marker_y = source_y
         self._persist_marker()
         self._capture_pot_reference()
-        self._measurement = set_initial_marker(measurement, source_y)
+        self._measurement = set_initial_marker(
+            measurement, source_y, shift=self._analyzer.volume_shift if self._analyzer else 0.0
+        )
         if self._session_log.active:
             now = time.monotonic()
             baseline = self._measurement.initial_volume_fraction
