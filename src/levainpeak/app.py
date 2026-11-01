@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import functools
 import json
 import logging
 import threading
@@ -44,6 +45,18 @@ from levainpeak.vision import (ContainerMeasurement, draw_measurement,
                                set_initial_volume_reference)
 
 GRAPH_BORDER = 10
+
+
+@functools.lru_cache(maxsize=16)
+def _lowercase_rows(scale: float, thickness: int) -> tuple[int, int]:
+    """Rows above the baseline where a lowercase letter like "e" or "x" is inked: (top, bottom).
+
+    cv2.getTextSize reports the height up to the tallest letter, which puts the middle too high."""
+    canvas = np.zeros((120, 120), np.uint8)
+    baseline = 80
+    cv2.putText(canvas, "ex", (10, baseline), cv2.FONT_HERSHEY_SIMPLEX, scale, 255, thickness, cv2.LINE_AA)
+    rows = np.where(canvas.max(axis=1) > 60)[0]
+    return baseline - int(rows.max()), baseline - int(rows.min())
 
 
 class LevainPeakApp:
@@ -1177,32 +1190,31 @@ class LevainPeakApp:
             self.video.itemconfigure(self._video_image_item, image=self._image)
 
     def _draw_recording_state(self, image):
-        """A translucent "Registrando", "Pausado" or "Parado" in the top right corner of what is shown."""
+        """A translucent "registrando", "pausado" or "parado" in the top right corner of what is shown."""
         if not self._session_log.active:
-            text, color = "Parado", (200, 200, 200)
+            text, color = "parado", (200, 200, 200)
         elif self._paused:
-            text, color = "Pausado", (60, 60, 255)
+            text, color = "pausado", (60, 60, 255)
         else:
-            text, color = "Registrando", (90, 200, 90)
+            text, color = "registrando", (90, 200, 90)
         height, width = image.shape[:2]
         scale = max(0.5, min(1.1, width / 900))
         thickness = max(1, round(scale * 2))
         (text_width, text_height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
-        cap_height = cv2.getTextSize("H", cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)[0][1]
-        dot = max(5, round(cap_height * 0.4))
+        x_top, x_bottom = _lowercase_rows(scale, thickness)
+        dot = max(5, round((x_bottom - x_top) * 0.6))
         gap = max(8, round(scale * 12))
         x_end = width - gap
         x_text = x_end - text_width
-        top = gap + 8  # px of air above the box
-        y_text = top + text_height
+        y_text = gap + text_height
         layer = image.copy()
         cv2.rectangle(
-            layer, (x_text - 2 * dot - gap, top - gap // 2), (x_end + gap // 2, y_text + baseline + gap // 2),
+            layer, (x_text - 2 * dot - gap, gap // 2), (x_end + gap // 2, y_text + baseline + gap // 2),
             (0, 0, 0), -1,
         )
         shown = cv2.addWeighted(layer, 0.35, image, 0.65, 0)
         layer = shown.copy()
-        cv2.circle(layer, (x_text - dot - gap // 2, y_text - cap_height // 2), dot, color, -1, cv2.LINE_AA)
+        cv2.circle(layer, (x_text - dot - gap // 2, y_text - (x_top + x_bottom) // 2), dot, color, -1, cv2.LINE_AA)
         cv2.putText(layer, text, (x_text, y_text), cv2.FONT_HERSHEY_SIMPLEX, scale, color, thickness, cv2.LINE_AA)
         return cv2.addWeighted(layer, 0.8, shown, 0.2, 0)
 
