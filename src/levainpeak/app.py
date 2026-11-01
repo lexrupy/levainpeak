@@ -38,7 +38,7 @@ from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, 
                                  INK_CUT_INFRARED, MAX_OVERLAY_BRIGHTNESS,
                                  MAX_PHONE_SECONDS, MAX_RECORD_SECONDS, MIN_OVERLAY_BRIGHTNESS,
                                  MIN_PHONE_SECONDS, MIN_RECORD_SECONDS,
-                                 ARTIFACT_MINUTES, LAMP_MINUTES, MARK_SHAPES, PEAK_MINUTES, ROTATIONS, Settings, load_settings, save_settings)
+                                 ARTIFACT_MINUTES, LAMP_MINUTES, MARK_SHAPES, PEAK_MINUTES, ROTATION_DEGREES, ROTATIONS, Settings, load_settings, save_settings)
 from levainpeak.stream import RtspStream
 from levainpeak.vision import (ContainerMeasurement, draw_measurement,
                                set_initial_marker,
@@ -199,6 +199,17 @@ class LevainPeakApp:
             height=270,
         )
         self.video.pack(fill="both", expand=True)
+        turn_row = ttk.Frame(video_panel)
+        turn_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(turn_row, text="Girar").pack(side="left")
+        self._rotation_var = tk.DoubleVar(value=self._settings.rotation)
+        self._rotation_text = tk.StringVar(value=f"{self._settings.rotation:.1f}°")
+        ttk.Scale(
+            turn_row, from_=ROTATION_DEGREES[0], to=ROTATION_DEGREES[1],
+            variable=self._rotation_var, command=self._rotation_moved,
+        ).pack(side="left", fill="x", expand=True, padx=6)
+        ttk.Label(turn_row, textvariable=self._rotation_text, width=7, anchor="e").pack(side="left")
+        ttk.Button(turn_row, text="Zerar", width=6, command=lambda: self._rotation_moved(0)).pack(side="left", padx=(6, 0))
         self._mark_var = tk.BooleanVar(value=self._settings.mark_alignment)
         self._video_menu = tk.Menu(self.video, tearoff=False)
         self._video_menu.add_checkbutton(
@@ -206,11 +217,10 @@ class LevainPeakApp:
             variable=self._mark_var, command=self._toggle_mark_alignment,
         )
         self._video_menu.add_separator()
-        self._rotation_var = tk.IntVar(value=self._settings.rotation)
         for degrees in ROTATIONS:
             self._video_menu.add_radiobutton(
                 label="Imagem sem girar" if degrees == 0 else f"Girar a imagem {degrees}°",
-                variable=self._rotation_var, value=degrees, command=self._choose_rotation,
+                command=lambda degrees=degrees: self._rotation_moved(degrees),
             )
         self._shape_var = tk.StringVar(value=self._settings.mark_shape)
         self._video_menu.add_separator()
@@ -859,8 +869,13 @@ class LevainPeakApp:
             signs.append(np.sign((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])))
         return abs(sum(signs)) == len(signs)  # all turns the same way: convex, not crossed
 
-    def _choose_rotation(self) -> None:
-        self._settings = replace(self._settings, rotation=self._rotation_var.get()).clamped()
+    def _rotation_moved(self, value) -> None:
+        degrees = round(float(value) * 2) / 2  # half-degree steps
+        self._rotation_var.set(degrees)
+        if degrees == self._settings.rotation:
+            return
+        self._rotation_text.set(f"{degrees:.1f}°")
+        self._settings = replace(self._settings, rotation=degrees).clamped()
         if self._stream is not None:
             self._stream.rotation = self._settings.rotation
         try:

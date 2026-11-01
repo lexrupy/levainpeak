@@ -11,6 +11,19 @@ import numpy as np
 from levainpeak.config import CameraConfig
 
 
+def rotate_frame(frame: np.ndarray, degrees: float) -> np.ndarray:
+    """Turn the picture clockwise: whole quarter turns change its size, the rest keeps it (black corners)."""
+    turns = round(degrees / 90)
+    if turns % 4:
+        frame = np.ascontiguousarray(np.rot90(frame, -turns))
+    rest = degrees - turns * 90
+    if abs(rest) >= 0.05:
+        height, width = frame.shape[:2]
+        matrix = cv2.getRotationMatrix2D((width / 2, height / 2), -rest, 1.0)
+        frame = cv2.warpAffine(frame, matrix, (width, height))
+    return frame
+
+
 class RtspStream:
     def __init__(self, config: CameraConfig) -> None:
         self.config = config
@@ -19,7 +32,7 @@ class RtspStream:
         self._status = "Aguardando conexão"
         self._frame_number = 0
         self._frame: np.ndarray | None = None
-        self.rotation = 0  # degrees clockwise, a multiple of 90; applied to every frame as it arrives
+        self.rotation = 0.0  # degrees clockwise; applied to every frame as it arrives
         self._thread = threading.Thread(target=self._run, name="rtsp-reader", daemon=True)
 
     @property
@@ -42,9 +55,7 @@ class RtspStream:
             self._status = status
 
     def _publish(self, frame: np.ndarray) -> None:
-        turns = (self.rotation // 90) % 4
-        if turns:
-            frame = np.ascontiguousarray(np.rot90(frame, -turns))
+        frame = rotate_frame(frame, self.rotation)
         with self._lock:
             self._frame = frame
             self._frame_number += 1

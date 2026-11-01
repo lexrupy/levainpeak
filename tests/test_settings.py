@@ -57,7 +57,7 @@ def test_a_file_from_before_the_phone_options_still_loads(tmp_path):
     assert settings.record_interval_seconds == 30 and settings.phone_enabled is False
 
 
-def test_rotation_accepts_only_quarter_turns():
+def test_rotation_is_kept_within_a_half_turn_either_way():
     from levainpeak.settings import Settings
-    assert Settings(rotation=90).clamped().rotation == 90
-    assert Settings(rotation=45).clamped().rotation == 0
+    assert Settings(rotation=12.34).clamped().rotation == 12.3
+    assert Settings(rotation=400).clamped().rotation == 180.0
