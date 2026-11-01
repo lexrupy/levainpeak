@@ -1152,6 +1152,7 @@ class LevainPeakApp:
         resized = cv2.resize(
             window, visible, interpolation=cv2.INTER_AREA if shrinking else cv2.INTER_LINEAR
         )
+        resized = self._draw_recording_state(resized)
         image = Image.fromarray(cv2.cvtColor(resized, cv2.COLOR_BGR2RGB))
         self._base_display_size = base_size
         self._displayed_image_size = full_size
@@ -1175,13 +1176,74 @@ class LevainPeakApp:
             )
             self.video.itemconfigure(self._video_image_item, image=self._image)
 
+    def _draw_recording_state(self, image):
+        """A translucent "registrando", "pausado" or "parado" in the top right corner of what is shown."""
+        if not self._session_log.active:
+            text, color = "parado", (200, 200, 200)
+        elif self._paused:
+            text, color = "pausado", (60, 60, 255)
+        else:
+            text, color = "registrando", (90, 200, 90)
+        height, width = image.shape[:2]
+        scale = max(0.5, min(1.1, width / 900))
+        thickness = max(1, round(scale * 2))
+        (text_width, text_height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
+        dot = max(5, round(text_height * 0.45))
+        gap = max(8, round(scale * 12))
+        x_end = width - gap
+        x_text = x_end - text_width
+        y_text = gap + text_height
+        layer = image.copy()
+        cv2.rectangle(
+            layer, (x_text - 2 * dot - gap, gap // 2), (x_end + gap // 2, y_text + baseline + gap // 2),
+            (0, 0, 0), -1,
+        )
+        shown = cv2.addWeighted(layer, 0.35, image, 0.65, 0)
+        layer = shown.copy()
+        cv2.circle(layer, (x_text - dot - gap // 2, y_text - text_height // 2), dot, color, -1, cv2.LINE_AA)
+        cv2.putText(layer, text, (x_text, y_text), cv2.FONT_HERSHEY_SIMPLEX, scale, color, thickness, cv2.LINE_AA)
+        return cv2.addWeighted(layer, 0.8, shown, 0.2, 0)
+
     def _on_mouse_wheel(self, event: tk.Event) -> None:
         delta = getattr(event, "delta", 0)
         direction = 1 if delta > 0 or getattr(event, "num", None) == 4 else -1
-        self._zoom = min(4.0, max(1.0, self._zoom * (1.25 if direction > 0 else 0.8)))
-        if self._zoom == 1:
-            self._zoom_center = (0.5, 0.5)
+        old_zoom = self._zoom
+        new_zoom = min(4.0, max(1.0, old_zoom * (1.25 if direction > 0 else 0.8)))
+        if new_zoom == old_zoom:
+            return
+        self._zoom_around_pointer(event, new_zoom)
         self._redraw_current_frame()
+
+    def _zoom_around_pointer(self, event: tk.Event, new_zoom: float) -> None:
+        """Zoom so that the point under the mouse stays under the mouse."""
+        if new_zoom == 1.0:
+            self._zoom_center = (0.5, 0.5)
+            self._zoom = new_zoom
+            return
+        if self._displayed_image_size is None or self._base_display_size is None:
+            self._zoom = new_zoom
+            return
+        full_width, full_height = self._displayed_image_size
+        visible_width, visible_height = self._display_visible_size or self._displayed_image_size
+        offset_x, offset_y = self._display_offsets
+        crop_x, crop_y = self._display_crop_origin
+        # Where the pointer is on the picture, as a fraction of it (kept inside the picture).
+        fraction_x = min(1.0, max(0.0, (event.x - offset_x + crop_x) / max(1, full_width)))
+        fraction_y = min(1.0, max(0.0, (event.y - offset_y + crop_y) / max(1, full_height)))
+        panel_width, panel_height = max(1, self.video.winfo_width()), max(1, self.video.winfo_height())
+        new_full = (max(1, round(self._base_display_size[0] * new_zoom)), max(1, round(self._base_display_size[1] * new_zoom)))
+        new_visible = (min(panel_width, new_full[0]), min(panel_height, new_full[1]))
+        new_offset = ((panel_width - new_visible[0]) // 2, (panel_height - new_visible[1]) // 2)
+        pointer_x = min(max(event.x, new_offset[0]), new_offset[0] + new_visible[0])
+        pointer_y = min(max(event.y, new_offset[1]), new_offset[1] + new_visible[1])
+        wanted_x = fraction_x * new_full[0] - (pointer_x - new_offset[0])
+        wanted_y = fraction_y * new_full[1] - (pointer_y - new_offset[1])
+        overflow_x, overflow_y = new_full[0] - new_visible[0], new_full[1] - new_visible[1]
+        self._zoom = new_zoom
+        self._zoom_center = (
+            min(1.0, max(0.0, wanted_x / overflow_x)) if overflow_x > 0 else 0.5,
+            min(1.0, max(0.0, wanted_y / overflow_y)) if overflow_y > 0 else 0.5,
+        )
 
     def _drag_video(self, event: tk.Event) -> None:
         """Mouse moved with the left button down.
