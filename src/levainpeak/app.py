@@ -33,7 +33,6 @@ from levainpeak.phone_config import load_phone_config, local_link, online_link
 from levainpeak.phone_push import PhonePusher, make_snapshot
 from levainpeak.sessions import (GEOMETRY_VERSION, PhaseTracker, SessionLog,
                                  latest_session_csv)
-from levainpeak.regions_store import load_regions_file, save_regions_file
 from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, INK_CUT_DAY,
                                  INK_CUT_INFRARED, MAX_OVERLAY_BRIGHTNESS,
                                  MAX_PHONE_SECONDS, MAX_RECORD_SECONDS, MIN_OVERLAY_BRIGHTNESS,
@@ -126,7 +125,6 @@ class LevainPeakApp:
             self._analyzer.ink_cut_infrared = self._settings.ink_cut_infrared
             self._analyzer.ink_cut_day = self._settings.ink_cut_day
             self._analyzer.use_mark = self._settings.mark_alignment
-            self._load_saved_regions()
             self._analyzer.start()
             self._set_message("Iniciando conexão com a câmera…")
         except (FileNotFoundError, ValueError) as exc:
@@ -422,39 +420,8 @@ class LevainPeakApp:
             except OSError:
                 logging.exception("Falha ao salvar o corte do visor")
 
-    def _persist_regions(self) -> None:
-        """Write the marked regions (and the mark) to disk now, session or not."""
-        try:
-            save_regions_file(
-                pot=self._manual_pot_roi, outline=self._pot_outline, thermometer=self._temperature_roi,
-                face_quad=self._temperature_quad, marker_y=self._manual_marker_y,
-            )
-        except OSError:
-            logging.exception("Falha ao salvar as regiões marcadas")
-
-    def _load_saved_regions(self) -> None:
-        """The regions marked in an earlier run; a resumed session replaces them with its own."""
-        saved = load_regions_file()
-        if not saved:
-            return
-        self._manual_pot_roi = saved["pot"]
-        self._pot_outline = saved["outline"]
-        self._temperature_roi = saved["thermometer"]
-        self._temperature_quad = saved["face_quad"]
-        self._manual_marker_y = saved["marker_y"]
-        if self._analyzer is not None:
-            self._analyzer.roi = self._manual_pot_roi
-            self._analyzer.outline = self._pot_outline
-            self._analyzer.temperature_roi = self._temperature_roi
-            self._analyzer.temperature_quad = self._temperature_quad
-            self._analyzer.marker_y = self._manual_marker_y
-            self._analyzer.load_references()
-        if hasattr(self, "auto_pot_button") and self._manual_pot_roi:
-            self.auto_pot_button.configure(state="normal")
-
     def _persist_marker(self) -> None:
         """Keep the hand-placed initial-level mark in the session file."""
-        self._persist_regions()
         if not self._session_log.active:
             return  # written when the session starts
         try:
@@ -905,7 +872,6 @@ class LevainPeakApp:
             self._session_log.save_regions(
                 self._manual_pot_roi, roi, outline=self._pot_outline, face_quad=quad
             )
-        self._persist_regions()
         self._temperature_c = None
         self._update_temperature_label()
         self._set_message("Face do visor definida; procurando a temperatura.")
@@ -997,7 +963,6 @@ class LevainPeakApp:
             if not keep_outline:
                 self._manual_marker_y = None
                 self._persist_marker()
-            self._persist_regions()
             self._capture_pot_reference()
             self._last_container_box = None
             self._measurement = None
@@ -1027,7 +992,6 @@ class LevainPeakApp:
             self._temperature_c = None
             self._update_temperature_label()
             message = "Área do visor definida; procurando a temperatura."
-        self._persist_regions()
         self._cancel_roi_mode()
         self._set_message(message)
 
@@ -1945,9 +1909,9 @@ class LevainPeakApp:
         if latest is None:
             self._set_message("Nenhuma sessão anterior para retomar.")
             return
-        self._resume_from(latest, prefer_saved_regions=True)
+        self._resume_from(latest)
 
-    def _resume_from(self, selected: Path, prefer_saved_regions: bool = False) -> None:
+    def _resume_from(self, selected: Path) -> None:
         if self._session_log.active:
             self._set_message("Encerre a sessão ativa antes de retomar outra.")
             return
@@ -1971,19 +1935,6 @@ class LevainPeakApp:
             self._analyzer.marker_y = self._session_log.manual_marker_y
             self._analyzer.load_references()
         self._manual_marker_y = self._session_log.manual_marker_y
-        # Resuming by itself at start-up (--resume): regions marked since that session was
-        # last saved are newer than the ones in its file, so they win. Picking a session
-        # by hand gives that session's own regions back.
-        saved_file = Path("data/regions.json")
-        session_file = selected.with_suffix(".json")
-        newer_saved = (
-            prefer_saved_regions and saved_file.exists() and session_file.exists()
-            and saved_file.stat().st_mtime > session_file.stat().st_mtime
-        )
-        if newer_saved:
-            self._load_saved_regions()
-        else:
-            self._persist_regions()
         self._mix_time = self._session_log.mix_time
         self._reset_tracking()
         self._session_baseline = None

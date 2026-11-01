@@ -68,7 +68,7 @@ a fase e a temperatura lida do visor de um termômetro. Grava uma linha de CSV a
   vermelho translúcido (configurável) quando detecta.
 - **Emenda do volume:** a cada troca dia/IR e ao retomar, o volume novo é juntado ao último (`_join_volume`).
   Sessão nova zera isso (`reset_join`) e o nível inicial anda junto com o volume, para a marca ler 1,00×.
-  Sessão retomada herda a emenda; sessão nova herda só contorno e marca de `data/regions.json`.
+  Sessão retomada herda a emenda; as marcações (pote, contorno, termômetro, visor, marca) ficam só no JSON da sessão; sem sessão o app abre sem marcações (`data/regions.json` não é mais usado).
 - **Diagnóstico:** o painel 5 mostra o contorno desenhado (ciano) e, em magenta, as paredes que a busca
   automática acharia sem ele. Em pote cônico ela não acha nada, e o painel diz isso.
 - **Apps Script:** `versao()` no editor e `?o=versao` na implantação dizem qual `Code.gs` está publicado.
