@@ -106,6 +106,10 @@ class LevainPeakApp:
         self._outline_mode = False
         self._outline_points: list[list[int]] = []
         self._outline_drag: int | None = None
+        self._reposition_mode = False  # "r": the pot's drawing follows the mouse, the wheel resizes it
+        self._reposition_center: tuple[float, float] | None = None
+        self._reposition_scale = 1.0
+        self._reposition_redrawn = 0.0
         self._temperature_roi: tuple[int, int, int, int] | None = None
         self._temperature_c: float | None = None
         self._last_known_temperature: float | None = None
@@ -228,6 +232,10 @@ class LevainPeakApp:
         self.video.bind("<Button-5>", self._on_mouse_wheel, add="+")
         self.root.bind("<Escape>", self._cancel_marker_mode, add="+")
         self.root.bind("<d>", self._toggle_detail, add="+")
+        self.root.bind("<r>", self._toggle_reposition, add="+")
+        self.root.bind("<Escape>", self._cancel_reposition, add="+")
+        self.video.bind("<Button-1>", self._confirm_reposition, add="+")
+        self.video.bind("<Motion>", self._preview_reposition, add="+")
 
         metrics = ttk.Frame(monitor, padding=(20, 0, 20, 12))
         metrics.pack(fill="x")
@@ -575,7 +583,7 @@ class LevainPeakApp:
                 + (f" · {lost}" if lost else "")
             )
             if self._analyzer is not None:
-                self._analyzer.align_enabled = not (self._roi_mode or self._outline_mode)
+                self._analyzer.align_enabled = not (self._roi_mode or self._outline_mode or self._reposition_mode)
                 self._take_alignment()
                 self._take_visor_alignment()
             if status != self._last_stream_status:
@@ -952,7 +960,7 @@ class LevainPeakApp:
             self._outline_drag = None if point is None else self._outline_handle_at(point)
             return
         if not self._roi_mode:
-            if self._zoom > 1.0 and not self._marker_mode:
+            if self._zoom > 1.0 and not self._marker_mode and not self._reposition_mode:
                 self._pan_drag_start = (event.x, event.y)
                 self._pan_start_center = self._zoom_center
                 self.video.configure(cursor="fleur")
@@ -961,6 +969,111 @@ class LevainPeakApp:
         if point is None:
             return
         self._roi_drag_start = point
+
+    def _toggle_reposition(self, event: tk.Event | None = None) -> None:
+        """"r": the drawn pot follows the mouse and the wheel resizes it; click to place it, Esc to give up."""
+        if event is not None and isinstance(event.widget, (tk.Entry, ttk.Entry, ttk.Spinbox)):
+            return  # typing an "r" in a field
+        if self._reposition_mode:
+            self._cancel_reposition()
+            return
+        if self._pot_outline is None or self._source_frame_size is None:
+            self._set_message("Desenhe o contorno do pote antes de reposicioná-lo (botão Contorno).")
+            return
+        if self._outline_mode or self._roi_mode or self._marker_mode:
+            self._set_message("Termine o desenho atual antes de reposicionar (Esc cancela).")
+            return
+        self._reposition_mode = True
+        self._reposition_scale = 1.0
+        self._reposition_center = None
+        self.video.configure(cursor="fleur")
+        self._set_message("Reposicionar: mova o mouse para levar o desenho ao pote, a roda muda o tamanho, clique confirma, Esc cancela.")
+
+    def _cancel_reposition(self, event: tk.Event | None = None) -> None:
+        if not self._reposition_mode:
+            return
+        self._reposition_mode = False
+        self._reposition_center = None
+        self._reposition_scale = 1.0
+        self.video.configure(cursor="")
+        if event is not None or self._reposition_mode is False:
+            self._set_message("Reposicionamento cancelado.")
+        self._redraw_current_frame()
+
+    def _repositioned(self):
+        """The contour, its search box and the level mark as they would be placed now, or None."""
+        if not self._pot_outline or self._reposition_center is None:
+            return None
+        points = np.asarray(self._pot_outline, np.float32)
+        origin = points.mean(axis=0)
+        px, py = self._reposition_center
+        scale = self._reposition_scale
+
+        def move(x: float, y: float) -> tuple[int, int]:
+            return round(px + scale * (x - origin[0])), round(py + scale * (y - origin[1]))
+
+        outline = tuple(move(x, y) for x, y in points)
+        roi = None
+        if self._manual_pot_roi is not None and self._source_frame_size is not None:
+            width, height = self._source_frame_size
+            left, top = move(self._manual_pot_roi[0], self._manual_pot_roi[1])
+            right, bottom = move(self._manual_pot_roi[2], self._manual_pot_roi[3])
+            roi = (max(0, left), max(0, top), min(width, right), min(height, bottom))
+        marker = None if self._manual_marker_y is None else round(py + scale * (self._manual_marker_y - origin[1]))
+        return outline, roi, marker
+
+    def _preview_reposition(self, event: tk.Event) -> None:
+        if not self._reposition_mode:
+            return
+        point = self._source_point(event)
+        if point is None:
+            return
+        self._reposition_center = (float(point[0]), float(point[1]))
+        self._redraw_reposition()
+
+    def _redraw_reposition(self) -> None:
+        now = time.monotonic()
+        if now - self._reposition_redrawn >= 0.03:  # the stream redraws too; keep the mouse light
+            self._reposition_redrawn = now
+            self._redraw_current_frame()
+
+    def _confirm_reposition(self, event: tk.Event) -> None:
+        if not self._reposition_mode:
+            return
+        point = self._source_point(event)
+        if point is None:
+            return
+        self._reposition_center = (float(point[0]), float(point[1]))
+        moved = self._repositioned()
+        self._reposition_mode = False
+        self.video.configure(cursor="")
+        if moved is None:
+            return
+        outline, roi, marker = moved
+        scale = self._reposition_scale
+        self._reposition_scale = 1.0
+        self._reposition_center = None
+        self._pot_outline, self._manual_pot_roi = outline, roi
+        self._manual_marker_y = marker
+        if self._analyzer is not None:
+            self._analyzer.roi = roi
+            self._analyzer.outline = outline
+            self._analyzer.vessel_bounds.clear()
+            self._analyzer.marker_y = marker
+        self._persist_marker()
+        self._capture_pot_reference()
+        self._last_container_box = None
+        if self._session_log.active:
+            self._session_log.save_regions(
+                roi, self._temperature_roi, outline=outline, face_quad=self._temperature_quad
+            )
+            # The same pot in another place or size reads the same fraction; if it reads another,
+            # join the series at the last level logged, and keep the session's initial level.
+            if self._analyzer is not None and self._session_log.last_volume is not None:
+                self._analyzer.anchor_volume = self._session_log.last_volume
+                self._analyzer.rejoin()
+        self._set_message(f"Pote reposicionado à mão{f' e redimensionado {scale:.2f}×' if abs(scale - 1) >= 0.01 else ''}.")
+        self._redraw_current_frame()
 
     def _preview_roi(self, event: tk.Event) -> None:
         if not self._roi_mode or self._roi_drag_start is None:
@@ -1237,6 +1350,10 @@ class LevainPeakApp:
     def _on_mouse_wheel(self, event: tk.Event) -> None:
         delta = getattr(event, "delta", 0)
         direction = 1 if delta > 0 or getattr(event, "num", None) == 4 else -1
+        if self._reposition_mode:
+            self._reposition_scale = min(2.0, max(0.5, self._reposition_scale * (1.02 if direction > 0 else 1 / 1.02)))
+            self._redraw_reposition()
+            return
         old_zoom = self._zoom
         new_zoom = min(4.0, max(1.0, old_zoom * (1.25 if direction > 0 else 0.8)))
         if new_zoom == old_zoom:
@@ -1321,11 +1438,11 @@ class LevainPeakApp:
 
     def _apply_region_mask(self, frame):
         regions = [region for region in (self._manual_pot_roi, self._temperature_roi) if region]
-        if not regions and not self._outline_mode:
+        if not regions and not self._outline_mode and not self._reposition_mode:
             return frame
         height, width = frame.shape[:2]
         drawn = {"pot": self._pot_outline, "thermometer": self._temperature_quad}
-        if self._roi_mode or self._outline_mode:
+        if self._roi_mode or self._outline_mode or self._reposition_mode:
             # Drawing a new region: the thing to find may have moved out of the old
             # ones, so keep the whole picture visible and only outline them.
             result = frame.copy()
@@ -1371,6 +1488,17 @@ class LevainPeakApp:
                 for x, y in outline:
                     cv2.circle(result, (int(x), int(y)), 12, color, -1, cv2.LINE_AA)
                     cv2.circle(result, (int(x), int(y)), 12, (0, 0, 0), 2, cv2.LINE_AA)
+        moved = self._repositioned() if self._reposition_mode else None
+        if moved is not None:
+            outline, _roi, marker_y = moved
+            cv2.polylines(result, [np.asarray(outline, np.int32)], True, (0, 235, 255), 3, cv2.LINE_AA)
+            center = np.mean(np.asarray(outline, np.float32), axis=0)
+            cx, cy = int(center[0]), int(center[1])
+            cv2.line(result, (cx - 14, cy), (cx + 14, cy), (0, 235, 255), 2, cv2.LINE_AA)
+            cv2.line(result, (cx, cy - 14), (cx, cy + 14), (0, 235, 255), 2, cv2.LINE_AA)
+            if marker_y is not None:
+                xs = [x for x, _ in outline]
+                cv2.line(result, (min(xs), marker_y), (max(xs), marker_y), (0, 235, 255), 2, cv2.LINE_AA)
         return result
 
     def _center_video_items(self, event: tk.Event) -> None:

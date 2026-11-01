@@ -8,7 +8,7 @@ from levainpeak.app import LevainPeakApp
 def test_region_mask_keeps_the_whole_picture_while_drawing_a_new_region():
     frame = np.full((200, 300, 3), 200, np.uint8)
     app = SimpleNamespace(_manual_pot_roi=(10, 10, 100, 150), _temperature_roi=(120, 20, 200, 80), _roi_mode=False,
-                         _outline_mode=False, _outline_points=[], _pot_outline=None,
+                         _reposition_mode=False, _outline_mode=False, _outline_points=[], _pot_outline=None,
                          _outline_target="pot", _temperature_quad=None,
                          _settings=SimpleNamespace(overlay_brightness=50))
     dimmed = LevainPeakApp._apply_region_mask(app, frame)
@@ -23,7 +23,7 @@ def test_the_outline_is_drawn_on_the_picture_with_handles_while_editing():
     frame = np.full((200, 300, 3), 200, np.uint8)
     points = [[60, 30], [240, 30], [210, 170], [90, 170]]
     app = SimpleNamespace(_manual_pot_roi=None, _temperature_roi=None, _roi_mode=False,
-                          _outline_mode=True, _outline_points=points, _pot_outline=None,
+                          _reposition_mode=False, _outline_mode=True, _outline_points=points, _pot_outline=None,
                           _outline_target="pot", _temperature_quad=None,
                          _settings=SimpleNamespace(overlay_brightness=50))
     shown = LevainPeakApp._apply_region_mask(app, frame)
@@ -39,7 +39,7 @@ def test_the_thermometer_face_is_outlined_in_its_own_color_and_edited_on_its_own
     pot = ((60, 30), (240, 30), (210, 170), (90, 170))
     face = [[20, 20], [80, 20], [80, 50], [20, 50]]
     app = SimpleNamespace(_manual_pot_roi=None, _temperature_roi=None, _roi_mode=False,
-                          _outline_mode=True, _outline_points=face, _pot_outline=pot,
+                          _reposition_mode=False, _outline_mode=True, _outline_points=face, _pot_outline=pot,
                           _outline_target="thermometer", _temperature_quad=None,
                           _settings=SimpleNamespace(overlay_brightness=50))
     shown = LevainPeakApp._apply_region_mask(app, frame)
@@ -55,7 +55,7 @@ def test_the_hole_in_the_overlay_is_the_outer_box_and_the_brightness_is_a_settin
     outline = ((70, 40), (230, 40), (200, 160), (100, 160))  # inside the box
     def app(brightness):
         return SimpleNamespace(_manual_pot_roi=pot_box, _temperature_roi=None, _roi_mode=False,
-                               _outline_mode=False, _outline_points=[], _pot_outline=outline,
+                               _reposition_mode=False, _outline_mode=False, _outline_points=[], _pot_outline=outline,
                                _outline_target="pot", _temperature_quad=None,
                                _settings=SimpleNamespace(overlay_brightness=brightness))
     shown = LevainPeakApp._apply_region_mask(app(30), frame)
@@ -85,3 +85,19 @@ def test_the_cut_slider_changes_only_the_running_profile_and_auto_puts_the_defau
     assert day._settings.ink_cut_day == 60 and day._settings.ink_cut_infrared == 0.3
     LevainPeakApp._set_ink_cut(day, None, False)
     assert day._settings.ink_cut_day == 40
+
+
+def test_repositioning_moves_resizes_and_keeps_the_mark_in_proportion():
+    from levainpeak.app import LevainPeakApp
+
+    app = SimpleNamespace(
+        _pot_outline=((100, 100), (300, 100), (280, 300), (120, 300)),
+        _manual_pot_roi=(90, 90, 310, 310), _manual_marker_y=250,
+        _reposition_center=(500.0, 400.0), _reposition_scale=2.0, _source_frame_size=(1920, 1080),
+    )
+    outline, roi, marker = LevainPeakApp._repositioned(app)
+    xs, ys = [x for x, _ in outline], [y for _, y in outline]
+    assert (min(xs) + max(xs)) / 2 == 500 and abs(max(xs) - min(xs) - 2 * 200) <= 2
+    assert abs((sum(ys) / 4) - 400) <= 1
+    assert marker == round(400 + 2 * (250 - 200))
+    assert roi[0] < min(xs) and roi[2] > max(xs)
