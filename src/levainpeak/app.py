@@ -59,6 +59,20 @@ def _lowercase_rows(scale: float, thickness: int) -> tuple[int, int]:
     return baseline - int(rows.max()), baseline - int(rows.min())
 
 
+class _SessionTitle(ttk.Label):
+    """The title of the session group: "Sessão · " and then whatever text it is given."""
+
+    def __init__(self, master, text: str = "", **options) -> None:
+        super().__init__(master, text=f"Sessão · {text}", **options)
+
+    def configure(self, cnf=None, **options):
+        if "text" in options:
+            options["text"] = f"Sessão · {options['text']}"
+        return super().configure(cnf, **options)
+
+    config = configure
+
+
 class LevainPeakApp:
     def __init__(self, root: tk.Tk, *, resume_last: bool = False) -> None:
         self.root = root
@@ -298,9 +312,10 @@ class LevainPeakApp:
             level, "Marcar início", self._toggle_marker_mode, width=13
         )
         self.detail_button = button(level, "Ver detecção", self._toggle_detail, width=15)
-        self.mix_time_button = button(
-            session, "Hora da mistura", self._set_mix_time, width=21
-        )
+        # The mix time sits in the group's title; clicking it sets the time.
+        self.mix_time_button = _SessionTitle(session, text="Hora da mistura", cursor="hand2")
+        self.mix_time_button.bind("<Button-1>", lambda _e: self._set_mix_time())
+        session.configure(labelwidget=self.mix_time_button)
         self.session_button = button(
             session, "Iniciar sessão", self._toggle_session, width=15
         )
