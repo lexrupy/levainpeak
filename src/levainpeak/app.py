@@ -467,6 +467,21 @@ class LevainPeakApp:
         self._realigned_at = time.monotonic()
         self._set_message(text)
 
+    def _take_visor_alignment(self) -> None:
+        """The analyzer carried the thermometer area to where the thermometer now is: follow it."""
+        aligned = self._analyzer.visor_aligned if self._analyzer is not None else None
+        if aligned is None:
+            return
+        self._analyzer.visor_aligned = None
+        self._temperature_roi, self._temperature_quad = aligned
+        if self._session_log.active:
+            self._session_log.save_regions(
+                self._manual_pot_roi, self._temperature_roi, outline=self._pot_outline,
+                face_quad=self._temperature_quad,
+            )
+        logging.info("Termômetro reposicionado: a região do visor acompanhou.")
+        self._set_message("Termômetro reposicionado: a região do visor acompanhou.")
+
     def _sync_vessel_bounds(self) -> None:
         """Keep what daylight measured about the vessel in the session file."""
         if self._analyzer is None or not self._session_log.active:
@@ -531,6 +546,7 @@ class LevainPeakApp:
             if self._analyzer is not None:
                 self._analyzer.align_enabled = not (self._roi_mode or self._outline_mode)
                 self._take_alignment()
+                self._take_visor_alignment()
             if status != self._last_stream_status:
                 self._last_stream_status = status
                 if self._measurement is None:

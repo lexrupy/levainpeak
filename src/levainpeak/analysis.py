@@ -12,6 +12,9 @@ from statistics import median
 import cv2
 import numpy as np
 
+from levainpeak.visor_follow import (
+    MIN_SCORE as VISOR_MIN_SCORE, VisorReference, carry_visor, locate_visor, make_visor_reference,
+)
 from levainpeak.alignment import (
     MIN_SCORE, Alignment, PotReference, carry, load_reference, locate, make_reference,
     reference_path, save_reference,
@@ -64,6 +67,12 @@ class ContainerAnalyzer:
         self.alignment_status: str | None = None  # a short text when the pot cannot be found
         self.aligned: tuple | None = None  # (outline, roi, marker_y) the drawing was carried to; the window takes it
         self._references: dict[str, PotReference] = {}
+        self._visor_refs: dict[str, VisorReference] = {}
+        self._visor_region: tuple | None = None  # the area and corners the references were taken for
+        self._visor_candidate: tuple | None = None
+        self._last_visor_follow = 0.0
+        self.visor_aligned: tuple | None = None  # (area, corners) after following the thermometer
+        self.follow_visor = True
         self._reference_generation = 0
         self._last_alignment = 0.0
         self._alignment_candidate: tuple | None = None
@@ -241,6 +250,49 @@ class ContainerAnalyzer:
             self.marker_y = moved[2]
         self.aligned = (moved[0], moved[1], self.marker_y)
 
+    def _follow_visor(self, frame) -> None:
+        """Carry the thermometer area to where the thermometer is now, when the camera was moved."""
+        roi, quad = self.temperature_roi, self.temperature_quad
+        if not self.follow_visor or not self.align_enabled or roi is None:
+            return
+        now = time.monotonic()
+        if now - self._last_visor_follow < 3.0:
+            return
+        self._last_visor_follow = now
+        if self._visor_region != (roi, quad):
+            self._visor_refs.clear()  # drawn again by hand: what is drawn is where it is
+            self._visor_candidate = None
+            self._visor_region = (roi, quad)
+        name = self.profile.name
+        reference = self._visor_refs.get(name)
+        if reference is None:
+            reference = make_visor_reference(frame, roi, quad)
+            if reference is not None:
+                self._visor_refs[name] = reference
+            return
+        found = locate_visor(reference, frame)
+        if found is None or found[2] < VISOR_MIN_SCORE:
+            self._visor_candidate = None
+            return
+        dx, dy, _ = found
+        moved = carry_visor(reference, dx, dy)
+        if moved[0] == roi:
+            self._visor_candidate = None
+            return
+        if max(abs(a - c) for a, c in zip(moved[0], roi, strict=True)) < 3:
+            return
+        # Two searches in a row must agree, so a hand over the thermometer does not move the area.
+        candidate = self._visor_candidate
+        if candidate is None or max(abs(a - c) for a, c in zip(moved[0], candidate[0], strict=True)) > 3:
+            self._visor_candidate = moved
+            return
+        self._visor_candidate = None
+        self.temperature_roi, self.temperature_quad = moved
+        self._visor_region = moved
+        # Moved by us, not redrawn: the reading carries on, and the references stay.
+        self._last_temperature_roi, self._last_temperature_quad = moved
+        self.visor_aligned = moved
+
     def _with_plus(self, reference: PotReference, found: Alignment | None, frame, roi) -> Alignment | None:
         """Use the "+" or "X" on the label, when it is in view, for where the pot is.
 
@@ -311,6 +363,10 @@ class ContainerAnalyzer:
             last_frame_number = frame_number
             try:
                 self._follow_pot(frame)
+            except cv2.error:
+                pass
+            try:
+                self._follow_visor(frame)
             except cv2.error:
                 pass
             # One reading of the regions for the whole pass, and the same key on the result.
