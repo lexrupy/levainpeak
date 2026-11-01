@@ -17,7 +17,8 @@ a fase e a temperatura lida do visor de um termômetro. Grava uma linha de CSV a
 | `filters.py` | `OutlierGate`, `despike`, `valid_after_recovery`. |
 | `sessions.py` | `SessionLog` (CSV e JSON da sessão), `PhaseTracker`. |
 | `forecast.py` | Previsão do dobro, com a temperatura como contexto. |
-| `graph_phases.py` | Fases do gráfico: Aquecimento, Crescimento, Pico, Declínio. |
+| `graph_phases.py` | Fases do gráfico: Aquecimento, Ascensão, Pico, Queda. O estado ao vivo usa Aquecendo, Crescendo, Estabilizando, Em pico,
+  Queda em confirmação e Decaindo. |
 | `debug_view.py` | Janela Diagnóstico (mosaico ao vivo das etapas da detecção). |
 | `floating.py` | Mover, redimensionar pela borda e fechar com Esc nos popups. |
 | `settings.py` | Configurações (`data/settings.json`). |

@@ -62,9 +62,11 @@ const dataHora = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-di
 const CLASSE_DA_FASE = {
   'Aquecimento': 'faixa-fase-inicial',
   'Fase inicial': 'faixa-fase-inicial', // nome antigo, de gráficos já enviados
-  'Crescimento': 'faixa-crescimento',
+  'Ascensão': 'faixa-crescimento',
+  'Crescimento': 'faixa-crescimento', // nome antigo, de gráficos já enviados
   'Pico': 'faixa-pico',
-  'Declínio': 'faixa-declinio',
+  'Queda': 'faixa-declinio',
+  'Declínio': 'faixa-declinio', // nome antigo, de gráficos já enviados
 };
 
 function smoothPath(pontos) {

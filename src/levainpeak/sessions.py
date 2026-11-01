@@ -319,12 +319,12 @@ class SessionLog:
 class PhaseTracker:
     """Detects sustained rise, a probable plateau peak, then confirmed decline."""
 
-    WAITING = "Aquecimento"
+    WAITING = "Aquecendo"
     RISING = "Crescendo"
     PLATEAU = "Estabilizando"
-    PEAK = "Pico provável"
+    PEAK = "Em pico"
     FALL_CHECK = "Queda em confirmação"
-    FALLING = "Degradando"
+    FALLING = "Decaindo"
 
     def __init__(
         self,
