@@ -38,7 +38,7 @@ from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, 
                                  INK_CUT_INFRARED, MAX_OVERLAY_BRIGHTNESS,
                                  MAX_PHONE_SECONDS, MAX_RECORD_SECONDS, MIN_OVERLAY_BRIGHTNESS,
                                  MIN_PHONE_SECONDS, MIN_RECORD_SECONDS,
-                                 ARTIFACT_MINUTES, LAMP_MINUTES, MARK_SHAPES, PEAK_MINUTES, Settings, load_settings, save_settings)
+                                 ARTIFACT_MINUTES, LAMP_MINUTES, MARK_SHAPES, PEAK_MINUTES, ROTATIONS, Settings, load_settings, save_settings)
 from levainpeak.stream import RtspStream
 from levainpeak.vision import (ContainerMeasurement, draw_measurement,
                                set_initial_marker,
@@ -152,6 +152,7 @@ class LevainPeakApp:
 
         try:
             self._stream = RtspStream(load_camera_config())
+            self._stream.rotation = self._settings.rotation
             self._stream.start()
             self._analyzer = ContainerAnalyzer(self._stream)
             self._analyzer.ink_cut_infrared = self._settings.ink_cut_infrared
@@ -204,6 +205,13 @@ class LevainPeakApp:
             label='Detectar marca "+" ou "X" no pote (alinha a altura)',
             variable=self._mark_var, command=self._toggle_mark_alignment,
         )
+        self._video_menu.add_separator()
+        self._rotation_var = tk.IntVar(value=self._settings.rotation)
+        for degrees in ROTATIONS:
+            self._video_menu.add_radiobutton(
+                label="Imagem sem girar" if degrees == 0 else f"Girar a imagem {degrees}°",
+                variable=self._rotation_var, value=degrees, command=self._choose_rotation,
+            )
         self._shape_var = tk.StringVar(value=self._settings.mark_shape)
         self._video_menu.add_separator()
         for shape in MARK_SHAPES:
@@ -850,6 +858,15 @@ class LevainPeakApp:
             a, b, c = polygon[index], polygon[(index + 1) % len(polygon)], polygon[(index + 2) % len(polygon)]
             signs.append(np.sign((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])))
         return abs(sum(signs)) == len(signs)  # all turns the same way: convex, not crossed
+
+    def _choose_rotation(self) -> None:
+        self._settings = replace(self._settings, rotation=self._rotation_var.get()).clamped()
+        if self._stream is not None:
+            self._stream.rotation = self._settings.rotation
+        try:
+            save_settings(self._settings)
+        except OSError:
+            logging.exception("Falha ao salvar a rotação da imagem")
 
     def _choose_mark_shape(self) -> None:
         self._settings = replace(self._settings, mark_shape=self._shape_var.get()).clamped()

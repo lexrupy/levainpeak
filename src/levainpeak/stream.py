@@ -19,6 +19,7 @@ class RtspStream:
         self._status = "Aguardando conexão"
         self._frame_number = 0
         self._frame: np.ndarray | None = None
+        self.rotation = 0  # degrees clockwise, a multiple of 90; applied to every frame as it arrives
         self._thread = threading.Thread(target=self._run, name="rtsp-reader", daemon=True)
 
     @property
@@ -41,6 +42,9 @@ class RtspStream:
             self._status = status
 
     def _publish(self, frame: np.ndarray) -> None:
+        turns = (self.rotation // 90) % 4
+        if turns:
+            frame = np.ascontiguousarray(np.rot90(frame, -turns))
         with self._lock:
             self._frame = frame
             self._frame_number += 1
