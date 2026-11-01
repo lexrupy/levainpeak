@@ -54,7 +54,7 @@ def test_the_chart_is_small_and_keeps_the_newest_reading(tmp_path):
 def test_the_chart_has_the_phases_in_the_graph_names(tmp_path):
     chart = chart_payload(prepare_graph_data(write_session(tmp_path, growth(1500))))
     names = {phase[0] for phase in chart["fases"]}
-    assert names <= {"Aquecimento", "Ascensão", "Pico", "Queda"} and names
+    assert names <= {"Aquecimento", "Crescimento", "Pico", "Decaimento"} and names
     assert all(start <= end for _, start, end in chart["fases"])
 
 
