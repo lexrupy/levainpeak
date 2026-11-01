@@ -39,7 +39,12 @@ def prepare_graph_data(path: Path) -> dict:
         return {"too_few": True, "session_name": session_name}
     # Drop dips and peaks that leave the trend and come back (for example the
     # surface being read at the dark band for a few minutes).
-    cleaned = despike([sample[1] for sample in samples])
+    # The heating lamp comes on for up to ten minutes and shifts the picture's brightness; a
+    # departure that returns within that time is an artifact. The window is in time, not samples.
+    steps = sorted((b[0] - a[0]).total_seconds() for a, b in zip(samples, samples[1:]) if b[0] > a[0])
+    step = steps[len(steps) // 2] if steps else 10.0
+    window = max(80, int(round(DESPIKE_WINDOW_SECONDS / max(1.0, step))))
+    cleaned = despike([sample[1] for sample in samples], window=window)
     # A later reading that rises above an earlier level proves the readings
     # under that level in between were wrong: rebuild them from the valid
     # neighbours.
@@ -105,6 +110,7 @@ def prepare_graph_data(path: Path) -> dict:
     }
 
 
+DESPIKE_WINDOW_SECONDS = 1500  # a departure that returns within ~12 minutes (about half of this) is dropped
 VOLUME_SCALES = ("auto", "máximo", "capacidade")
 
 

@@ -60,3 +60,21 @@ def test_the_chart_has_the_phases_in_the_graph_names(tmp_path):
 
 def test_the_chart_is_none_while_there_is_too_little_data(tmp_path):
     assert chart_payload(prepare_graph_data(write_session(tmp_path, [0.2]))) is None
+
+
+def test_a_nine_minute_departure_that_returns_is_dropped_as_a_lamp_artifact(tmp_path):
+    import csv
+    from datetime import datetime, timedelta, timezone
+
+    start = datetime(2026, 11, 1, 1, 0, tzinfo=timezone(timedelta(hours=-3)))
+    path = tmp_path / "s.csv"
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["session_id", "timestamp", "mix_time", "temperature_c", "volume_fraction",
+                         "initial_volume_fraction", "growth_factor", "phase", "session_name"])
+        for i in range(1200):  # one sample every 10 s
+            volume = 0.39 + 0.00002 * i + (0.11 if 500 <= i < 554 else 0.0)  # +0.11 for 9 minutes
+            writer.writerow(["s", (start + timedelta(seconds=10 * i)).isoformat(), "", "26.0",
+                             f"{volume:.6f}", "0.35", "1.1", "Aquecimento", "teste"])
+    samples = prepare_graph_data(path)["samples"]
+    assert max(volume for _, volume, _ in samples) < 0.45
