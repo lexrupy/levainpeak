@@ -646,9 +646,17 @@ class LevainPeakApp:
                                 else self._measurement.volume_fraction
                             )
                             self._reset_tracking(self._session_baseline)
-                        self._measurement = set_initial_volume_reference(
-                            self._measurement, self._session_baseline
-                        )
+                        live = self._measurement.initial_volume_fraction
+                        if self._manual_marker_y is not None and live is not None:
+                            # The mark is read in the same frame as the volume. A level stored
+                            # earlier (or read back from the CSV) was made with another shift.
+                            if abs(live - self._session_baseline) > 1e-6:
+                                self._session_baseline = live
+                                self._phase_tracker.set_baseline(live)
+                        else:
+                            self._measurement = set_initial_volume_reference(
+                                self._measurement, self._session_baseline
+                            )
                     self._update_session(self._measurement)
                     self._update_measurement_labels()
                     analysis_changed = True
