@@ -44,6 +44,7 @@ ok('GET sem token é recusado', () => assert.strictEqual(get({}).ok, false));
 ok('POST com token errado é recusado', () => assert.strictEqual(post({ token: 'x' }).erro, 'token inválido'));
 ok('POST com JSON inválido não quebra', () => assert.strictEqual(post('{oops').erro, 'JSON inválido'));
 ok('token curto demais nunca vale', () => { props.TOKEN = 'curto'; assert.strictEqual(post({ token: 'curto' }).ok, false); props.TOKEN = T; });
+ok('a versão do código é consultável pela implantação', () => { const r = get({ token: T, o: 'versao' }); assert.ok(r.ok && /^\d{4}-\d{2}-\d{2}\.\d+/.test(r.versao)); assert.strictEqual(get({ token: 'errado', o: 'versao' }).ok, false); });
 ok('painel vazio responde sem erro', () => { const r = get({ token: T, o: 'painel' }); assert.ok(r.ok && r.ao_vivo.vazio && r.grafico.vazio && r.snapshot.vazio); });
 ok('POST completo grava pontos, ao vivo, gráfico e snapshot', () => {
   const r = post({ token: T, session: 'Bradok', sent_at: '2026-10-31T00:05:00-03:00',

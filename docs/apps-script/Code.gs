@@ -19,6 +19,9 @@
  *       | ao_vivo | serie&limite=1500 | snapshot
  */
 
+/** Sobe a cada mudança deste arquivo: confira na implantação com ?o=versao (ou rodando versao() no editor). */
+const VERSAO = '2026-11-01.1 limpeza-automatica';
+
 const ABA_SERIE = 'serie';
 const ABA_AO_VIVO = 'ao_vivo';
 const ABA_SNAPSHOT = 'snapshot';
@@ -92,7 +95,13 @@ function doGet(e) {
   if (o === 'ao_vivo') return resposta_(lerAoVivo_());
   if (o === 'serie') return resposta_(lerSerie_(Math.min(Number(p.limite) || 1500, 5000)));
   if (o === 'snapshot') return resposta_(lerSnapshot_());
+  if (o === 'versao') return resposta_({ ok: true, versao: VERSAO });
   return resposta_({ ok: false, erro: 'parâmetro o desconhecido' });
+}
+
+/** Rode no editor para ver a versão deste código; a implantação responde o mesmo em ?o=versao. */
+function versao() {
+  return VERSAO;
 }
 
 // ---------------------------------------------------------------- escrita
