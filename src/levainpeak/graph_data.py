@@ -53,7 +53,9 @@ def prepare_graph_data(path: Path) -> dict:
     # Phases are recomputed from the cleaned readings, so the shading does
     # not inherit labels that were produced while a wrong reading was live.
     graph_tracker = PhaseTracker(filter_dips=False)  # the readings are already clean
-    graph_tracker.reset(baseline if baseline and baseline > 0 else cleaned[0])
+    # The mark may sit below the level the session started at (placed late, or the dough already
+    # up): the rise to judge is the one since the first reading, not since the mark.
+    graph_tracker.reset(max(baseline, cleaned[0]) if baseline and baseline > 0 else cleaned[0])
     origin = samples[0][0]
     phases = [
         graph_tracker.update((stamp - origin).total_seconds(), volume)
