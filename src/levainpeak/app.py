@@ -872,6 +872,10 @@ class LevainPeakApp:
             self._session_baseline = None
             self._reset_tracking()
             self._session_log.save_regions(roi, self._temperature_roi, outline=outline)
+            # A new contour reads the same levain at another level: join the series at the last one logged.
+            if self._analyzer is not None and self._session_log.last_volume is not None:
+                self._analyzer.anchor_volume = self._session_log.last_volume
+                self._analyzer.rejoin()
         self._set_message("Contorno do pote definido. Procurando o nível do levain dentro dele.")
 
     def _apply_face_quad(self) -> None:
