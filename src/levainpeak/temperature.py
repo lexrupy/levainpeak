@@ -263,7 +263,11 @@ def _inspect_face(
         binary = _infrared_ink(gray)
     else:
         percentile = 40 if ink_cut is None or not drawn else ink_cut
-        threshold = int(np.clip(np.percentile(gray, percentile), 100, 150))
+        # Kept inside the face's own range: a face under a dim lamp has a dark background
+        # (about 90) that a fixed floor of 100 would turn entirely into ink.
+        dark, bright = np.percentile(gray, (5, 95))
+        margin = 0.15 * (bright - dark)
+        threshold = int(np.clip(np.percentile(gray, percentile), dark + margin, bright - margin))
         binary = (gray < threshold).astype(np.uint8) * 255
     binary = _drop_edge_ink(binary)
     binary = cv2.resize(binary, None, fx=8, fy=8, interpolation=cv2.INTER_NEAREST)
