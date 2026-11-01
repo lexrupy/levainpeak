@@ -52,6 +52,9 @@ class SessionLog:
         self.vessel_bounds: dict[str, tuple[int, int]] = {}
         # Row (frame pixels) of the initial-level mark the user placed by hand.
         self.manual_marker_y: int | None = None
+        # Added to every measured volume of this session: joins the series across a
+        # change in how the pot is read (redrawn contour) that would show as a step.
+        self.volume_offset: float = 0.0
         # Version of the volume measurement the saved initial level came from.
         self.geometry: int = GEOMETRY_VERSION
 
@@ -212,6 +215,7 @@ class SessionLog:
             self.face_quad = tuple((int(x), int(y)) for x, y in quad) if quad else None
             marker = raw.get("marker_y")
             self.manual_marker_y = None if marker is None else int(marker)
+            self.volume_offset = float(raw.get("volume_offset") or 0.0)
             self.geometry = int(raw.get("geometry", 1))  # files from before this existed are version 1
         else:
             self.regions = {"pot": None, "thermometer": None}
@@ -219,6 +223,7 @@ class SessionLog:
             self.face_quad = None
             self.vessel_bounds = {}
             self.manual_marker_y = None
+            self.volume_offset = 0.0
             self.geometry = GEOMETRY_VERSION
         with path.open("r", newline="", encoding="utf-8") as source:
             self._columns = next(csv.reader(source), [])

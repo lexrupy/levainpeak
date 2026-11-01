@@ -26,6 +26,7 @@ class ContainerAnalyzer:
     def __init__(self, stream: RtspStream, interval_seconds: float = 0.5) -> None:
         self.stream = stream
         self.roi: tuple[int, int, int, int] | None = None
+        self.volume_offset = 0.0  # joins the session's series across a redrawn contour
         self.outline: tuple[tuple[int, int], ...] | None = None  # the pot's inner contour drawn by the user
         self.empty_pot: ContainerMeasurement | None = None  # outline known, no levain in it (whole-object reads only)
         self.temperature_roi: tuple[int, int, int, int] | None = None
@@ -288,6 +289,7 @@ class ContainerAnalyzer:
         else:
             volume_fraction = float(median(sample.volume_fraction for sample in history))
             volume_profile = measurement.volume_below_profile
+        volume_fraction += self.volume_offset
 
         edge_profiles = [
             np.stack(

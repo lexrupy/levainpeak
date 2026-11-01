@@ -1230,6 +1230,9 @@ class LevainPeakApp:
                 return
             self._session_name = name.strip() or suggested_name
             session_id = self._session_log.start(self._mix_time, self._session_name)
+            self._session_log.volume_offset = 0.0
+            if self._analyzer is not None:
+                self._analyzer.volume_offset = 0.0
             self._session_log.save_regions(self._manual_pot_roi, self._temperature_roi, outline=self._pot_outline, face_quad=self._temperature_quad)
             self._persist_marker()
         except OSError as exc:
@@ -1811,6 +1814,7 @@ class LevainPeakApp:
             self._analyzer.roi = self._manual_pot_roi
             self._analyzer.temperature_roi = self._temperature_roi
             self._analyzer.vessel_bounds = dict(self._session_log.vessel_bounds)
+            self._analyzer.volume_offset = self._session_log.volume_offset
         self._manual_marker_y = self._session_log.manual_marker_y
         # Resuming by itself at start-up (--resume): regions marked since that session was
         # last saved are newer than the ones in its file, so they win. Picking a session
