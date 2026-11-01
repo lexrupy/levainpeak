@@ -38,7 +38,7 @@ from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, 
                                  INK_CUT_INFRARED, MAX_OVERLAY_BRIGHTNESS,
                                  MAX_PHONE_SECONDS, MAX_RECORD_SECONDS, MIN_OVERLAY_BRIGHTNESS,
                                  MIN_PHONE_SECONDS, MIN_RECORD_SECONDS,
-                                 ARTIFACT_MINUTES, MARK_SHAPES, PEAK_MINUTES, Settings, load_settings, save_settings)
+                                 ARTIFACT_MINUTES, LAMP_MINUTES, MARK_SHAPES, PEAK_MINUTES, Settings, load_settings, save_settings)
 from levainpeak.stream import RtspStream
 from levainpeak.vision import (ContainerMeasurement, draw_measurement,
                                set_initial_marker,
@@ -139,6 +139,7 @@ class LevainPeakApp:
             self._analyzer.ink_cut_infrared = self._settings.ink_cut_infrared
             self._analyzer.ink_cut_day = self._settings.ink_cut_day
             self._analyzer.use_mark = self._settings.mark_alignment
+            self._analyzer.lamp_hold_seconds = self._settings.lamp_minutes * 60.0
             self._analyzer.start()
             self._set_message("Iniciando conexão com a câmera…")
         except (FileNotFoundError, ValueError) as exc:
@@ -1555,12 +1556,16 @@ class LevainPeakApp:
         phases.pack(fill="x", pady=(12, 0))
         self._peak_var = tk.StringVar(value=str(self._settings.peak_minutes))
         self._artifact_var = tk.StringVar(value=str(self._settings.artifact_minutes))
+        self._lamp_var = tk.StringVar(value=str(self._settings.lamp_minutes))
         for row, (label, variable, limits, note) in enumerate((
             ("Pico: leituras estáveis por", self._peak_var, PEAK_MINUTES,
              "Quanto tempo o volume fica parado no topo até o app dizer \"Em pico\"."),
             ("Artefato: volta em até", self._artifact_var, ARTIFACT_MINUTES,
              "Uma mudança que volta ao nível anterior dentro desse tempo (lâmpada, pote retirado) é descartada;"
              " uma queda que não volta passa a valer depois dele."),
+            ("Lâmpada: segurar o volume por", self._lamp_var, LAMP_MINUTES,
+             "Quando o brilho do quadro muda de repente (a lâmpada liga ou desliga), o volume fica no nível de"
+             " antes por esse tempo, porque a superfície é lida errado enquanto a luz muda. 0 desliga."),
         )):
             ttk.Label(phases, text=label).grid(row=row * 2, column=0, sticky="w")
             box_ = ttk.Spinbox(
@@ -1650,6 +1655,10 @@ class LevainPeakApp:
             artifact_minutes = int(float(self._artifact_var.get()))
         except ValueError:
             artifact_minutes = self._settings.artifact_minutes
+        try:
+            lamp_minutes = int(float(self._lamp_var.get()))
+        except ValueError:
+            lamp_minutes = self._settings.lamp_minutes
         # replace(), not a new Settings: the options this tab does not show (graph scales,
         # the display's black/white cuts) must survive a change here.
         self._settings = replace(
@@ -1661,12 +1670,16 @@ class LevainPeakApp:
             overlay_brightness=int(float(self._overlay_var.get())),
             peak_minutes=peak_minutes,
             artifact_minutes=artifact_minutes,
+            lamp_minutes=lamp_minutes,
         ).clamped()
         self._overlay_var.set(self._settings.overlay_brightness)
         self._interval_var.set(str(self._settings.record_interval_seconds))
         self._phone_interval_var.set(str(self._settings.phone_interval_seconds))
         self._peak_var.set(str(self._settings.peak_minutes))
         self._artifact_var.set(str(self._settings.artifact_minutes))
+        self._lamp_var.set(str(self._settings.lamp_minutes))
+        if self._analyzer is not None:
+            self._analyzer.lamp_hold_seconds = self._settings.lamp_minutes * 60.0
         self._phase_tracker.plateau_seconds = self._settings.peak_minutes * 60
         self._phase_tracker.artifact_seconds = self._settings.artifact_minutes * 60
         self._session_log.sample_seconds = self._settings.record_interval_seconds

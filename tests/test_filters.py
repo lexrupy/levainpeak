@@ -108,3 +108,28 @@ def test_a_big_temperature_jump_that_holds_for_minutes_is_still_rejected():
     assert not any(gate.accept(43.6) for _ in range(BIG_TEMPERATURE_CONFIRMATIONS - 1))
     assert gate.accept(43.6)  # a swapped thermometer is adopted in the end
     assert gate.accept(46.0)  # and small steps after it are fine
+
+
+def test_a_sudden_change_of_brightness_holds_for_the_hold_time_and_a_second_one_extends_it():
+    from levainpeak.filters import LampWatch
+
+    watch = LampWatch()
+
+    def run(start, end, brightness):
+        return [watch.update(float(t), brightness, 600) for t in range(start, end, 2)]
+
+    assert not any(run(0, 60, 100.0))
+    assert watch.update(60.0, 141.0, 600)  # the lamp comes on
+    assert all(run(62, 300, 141.0))
+    assert run(300, 400, 100.0)[-1]  # and goes off: held again from there
+    assert all(run(400, 900, 100.0))
+    assert not any(run(1000, 1100, 100.0))
+
+
+def test_slow_brightness_drift_and_a_zero_hold_never_hold():
+    from levainpeak.filters import LampWatch
+
+    watch = LampWatch()
+    assert not any(watch.update(float(t), 100.0 + t * 0.01, 600) for t in range(0, 600, 2))
+    other = LampWatch()
+    assert not any(other.update(float(t), 100.0 if t < 40 else 150.0, 0) for t in range(0, 100, 2))

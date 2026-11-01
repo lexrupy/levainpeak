@@ -21,6 +21,7 @@ INK_CUT_DAY = (20, 60)  # brightness percentile of the face below which a pixel 
 DEFAULT_INK_CUT_INFRARED = 0.30  # what "auto" puts back
 DEFAULT_INK_CUT_DAY = 40
 PEAK_MINUTES = (3, 60)  # how long the readings stay level before the levain is called at its peak
+LAMP_MINUTES = (0, 60)  # how long the volume is held after the lamp changes the picture; 0 turns it off
 ARTIFACT_MINUTES = (3, 60)  # a departure that comes back within this is a lamp or a lifted pot, not the levain
 
 
@@ -41,6 +42,7 @@ class Settings:
     mark_shape: str = "círculo"  # drawn around the followed mark: "círculo" or "quadrado"
     peak_minutes: int = 10
     artifact_minutes: int = 12
+    lamp_minutes: int = 10
     mark_alignment: bool = False  # follow the pot's height by the "+" or "X" on its label
 
     def clamped(self) -> "Settings":
@@ -64,6 +66,7 @@ class Settings:
             ink_cut_day=min(INK_CUT_DAY[1], max(INK_CUT_DAY[0], int(self.ink_cut_day))),
             peak_minutes=min(PEAK_MINUTES[1], max(PEAK_MINUTES[0], int(self.peak_minutes))),
             artifact_minutes=min(ARTIFACT_MINUTES[1], max(ARTIFACT_MINUTES[0], int(self.artifact_minutes))),
+            lamp_minutes=min(LAMP_MINUTES[1], max(LAMP_MINUTES[0], int(self.lamp_minutes))),
             mark_alignment=bool(self.mark_alignment),
             mark_shape=self.mark_shape if self.mark_shape in MARK_SHAPES else "círculo",
         )
@@ -86,6 +89,7 @@ def load_settings(path: Path = SETTINGS_PATH) -> Settings:
             ink_cut_day=int(data.get("ink_cut_day", defaults.ink_cut_day)),
             peak_minutes=int(data.get("peak_minutes", defaults.peak_minutes)),
             artifact_minutes=int(data.get("artifact_minutes", defaults.artifact_minutes)),
+            lamp_minutes=int(data.get("lamp_minutes", defaults.lamp_minutes)),
             mark_alignment=bool(data.get("mark_alignment", defaults.mark_alignment)),
             mark_shape=str(data.get("mark_shape", defaults.mark_shape)),
         ).clamped()

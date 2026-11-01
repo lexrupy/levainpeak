@@ -50,6 +50,36 @@ class OutlierGate:
         return False
 
 
+class LampWatch:
+    """Notices the lamp: a sudden change in how bright the whole picture is.
+
+    The reference is the median brightness a little before; a reading that departs from it by more
+    than ``jump`` (a fraction) starts a hold of ``hold_seconds``, and every further change extends it
+    (the lamp going off is another change). ``update`` tells whether the picture is held now.
+    """
+
+    def __init__(self, jump: float = 0.12, window: float = 90.0, settle: float = 10.0) -> None:
+        self.jump, self.window, self.settle = jump, window, settle
+        self._samples: list[tuple[float, float]] = []
+        self.held_until = float("-inf")
+
+    def reset(self) -> None:
+        self._samples.clear()
+        self.held_until = float("-inf")
+
+    def update(self, now: float, brightness: float, hold_seconds: float) -> bool:
+        from statistics import median
+
+        self._samples = [item for item in self._samples if now - item[0] <= self.window]
+        before = [value for stamp, value in self._samples if now - stamp >= self.settle]
+        if hold_seconds > 0 and len(before) >= 3:
+            reference = median(before)
+            if reference > 1 and abs(brightness - reference) / reference > self.jump:
+                self.held_until = max(self.held_until, now + hold_seconds)
+        self._samples.append((now, brightness))
+        return hold_seconds > 0 and now < self.held_until
+
+
 def despike(
     values: list[float],
     *,

@@ -19,7 +19,7 @@ from levainpeak.alignment import (
     MIN_SCORE, Alignment, PotReference, carry, load_reference, locate, make_reference,
     reference_path, save_reference,
 )
-from levainpeak.filters import OutlierGate
+from levainpeak.filters import LampWatch, OutlierGate
 from levainpeak.target import find_plus
 from levainpeak.profiles import DAY, INFRARED, CaptureProfile, ProfileSelector
 from levainpeak.stream import RtspStream
@@ -73,6 +73,11 @@ class ContainerAnalyzer:
         self._last_visor_follow = 0.0
         self.visor_aligned: tuple | None = None  # (area, corners) after following the thermometer
         self.follow_visor = True
+        self.lamp_hold_seconds = 600.0  # how long the volume is held after the lamp changes the picture
+        self._lamp = LampWatch()
+        self._recent: deque = deque()  # (time, stable measurement) of the last two minutes
+        self.lamp_held = False
+        self._frozen: ContainerMeasurement | None = None
         self._reference_generation = 0
         self._last_alignment = 0.0
         self._alignment_candidate: tuple | None = None
@@ -404,9 +409,23 @@ class ContainerAnalyzer:
             self.empty_pot = measurement if measurement is not None and measurement.empty else None
             if self.empty_pot is not None:
                 measurement = None
-            measurement = self._stabilize_measurement(measurement)
-            self._learn_vessel_bounds(measurement)
             now = time.monotonic()
+            # The lamp changes how the surface looks for minutes: keep the level it had before.
+            brightness = float(frame[::8, ::8].mean())
+            held = self._lamp.update(now, brightness, self.lamp_hold_seconds)
+            if held and self.lamp_held is False:
+                older = [item for stamp, item in self._recent if now - stamp >= 20.0]
+                self._frozen = older[-1] if older else None
+            self.lamp_held = held
+            if held and self._frozen is not None:
+                measurement = self._frozen
+            else:
+                measurement = self._stabilize_measurement(measurement)
+                if measurement is not None and not held:
+                    self._recent.append((now, measurement))
+                    while self._recent and now - self._recent[0][0] > 120.0:
+                        self._recent.popleft()
+            self._learn_vessel_bounds(measurement)
             temperature_roi, temperature_quad = key[2], key[3]
             if temperature_roi != self._last_temperature_roi or temperature_quad != self._last_temperature_quad:
                 self._last_temperature_roi = temperature_roi
