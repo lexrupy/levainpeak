@@ -280,7 +280,76 @@ function saveConfig() {
   load();
 }
 
+// ---------------------------------------------------------------- conexão (ver, copiar, editar)
+
+function copyText(texto, campo) {
+  const pronto = () => { $('con-aviso').textContent = 'Copiado.'; };
+  const falhou = () => {
+    // Sem a área de transferência (página sem https): seleciona o campo para copiar à mão.
+    if (campo) {
+      const tipo = campo.type;
+      campo.type = 'text';
+      campo.focus();
+      campo.select();
+      try { if (document.execCommand('copy')) { campo.type = tipo; pronto(); return; } } catch (erro) { /* segue */ }
+      campo.type = tipo;
+    }
+    $('con-aviso').textContent = 'Não consegui copiar sozinho: segure o campo e copie.';
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(texto).then(pronto, falhou);
+  else falhou();
+}
+
+function openConnection() {
+  const cfg = store.get('cfg') || { u: '', t: '' };
+  $('con-url').value = cfg.u;
+  $('con-token').value = cfg.t;
+  $('con-token').type = 'password';
+  $('con-mostrar').textContent = 'Mostrar';
+  $('con-aviso').textContent = '';
+  $('conexao').showModal();
+}
+
+function closeConnection() {
+  $('con-token').value = '';  // o token não fica no campo depois de fechar
+  $('con-token').type = 'password';
+  $('conexao').close();
+}
+
+function setupConnection() {
+  $('conexao-abrir').addEventListener('click', openConnection);
+  $('con-cancelar').addEventListener('click', closeConnection);
+  $('conexao').addEventListener('cancel', () => { $('con-token').value = ''; });
+  $('con-mostrar').addEventListener('click', () => {
+    const mostrar = $('con-token').type === 'password';
+    $('con-token').type = mostrar ? 'text' : 'password';
+    $('con-mostrar').textContent = mostrar ? 'Ocultar' : 'Mostrar';
+  });
+  document.querySelectorAll('[data-copiar]').forEach((botao) => {
+    botao.addEventListener('click', () => {
+      const campo = $(botao.dataset.copiar);
+      copyText(campo.value, campo);
+    });
+  });
+  $('con-link').addEventListener('click', () => {
+    const u = $('con-url').value.trim();
+    const t = $('con-token').value.trim();
+    if (!u || !t) { $('con-aviso').textContent = 'Preencha o endereço e o token primeiro.'; return; }
+    copyText(`${location.origin}${location.pathname}#u=${encodeURIComponent(u)}&t=${encodeURIComponent(t)}`, null);
+  });
+  $('con-salvar').addEventListener('click', () => {
+    const u = $('con-url').value.trim();
+    const t = $('con-token').value.trim();
+    if (!u || !t) { $('con-aviso').textContent = 'Preencha o endereço e o token.'; return; }
+    store.set('cfg', { u, t });
+    closeConnection();
+    showWarning('');
+    load();
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+  setupConnection();
   $('atualizar').addEventListener('click', load);
   $('cfg-salvar').addEventListener('click', saveConfig);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });

@@ -139,3 +139,31 @@ figcaption { color: var(--suave); font-size: 0.85rem; margin-bottom: 6px; }
   min-height: 44px;
 }
 code { font-size: 0.9em; }
+
+.botoes { display: flex; gap: 8px; }
+#conexao-abrir { min-width: 44px; font-size: 1.2rem; padding: 0; }
+
+dialog#conexao {
+  width: min(92vw, 460px);
+  color: var(--texto);
+  background: var(--papel);
+  border: 1px solid var(--linha);
+  border-radius: 14px;
+  padding: 16px;
+}
+dialog#conexao::backdrop { background: rgba(0, 0, 0, 0.45); }
+#conexao-form { display: grid; gap: 10px; }
+#conexao-form label { display: grid; gap: 4px; font-size: 0.85rem; color: var(--suave); }
+#conexao-form .linha { display: flex; gap: 8px; align-items: center; }
+#conexao-form .linha.fim { justify-content: flex-end; }
+#conexao-form input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: var(--texto);
+  background: var(--fundo);
+  border: 1px solid var(--linha);
+  border-radius: 8px;
+  padding: 10px;
+  min-height: 44px;
+}

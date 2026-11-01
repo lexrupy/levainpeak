@@ -17,7 +17,10 @@
         <h1 id="sessao">LevainPeak</h1>
         <p id="subtitulo">Carregando…</p>
       </div>
-      <button id="atualizar" type="button" aria-label="Atualizar agora">↻</button>
+      <div class="botoes">
+        <button id="conexao-abrir" type="button" aria-label="Conexão com a planilha">⚙</button>
+        <button id="atualizar" type="button" aria-label="Atualizar agora">↻</button>
+      </div>
     </header>
 
     <p id="aviso" role="status" hidden></p>
@@ -51,6 +54,29 @@
       <p id="rodape" class="nota"></p>
     </section>
   </main>
+
+  <dialog id="conexao" aria-labelledby="conexao-titulo">
+    <form method="dialog" id="conexao-form">
+      <h2 id="conexao-titulo">Conexão com a planilha</h2>
+      <p class="nota">Ficam só neste aparelho. Copie para configurar outro, ou edite.</p>
+      <label>Endereço (<code>/exec</code>)
+        <span class="linha"><input id="con-url" type="url" autocomplete="off" spellcheck="false">
+        <button type="button" data-copiar="con-url">Copiar</button></span>
+      </label>
+      <label>Token
+        <span class="linha"><input id="con-token" type="password" autocomplete="off" spellcheck="false">
+        <button type="button" id="con-mostrar">Mostrar</button>
+        <button type="button" data-copiar="con-token">Copiar</button></span>
+      </label>
+      <button type="button" id="con-link">Copiar link de configuração</button>
+      <p class="nota">O link abre o painel já ligado a esta planilha, mas contém o token: use só para os seus aparelhos.</p>
+      <p id="con-aviso" class="nota" role="status"></p>
+      <div class="linha fim">
+        <button type="button" id="con-cancelar">Cancelar</button>
+        <button type="button" id="con-salvar">Salvar</button>
+      </div>
+    </form>
+  </dialog>
   <script src="painel.js"></script>
 </body>
 </html>
