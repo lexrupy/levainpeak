@@ -1913,6 +1913,8 @@ class LevainPeakApp:
                 self._last_known_temperature = last_temperature
                 if self._analyzer is not None:
                     self._analyzer.anchor_temperature = last_temperature
+            if self._analyzer is not None and rows:
+                self._analyzer.anchor_volume = float(rows[-1]["volume_fraction"])
         except (KeyError, ValueError, IndexError):
             self._reset_tracking()
             self._session_baseline = None

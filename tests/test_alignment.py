@@ -85,3 +85,19 @@ def test_the_analyzer_moves_the_drawing_after_two_agreeing_searches(tmp_path, mo
     cv2.rectangle(covered, (250, 150), (800, 650), (40, 40, 40), -1)
     look(covered)
     assert analyzer.alignment_status == "pote não localizado" and analyzer.outline == outline
+
+
+def test_the_volume_is_joined_when_the_camera_profile_changes_and_when_a_session_resumes():
+    from levainpeak.analysis import ContainerAnalyzer
+    from levainpeak.profiles import DAY, INFRARED
+
+    analyzer = ContainerAnalyzer(stream=None)
+    analyzer.anchor_volume = 0.657  # last row of the resumed session
+    analyzer.profile = INFRARED
+    assert abs(analyzer._join_volume(0.600) - 0.657) < 1e-9  # first reading joins the CSV
+    assert abs(analyzer._join_volume(0.610) - 0.667) < 1e-9  # then it follows the levain
+    analyzer.profile = DAY  # lamp on: the same levain reads 0.05 higher
+    assert abs(analyzer._join_volume(0.665) - 0.667) < 1e-9
+    assert abs(analyzer._join_volume(0.675) - 0.677) < 1e-9
+    analyzer.profile = INFRARED
+    assert abs(analyzer._join_volume(0.620) - 0.677) < 1e-9

@@ -41,6 +41,13 @@ class ContainerAnalyzer:
         self.marker_y: int | None = None  # the hand-placed mark, carried along with the pot
         # Following the pot when it is moved: one reference per camera profile (the
         # infrared and day pictures do not look alike), made when the drawing is set.
+        # The volume reads a little differently in infrared and by day (the foam is opaque
+        # in one and clear in the other). At every change of profile, and when a session is
+        # resumed, the new reading is joined to the last value instead of stepping.
+        self.anchor_volume: float | None = None  # last logged volume of a resumed session
+        self._join_offset = 0.0
+        self._joined_profile: str | None = None
+        self._last_volume: float | None = None
         self.align_enabled = True
         self.alignment_status: str | None = None  # a short text when the pot cannot be found
         self.aligned: tuple | None = None  # (outline, roi, marker_y) the drawing was carried to; the window takes it
@@ -110,6 +117,17 @@ class ContainerAnalyzer:
         if self._temperature_updated_at is None:
             return None
         return time.monotonic() - self._temperature_updated_at
+
+    def _join_volume(self, raw: float) -> float:
+        name = self.profile.name
+        if self._joined_profile != name:
+            reference = self._last_volume if self._last_volume is not None else self.anchor_volume
+            if reference is not None and abs(reference - (raw + self.volume_offset)) < 0.15:
+                self._join_offset = reference - raw - self.volume_offset
+            self._joined_profile = name
+        volume = raw + self.volume_offset + self._join_offset
+        self._last_volume = volume
+        return volume
 
     def set_reference(self, frame, outline, roi, marker_y) -> None:
         """The pot, as drawn, is where it is in this frame: later frames are matched to it."""
@@ -241,7 +259,11 @@ class ContainerAnalyzer:
                 self._missing_measurements = 0
                 self._filtered_surface_y = None
                 self._volume_gate.reset()
+            previous_profile = self.profile.name
             self.profile = self._profile_selector.update(frame)
+            if self.profile.name != previous_profile:
+                self._measurement_history.clear()
+                self._filtered_surface_y = None
             try:
                 measurement = measure_container(
                     frame, roi=roi, vertical_bounds=self.effective_bounds(),
@@ -380,7 +402,7 @@ class ContainerAnalyzer:
         else:
             volume_fraction = float(median(sample.volume_fraction for sample in history))
             volume_profile = measurement.volume_below_profile
-        volume_fraction += self.volume_offset
+        volume_fraction = self._join_volume(volume_fraction)
 
         edge_profiles = [
             np.stack(
