@@ -21,7 +21,7 @@ from levainpeak.vision import ContainerMeasurement, column_scan, measure_contain
 
 PANEL_W, PANEL_H, TITLE_H, GAP = 230, 380, 22, 8
 SECOND_ROW_H, INFO_H = 240, 114
-WIDTH = 4 * PANEL_W + 3 * GAP
+WIDTH = 5 * PANEL_W + 4 * GAP
 HEIGHT = TITLE_H + PANEL_H + GAP + TITLE_H + SECOND_ROW_H + GAP + INFO_H
 
 BACKGROUND = (38, 41, 40)
@@ -29,6 +29,7 @@ TITLE_BAR = (62, 68, 66)
 GRID = (74, 80, 78)
 YELLOW, ORANGE, CYAN, GREEN, BLUE, RED = (40, 210, 255), (60, 140, 255), (255, 220, 60), (110, 200, 90), (255, 160, 50), (70, 70, 235)
 WHITE, MUTED = (240, 240, 235), (170, 176, 172)
+MAGENTA = (220, 80, 220)  # the walls the automatic search found, to compare with the drawn contour
 AUTO_MARKER = (150, 110, 70)  # the dark band the detector found, when the mark was set by hand
 _FONT_PATHS = ("DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
 
@@ -161,6 +162,13 @@ def build_debug_mosaic(
             raw = measure_container(frame, roi=pot_roi, vertical_bounds=vertical_bounds, outline=outline)
         except cv2.error:
             raw = None
+    detected = raw
+    if frame is not None and outline is not None:
+        # What the automatic search finds without the drawn contour, to check the drawing against.
+        try:
+            detected = measure_container(frame, roi=pot_roi, vertical_bounds=vertical_bounds)
+        except cv2.error:
+            detected = None
     scan = None
     if frame is not None and raw is not None and raw.marker_y is not None:
         scan = column_scan(frame, raw.left, raw.right, raw.top, raw.bottom, raw.marker_y)
@@ -195,9 +203,12 @@ def build_debug_mosaic(
         ):
             index = (detection_view, light_view, edge_view, column_view).index(view)
             place(view.canvas, index * (PANEL_W + GAP), 0, title)
+        walls_view = _View(crop, origin, PANEL_W, PANEL_H)
+        _draw_walls(walls_view, detected, outline, texts)
+        place(walls_view.canvas, 4 * (PANEL_W + GAP), 0, "5 · Paredes detectadas")
 
     width_panel = _profile_panel(raw, stable, texts, row2_y)
-    place(width_panel, 0, row2_y, "5 · Largura e volume por linha")
+    place(width_panel, 0, row2_y, "6 · Largura e volume por linha")
     inspection = (
         inspect_temperature(
             frame, thermometer_roi, None if profile is None else profile.infrared, face_quad, ink_cut
@@ -206,9 +217,9 @@ def build_debug_mosaic(
         else None
     )
     thermo = _thermometer_panel(inspection, thermometer_roi, texts, row2_y)
-    place(thermo, PANEL_W + GAP, row2_y, "6 · Termômetro: recorte · face · binário · dígitos")
+    place(thermo, PANEL_W + GAP, row2_y, "7 · Termômetro: recorte · face · binário · dígitos")
 
-    _info_strip(texts, info_y, raw, scan, stable, temperature_c, thermometer_roi, frame, inspection, profile, vertical_bounds)
+    _info_strip(texts, info_y, raw, scan, stable, temperature_c, thermometer_roi, frame, inspection, profile, vertical_bounds, drawn=outline is not None)
     return _render_texts(mosaic, texts)
 
 
@@ -253,6 +264,49 @@ def _draw_light(view: _View, raw, scan, lab: np.ndarray, left: int, top: int, st
             cv2.circle(canvas, view.pt(x, y), 2, RED, -1)
     view.hline(raw.surface_y, YELLOW, thickness=2)
     draw_markers(view, raw, stable)
+
+
+def _draw_walls(view: _View, detected, outline, texts: list[Text]) -> None:
+    """The drawn contour (cyan) over the walls the automatic search found (magenta)."""
+    if outline is not None:
+        view.polyline([view.pt(x, y) for x, y in outline] + [view.pt(*outline[0])], CYAN, 1)
+    if detected is None or not detected.edge_profile:
+        texts.append((PANEL_W * 4 + 4 * GAP + 6, TITLE_H + PANEL_H - 18, "paredes não detectadas", MUTED, 11))
+        return
+    edges = np.asarray(detected.edge_profile, np.float32)
+    rows = detected.top + np.arange(len(edges))
+    view.polyline([view.pt(x, y) for x, y in zip(edges[:, 0], rows)], MAGENTA, 2)
+    view.polyline([view.pt(x, y) for x, y in zip(edges[:, 1], rows)], MAGENTA, 2)
+    if outline is not None:
+        xs_left, xs_right = _outline_walls(outline, detected.top, len(edges))
+        if xs_left is not None:
+            left = float(np.abs(edges[:, 0] - xs_left).mean())
+            right = float(np.abs(edges[:, 1] - xs_right).mean())
+            texts.append((PANEL_W * 4 + 4 * GAP + 6, TITLE_H + PANEL_H - 18,
+                          f"diferença média: esq {left:.0f} px · dir {right:.0f} px", WHITE, 11))
+
+
+def _outline_walls(outline, top: int, rows: int):
+    """x of the drawn contour's left and right sides at ``rows`` rows from ``top``, or None."""
+    points = np.asarray(outline, np.float32)
+    ys = top + np.arange(rows, dtype=np.float32)
+    lefts, rights = [], []
+    for y in ys:
+        crossings = []
+        for (x0, y0), (x1, y1) in zip(points, np.roll(points, -1, axis=0)):
+            if (y0 <= y < y1) or (y1 <= y < y0):
+                crossings.append(x0 + (y - y0) * (x1 - x0) / (y1 - y0))
+        if len(crossings) < 2:
+            lefts.append(np.nan)
+            rights.append(np.nan)
+        else:
+            lefts.append(min(crossings))
+            rights.append(max(crossings))
+    left, right = np.asarray(lefts), np.asarray(rights)
+    if np.isnan(left).all():
+        return None, None
+    fill = lambda a: np.where(np.isnan(a), np.nanmean(a), a)  # noqa: E731
+    return fill(left), fill(right)
 
 
 def _draw_edges(view: _View, raw: ContainerMeasurement) -> None:
@@ -364,7 +418,7 @@ def _thermometer_panel(inspection, roi, texts: list[Text], row2_y: int) -> np.nd
     return canvas
 
 
-def _info_strip(texts: list[Text], y: int, raw, scan, stable, temperature_c, thermometer_roi, frame, inspection=None, profile=None, vertical_bounds=None) -> None:
+def _info_strip(texts: list[Text], y: int, raw, scan, stable, temperature_c, thermometer_roi, frame, inspection=None, profile=None, vertical_bounds=None, drawn=False) -> None:
     lines: list[tuple[str, tuple[int, int, int]]] = []
     if profile is not None:
         imposed = (
@@ -382,7 +436,7 @@ def _info_strip(texts: list[Text], y: int, raw, scan, stable, temperature_c, the
     else:
         used, found, manual = marker_rows(raw, stable)
         marker_text = f"{used} (manual; faixa detectada em {found})" if manual else f"{used} (faixa detectada)"
-        method = "colunas (claridade)" if scan is not None else "bordas (reserva)"
+        method = "por baixo (contorno desenhado)" if drawn else "colunas (claridade)" if scan is not None else "bordas (reserva)"
         lines.append((
             f"Pote: caixa {raw.left}-{raw.right} × {raw.top}-{raw.bottom}   marcador y={marker_text}   "
             f"superfície (bruta) y={raw.surface_y}   método: {method}",
@@ -403,7 +457,7 @@ def _info_strip(texts: list[Text], y: int, raw, scan, stable, temperature_c, the
         + ("" if temperature_c is None else f"   confirmada pelo app {temperature_c:.1f} °C"),
         WHITE,
     ))
-    lines.append(("Legenda: amarelo = superfície bruta · laranja tracejado = estável · azul = marca inicial usada · azul fraco = faixa detectada · ciano = parede", MUTED))
+    lines.append(("Legenda: amarelo = superfície bruta · laranja tracejado = estável · azul = marca inicial usada · azul fraco = faixa detectada · ciano = contorno desenhado · magenta = parede detectada", MUTED))
     for number, (text, colour) in enumerate(lines):
         texts.append((6, y + 4 + number * 17, text, colour, 12))
 
