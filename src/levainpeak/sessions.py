@@ -35,6 +35,8 @@ class SessionLog:
         self._file: TextIO | None = None
         self._writer = None
         self._last_write_time: float | None = None
+        self.snapshot_seconds = 600.0
+        self._last_snapshot_time: float | None = None
         self._last_phase: str | None = None
         self.mix_time: datetime | None = None
         self.session_name = ""
@@ -283,6 +285,25 @@ class SessionLog:
         self._last_write_time = monotonic_time
         self._last_phase = phase
         return True
+
+    def snapshot(self, monotonic_time: float, frame) -> Path | None:
+        """Keep the raw frame beside the session every `snapshot_seconds` (ten minutes), to audit it later."""
+        if not self.active or self.path is None or frame is None:
+            return None
+        if (
+            self._last_snapshot_time is not None
+            and monotonic_time - self._last_snapshot_time < self.snapshot_seconds
+        ):
+            return None
+        import cv2
+
+        folder = self.path.with_name(f"{self.path.stem}_fotos")
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / f"{datetime.now().astimezone():%Y%m%d_%H%M%S}.jpg"
+        if not cv2.imwrite(str(target), frame, [cv2.IMWRITE_JPEG_QUALITY, 85]):
+            return None
+        self._last_snapshot_time = monotonic_time
+        return target
 
     def set_mix_time(self, mix_time: datetime) -> None:
         self.mix_time = mix_time

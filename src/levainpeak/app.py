@@ -1939,7 +1939,13 @@ class LevainPeakApp:
         self._set_message(f"Sessão retomada; as próximas medições serão acrescentadas em {self._session_log.path}.")
 
     def _update_session(self, measurement: ContainerMeasurement | None) -> None:
-        if not self._session_log.active or measurement is None:
+        if not self._session_log.active:
+            return
+        try:
+            self._session_log.snapshot(time.monotonic(), self._last_raw_frame)
+        except OSError:
+            logging.exception("Falha ao gravar o snapshot da sessão")
+        if measurement is None:
             return
         if self._analyzer is not None and self._analyzer.alignment_status:
             return  # the pot is out of its place (lifted, covered): what is read now is not the levain
