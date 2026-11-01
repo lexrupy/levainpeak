@@ -101,3 +101,25 @@ def test_the_volume_is_joined_when_the_camera_profile_changes_and_when_a_session
     assert abs(analyzer._join_volume(0.675) - 0.677) < 1e-9
     analyzer.profile = INFRARED
     assert abs(analyzer._join_volume(0.620) - 0.677) < 1e-9
+
+
+def _pot_over_a_static_room(dx):
+    """The room behind the glass stays put; only the pot (walls, lid, base) slides by ``dx``."""
+    rng = np.random.default_rng(5)
+    frame = cv2.GaussianBlur(rng.integers(40, 220, (720, 1024, 3), dtype=np.uint8), (0, 0), 4)
+    cv2.rectangle(frame, (700, 100), (760, 620), (160, 90, 40), -1)  # a pipe, strong edges, never moves
+    for x in (400, 470, 540, 610):  # what shows through the glass: streaks that stay where they are
+        cv2.line(frame, (x, 270), (x, 560), (250, 250, 250), 6)
+    cv2.rectangle(frame, (200, 575), (820, 640), (230, 230, 235), -1)  # the plate under the pot
+    outline = np.array(OUTLINE) + [dx, 0]
+    cv2.polylines(frame, [outline], True, (235, 235, 235), 5)
+    cv2.rectangle(frame, (310 + dx, 215), (710 + dx, 262), (200, 220, 230), -1)
+    cv2.rectangle(frame, (360 + dx, 568), (660 + dx, 600), (120, 120, 130), -1)
+    return frame
+
+
+def test_a_pot_sliding_over_a_static_room_is_followed_not_the_room():
+    reference = make_reference(_pot_over_a_static_room(0), OUTLINE, None, None)
+    found = locate(reference, _pot_over_a_static_room(38))
+    assert found is not None and found.score >= MIN_SCORE
+    assert abs((found.dx - reference.origin[0]) - 38) <= 3

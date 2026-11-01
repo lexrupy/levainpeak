@@ -24,7 +24,9 @@ SCALES = (0.90, 0.93, 0.96, 0.98, 1.0, 1.02, 1.05, 1.08, 1.11)
 WORK_SCALE = 0.5  # the search runs on a half-size picture
 MARGIN = 0.12  # of the contour's size, taken around it (lid, rim and base are in here)
 SEARCH = 0.30  # how far the pot may have gone, as a fraction of the contour's size
-INSIDE = 0.78  # the part of the contour left out of the reference: the levain's own area
+BAND = 0.05  # of the contour's size: how thick a band along its walls goes into the reference
+LID = 0.08  # of the contour's size: the strip above it (the lid) that goes in as well
+VERSION = 2  # references of older versions (whole surroundings, not just the walls) are not used
 MIN_SCORE = 0.70  # a frame from the other camera profile, or a hand over the pot, scores about 0.5
 
 
@@ -78,10 +80,18 @@ def make_reference(
         return None
     edges = _edges(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
     crop = _crop(edges, left, top, right, bottom)
-    center = points.mean(axis=0)
-    inside = (center + (points - center) * INSIDE) * WORK_SCALE - np.array([left, top]) * WORK_SCALE
-    mask = np.full(crop.shape, 255, np.uint8)
-    cv2.fillPoly(mask, [np.round(inside).astype(np.int32)], 0)
+    # Only what belongs to the pot: a band along its walls and base, and the lid above. The see-through
+    # glass shows the room behind it (pipes, cables, the plate under it), which does not move with the
+    # pot and, left in, held the match where the pot used to be.
+    size = max(x1 - x0, y1 - y0)
+    outer = (points - np.array([left, top], np.float32)) * WORK_SCALE
+    mask = np.zeros(crop.shape, np.uint8)
+    cv2.polylines(mask, [np.round(outer).astype(np.int32)], True, 255, max(2, int(BAND * size * WORK_SCALE)))
+    lid_top = int(outer[:, 1].min())
+    cv2.rectangle(
+        mask, (int(outer[:, 0].min()), max(0, lid_top - int(LID * size * WORK_SCALE))),
+        (int(outer[:, 0].max()), lid_top), 255, -1,
+    )
     return PotReference(
         edges=crop * (mask > 0), mask=mask, origin=(left, top),
         outline=tuple((int(x), int(y)) for x, y in outline), roi=roi, marker_y=marker_y, plus=plus,
@@ -159,7 +169,7 @@ def save_reference(reference: PotReference, path: Path) -> None:
     temporary = path.with_suffix(".tmp.npz")
     np.savez_compressed(
         temporary, edges=reference.edges, mask=reference.mask,
-        origin=np.asarray(reference.origin), outline=np.asarray(reference.outline),
+        version=np.asarray(VERSION), origin=np.asarray(reference.origin), outline=np.asarray(reference.outline),
         roi=np.asarray(reference.roi if reference.roi is not None else (-1, -1, -1, -1)),
         marker_y=np.asarray(-1 if reference.marker_y is None else reference.marker_y),
         plus=np.asarray(reference.plus if reference.plus is not None else (-1.0, -1.0)),
@@ -170,6 +180,8 @@ def save_reference(reference: PotReference, path: Path) -> None:
 def load_reference(path: Path) -> PotReference | None:
     try:
         with np.load(path) as saved:
+            if "version" not in saved.files or int(saved["version"]) < VERSION:
+                return None
             roi = tuple(int(v) for v in saved["roi"])
             marker = int(saved["marker_y"])
             plus = tuple(float(v) for v in saved["plus"]) if "plus" in saved.files else (-1.0, -1.0)
