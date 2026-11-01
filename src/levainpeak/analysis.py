@@ -27,6 +27,7 @@ MIN_TEMPERATURE_C = 0.0
 MAX_TEMPERATURE_C = 60.0
 
 
+MAX_PLUS_SLIDE = 200  # px the mark alone may move the drawing sideways
 MAX_PLUS_CORRECTION = 25  # px the "+" may correct the edges' height by; more is a false find
 
 
@@ -54,6 +55,7 @@ class ContainerAnalyzer:
         self._last_volume: float | None = None
         self.align_enabled = True
         self.mark_seen: tuple[float, float, int] | None = None  # the last "+"/"X" found: x, y, size
+        self._mark_slide = 0.0  # px the label has slid sideways on the pot, from the edges' view
         self.use_mark = False  # follow the pot's height by the "+" or "X" on its label
         self.alignment_status: str | None = None  # a short text when the pot cannot be found
         self.aligned: tuple | None = None  # (outline, roi, marker_y) the drawing was carried to; the window takes it
@@ -147,6 +149,7 @@ class ContainerAnalyzer:
         """The pot, as drawn, is where it is in this frame: later frames are matched to it."""
         self._reference_generation += 1
         self._references.clear()
+        self._mark_slide = 0.0
         self.aligned = None
         self._alignment_candidate = None
         self.alignment_status = None
@@ -227,12 +230,12 @@ class ContainerAnalyzer:
         self.aligned = (moved[0], moved[1], self.marker_y)
 
     def _with_plus(self, reference: PotReference, found: Alignment | None, frame, roi) -> Alignment | None:
-        """Use the "+" on the label, when it is in view, for the pot's height.
+        """Use the "+" or "X" on the label, when it is in view, for where the pot is.
 
-        Only the vertical position is taken from it: a round pot can turn in place, and the
-        label (and the "+") with it, while the contour stays where it is. The edges give the
-        rest; when they find nothing (a lamp changed the light) the "+" alone moves the
-        drawing up or down.
+        With the pot's edges found, the mark only corrects the height, and how far the label has
+        slid sideways from where the edges put it is kept: that is the pot turning in place.
+        When the edges find nothing (a lamp changed the light) the mark alone moves the drawing,
+        up or down and sideways, less the slide of the label seen last.
         """
         if reference.plus is None:
             return found
@@ -241,15 +244,18 @@ class ContainerAnalyzer:
             return found
         origin_x, origin_y = reference.origin
         if found is not None and found.score >= MIN_SCORE:
-            expected = found.dy + (reference.plus[1] - origin_y) * found.scale
-            correction = seen[1] - expected
+            expected_x = found.dx + (reference.plus[0] - origin_x) * found.scale
+            expected_y = found.dy + (reference.plus[1] - origin_y) * found.scale
+            self._mark_slide = seen[0] - expected_x
+            correction = seen[1] - expected_y
             if abs(correction) > MAX_PLUS_CORRECTION:
                 return found
             return Alignment(found.scale, found.dx, found.dy + correction, found.score)
+        slide_x = seen[0] - reference.plus[0] - self._mark_slide
         rise = seen[1] - reference.plus[1]
-        if abs(rise) > MAX_PLUS_CORRECTION * 3:
+        if abs(rise) > MAX_PLUS_CORRECTION * 3 or abs(slide_x) > MAX_PLUS_SLIDE:
             return found
-        return Alignment(1.0, float(origin_x), float(origin_y) + rise, MIN_SCORE)
+        return Alignment(1.0, float(origin_x) + slide_x, float(origin_y) + rise, MIN_SCORE)
 
     def region_key(self) -> tuple:
         """The regions as they are set now (pot area, contour, thermometer area, face corners)."""
