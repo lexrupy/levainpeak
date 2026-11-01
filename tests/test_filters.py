@@ -133,3 +133,16 @@ def test_slow_brightness_drift_and_a_zero_hold_never_hold():
     assert not any(watch.update(float(t), 100.0 + t * 0.01, 600) for t in range(0, 600, 2))
     other = LampWatch()
     assert not any(other.update(float(t), 100.0 if t < 40 else 150.0, 0) for t in range(0, 100, 2))
+
+
+def test_a_light_that_keeps_changing_cannot_hold_the_volume_for_hours():
+    from levainpeak.filters import LampWatch
+
+    watch = LampWatch()
+    held_late = []
+    for second in range(0, 2 * 3600, 10):
+        brightness = 60.0 if (second // 60) % 2 else 100.0  # flips every minute
+        held = watch.update(float(second), brightness, 600.0)
+        if second > 3600 + 1800:
+            held_late.append(held)
+    assert not all(held_late)

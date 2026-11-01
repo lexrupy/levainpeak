@@ -56,27 +56,43 @@ class LampWatch:
     The reference is the median brightness a little before; a reading that departs from it by more
     than ``jump`` (a fraction) starts a hold of ``hold_seconds``, and every further change extends it
     (the lamp going off is another change). ``update`` tells whether the picture is held now.
+
+    A hold never lasts past ``max_factor`` times ``hold_seconds`` from its start: past that the
+    brightness it was held against is the new normal and the reference starts over, so a light that
+    keeps changing cannot freeze the volume for hours.
     """
 
-    def __init__(self, jump: float = 0.12, window: float = 90.0, settle: float = 10.0) -> None:
-        self.jump, self.window, self.settle = jump, window, settle
+    def __init__(
+        self, jump: float = 0.12, window: float = 90.0, settle: float = 10.0, max_factor: float = 3.0
+    ) -> None:
+        self.jump, self.window, self.settle, self.max_factor = jump, window, settle, max_factor
         self._samples: list[tuple[float, float]] = []
         self.held_until = float("-inf")
+        self._held_since: float | None = None
 
     def reset(self) -> None:
         self._samples.clear()
         self.held_until = float("-inf")
+        self._held_since = None
 
     def update(self, now: float, brightness: float, hold_seconds: float) -> bool:
         from statistics import median
 
+        if self._held_since is not None and now - self._held_since > self.max_factor * hold_seconds:
+            self._samples.clear()  # held long enough: what the picture shows now is the reference
+            self.held_until = float("-inf")
+            self._held_since = None
         self._samples = [item for item in self._samples if now - item[0] <= self.window]
         before = [value for stamp, value in self._samples if now - stamp >= self.settle]
         if hold_seconds > 0 and len(before) >= 3:
             reference = median(before)
             if reference > 1 and abs(brightness - reference) / reference > self.jump:
+                if self._held_since is None or now >= self.held_until:
+                    self._held_since = now
                 self.held_until = max(self.held_until, now + hold_seconds)
         self._samples.append((now, brightness))
+        if now >= self.held_until:
+            self._held_since = None
         return hold_seconds > 0 and now < self.held_until
 
 
