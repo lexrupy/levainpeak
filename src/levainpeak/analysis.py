@@ -53,6 +53,7 @@ class ContainerAnalyzer:
         self._joined_profile: str | None = None
         self._last_volume: float | None = None
         self.align_enabled = True
+        self.mark_seen: tuple[float, float, int] | None = None  # the last "+"/"X" found: x, y, size
         self.use_mark = False  # follow the pot's height by the "+" or "X" on its label
         self.alignment_status: str | None = None  # a short text when the pot cannot be found
         self.aligned: tuple | None = None  # (outline, roi, marker_y) the drawing was carried to; the window takes it
@@ -159,8 +160,10 @@ class ContainerAnalyzer:
     def _plus_in(self, frame, roi) -> tuple[float, float] | None:
         """Where the "+" on the label is, by day. In infrared it is too faint to be found."""
         if self.profile.infrared or not self.use_mark:
+            self.mark_seen = None
             return None
         found = find_plus(frame, roi)
+        self.mark_seen = None if found is None else (found.x, found.y, found.size)
         return None if found is None else (found.x, found.y)
 
     def load_references(self) -> None:

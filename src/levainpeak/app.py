@@ -321,9 +321,20 @@ class LevainPeakApp:
             self._metrics_container.rowconfigure(row, minsize=needed)
 
     def _annotate(self, frame, measurement):
-        return draw_measurement(
+        shown = draw_measurement(
             frame, measurement, detail=self._show_detail, faint_box=self._pot_outline is not None
         )
+        seen = self._analyzer.mark_seen if self._analyzer is not None else None
+        if seen is not None:  # the "+" or "X" the app is following, in red
+            x, y, size = (int(round(v)) for v in seen)
+            arm = max(12, size // 2)
+            red = (40, 40, 255)
+            layer = shown.copy()
+            cv2.line(layer, (x - arm, y), (x + arm, y), red, 3, cv2.LINE_AA)
+            cv2.line(layer, (x, y - arm), (x, y + arm), red, 3, cv2.LINE_AA)
+            cv2.circle(layer, (x, y), arm, red, 3, cv2.LINE_AA)
+            shown = cv2.addWeighted(layer, 0.4, shown, 0.6, 0)  # translucent: the mark below shows through
+        return shown
 
     def _toggle_detail(self, event: tk.Event | None = None) -> None:
         if event is not None and isinstance(event.widget, (tk.Entry, ttk.Entry, ttk.Spinbox)):
