@@ -332,7 +332,7 @@ class LevainPeakApp:
             layer = shown.copy()
             cv2.line(layer, (x - arm, y), (x + arm, y), red, 3, cv2.LINE_AA)
             cv2.line(layer, (x, y - arm), (x, y + arm), red, 3, cv2.LINE_AA)
-            cv2.circle(layer, (x, y), arm, red, 3, cv2.LINE_AA)
+            cv2.rectangle(layer, (x - arm, y - arm), (x + arm, y + arm), red, 3, cv2.LINE_AA)
             shown = cv2.addWeighted(layer, 0.4, shown, 0.6, 0)  # translucent: the mark below shows through
         return shown
 
