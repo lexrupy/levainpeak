@@ -67,6 +67,7 @@ class LevainPeakApp:
         self._last_displayed_frame_number = 0
         self._last_stream_status: str | None = None
         self._manual_marker_y: int | None = None
+        self._realigned_at = float("-inf")  # when the contour last followed the pot by itself
         self._marker_mode = False
         self._roi_mode = False
         self._roi_target = "pot"
@@ -443,6 +444,7 @@ class LevainPeakApp:
         if aligned is None:
             return
         self._analyzer.aligned = None
+        old = self._pot_outline
         self._pot_outline, self._manual_pot_roi, marker = aligned
         if marker is not None:
             self._manual_marker_y = marker
@@ -452,7 +454,19 @@ class LevainPeakApp:
                 self._manual_pot_roi, self._temperature_roi, outline=self._pot_outline,
                 face_quad=self._temperature_quad,
             )
-        self._set_message("O pote mudou de lugar: o contorno e a marca acompanharam.")
+        text = "Pote reposicionado: o contorno e a marca acompanharam."
+        if old:
+            width = lambda outline: max(x for x, _ in outline) - min(x for x, _ in outline)
+            dx = (sum(x for x, _ in self._pot_outline) - sum(x for x, _ in old)) // len(old)
+            dy = (sum(y for _, y in self._pot_outline) - sum(y for _, y in old)) // len(old)
+            size = (width(self._pot_outline) / max(1, width(old)) - 1) * 100
+            text = (
+                f"Pote reposicionado: {dx:+d} px na horizontal, {dy:+d} px na vertical"
+                f"{f', tamanho {size:+.0f}%' if abs(size) >= 1 else ''}. O contorno e a marca acompanharam."
+            )
+        logging.info(text)
+        self._realigned_at = time.monotonic()
+        self._set_message(text)
 
     def _sync_vessel_bounds(self) -> None:
         """Keep what daylight measured about the vessel in the session file."""
@@ -509,6 +523,8 @@ class LevainPeakApp:
             status = self._stream.status
             profile = self._analyzer.profile.name if self._analyzer is not None else None
             lost = self._analyzer is not None and self._analyzer.alignment_status
+            if not lost and time.monotonic() - self._realigned_at < 90:
+                lost = "pote reposicionado"
             self.status_value.configure(
                 text=(status if profile is None else f"{status} · perfil {profile}")
                 + (f" · {lost}" if lost else "")
