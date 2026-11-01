@@ -38,8 +38,10 @@ from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, 
                                  INK_CUT_INFRARED, MAX_OVERLAY_BRIGHTNESS,
                                  MAX_PHONE_SECONDS, MAX_RECORD_SECONDS, MIN_OVERLAY_BRIGHTNESS,
                                  MIN_PHONE_SECONDS, MIN_RECORD_SECONDS,
-                                 ARTIFACT_MINUTES, LAMP_MINUTES, MARK_SHAPES, PEAK_MINUTES, ROTATION_DEGREES, ROTATIONS, Settings, load_settings, save_settings)
+                                 ARTIFACT_MINUTES, LAMP_MINUTES, MARK_SHAPES, PEAK_MINUTES, ROTATIONS, Settings, load_settings, save_settings)
 from levainpeak.stream import RtspStream
+
+FINE_TURN_DEGREES = 15.0  # the slider's reach either way; whole quarter turns come from the menu
 from levainpeak.vision import (ContainerMeasurement, draw_measurement,
                                set_initial_marker,
                                set_initial_volume_reference)
@@ -202,14 +204,18 @@ class LevainPeakApp:
         turn_row = ttk.Frame(video_panel)
         turn_row.pack(fill="x", pady=(6, 0))
         ttk.Label(turn_row, text="Girar").pack(side="left")
-        self._rotation_var = tk.DoubleVar(value=self._settings.rotation)
+        self._rotation_var = tk.DoubleVar(value=self._fine_part(self._settings.rotation))
         self._rotation_text = tk.StringVar(value=f"{self._settings.rotation:.1f}°")
-        ttk.Scale(
-            turn_row, from_=ROTATION_DEGREES[0], to=ROTATION_DEGREES[1],
-            variable=self._rotation_var, command=self._rotation_moved,
-        ).pack(side="left", fill="x", expand=True, padx=6)
+        self._turn_scale = ttk.Scale(
+            turn_row, from_=-FINE_TURN_DEGREES, to=FINE_TURN_DEGREES,
+            variable=self._rotation_var, command=self._fine_turned,
+        )
+        self._turn_scale.pack(side="left", fill="x", expand=True, padx=6)
+        self._turn_scale.bind("<MouseWheel>", lambda e: self._fine_turned(self._rotation_var.get() + (0.1 if e.delta > 0 else -0.1)))
+        self._turn_scale.bind("<Button-4>", lambda e: self._fine_turned(self._rotation_var.get() + 0.1))
+        self._turn_scale.bind("<Button-5>", lambda e: self._fine_turned(self._rotation_var.get() - 0.1))
         ttk.Label(turn_row, textvariable=self._rotation_text, width=7, anchor="e").pack(side="left")
-        ttk.Button(turn_row, text="Zerar", width=6, command=lambda: self._rotation_moved(0)).pack(side="left", padx=(6, 0))
+        ttk.Button(turn_row, text="Zerar", width=6, command=lambda: self._set_rotation(0)).pack(side="left", padx=(6, 0))
         self._mark_var = tk.BooleanVar(value=self._settings.mark_alignment)
         self._video_menu = tk.Menu(self.video, tearoff=False)
         self._video_menu.add_checkbutton(
@@ -220,7 +226,7 @@ class LevainPeakApp:
         for degrees in ROTATIONS:
             self._video_menu.add_radiobutton(
                 label="Imagem sem girar" if degrees == 0 else f"Girar a imagem {degrees}°",
-                command=lambda degrees=degrees: self._rotation_moved(degrees),
+                command=lambda degrees=degrees: self._set_rotation(degrees + self._fine_part(self._settings.rotation)),
             )
         self._shape_var = tk.StringVar(value=self._settings.mark_shape)
         self._video_menu.add_separator()
@@ -869,9 +875,19 @@ class LevainPeakApp:
             signs.append(np.sign((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])))
         return abs(sum(signs)) == len(signs)  # all turns the same way: convex, not crossed
 
-    def _rotation_moved(self, value) -> None:
-        degrees = round(float(value) * 2) / 2  # half-degree steps
-        self._rotation_var.set(degrees)
+    @staticmethod
+    def _fine_part(rotation: float) -> float:
+        """What is left of the angle after the whole quarter turns: what the slider shows."""
+        return round(rotation - round(rotation / 90) * 90, 1)
+
+    def _fine_turned(self, value) -> None:
+        fine = min(FINE_TURN_DEGREES, max(-FINE_TURN_DEGREES, float(value)))
+        quarter = round(self._settings.rotation / 90) * 90
+        self._set_rotation(quarter + round(fine, 1))
+
+    def _set_rotation(self, value: float) -> None:
+        degrees = Settings(rotation=value).clamped().rotation
+        self._rotation_var.set(self._fine_part(degrees))
         if degrees == self._settings.rotation:
             return
         self._rotation_text.set(f"{degrees:.1f}°")

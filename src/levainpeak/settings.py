@@ -26,7 +26,7 @@ ARTIFACT_MINUTES = (3, 60)  # a departure that comes back within this is a lamp 
 
 
 ROTATIONS = (0, 90, 180, 270)  # quarter turns offered in the video menu
-ROTATION_DEGREES = (-180.0, 180.0)  # degrees clockwise the camera picture is turned
+ROTATION_DEGREES = (-195.0, 195.0)  # degrees clockwise the camera picture is turned
 MARK_SHAPES = ("círculo", "quadrado")
 
 
