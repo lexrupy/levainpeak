@@ -54,3 +54,13 @@ def test_a_dip_that_recovers_never_becomes_a_decline():
     states = run(tracker, steady, 20, start=2760)
     assert PhaseTracker.FALLING not in states
     assert states[-1] in (PhaseTracker.RISING, PhaseTracker.PLATEAU)
+
+
+def test_a_flat_levain_that_has_not_risen_yet_is_not_at_its_peak():
+    tracker = PhaseTracker()
+    states = set()
+    # The mark sits 0.04 below the level at the start, so the volume starts above it and stays flat.
+    for second in range(0, 3 * 3600, 10):
+        states.add(tracker.update(float(second), 0.39, 0.35))
+    assert states <= {PhaseTracker.WAITING, PhaseTracker.RISING}
+    assert PhaseTracker.PEAK not in states and PhaseTracker.PLATEAU not in states

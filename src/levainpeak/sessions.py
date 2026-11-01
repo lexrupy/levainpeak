@@ -330,6 +330,7 @@ class PhaseTracker:
         self,
         *,
         minimum_rise: float = 0.03,
+        minimum_peak_rise: float = 0.06,
         plateau_slope_per_minute: float = 0.00012,
         plateau_seconds: float = 600,
         decline_fraction: float = 0.02,
@@ -340,6 +341,9 @@ class PhaseTracker:
         filter_dips: bool = True,
     ) -> None:
         self.minimum_rise = minimum_rise
+        # A plateau, a peak or a fall only count once the volume has risen this far over the baseline:
+        # a levain still warming up is flat too, and is not at its peak.
+        self.minimum_peak_rise = minimum_peak_rise
         self.plateau_slope_per_minute = plateau_slope_per_minute
         self.plateau_seconds = plateau_seconds
         self.decline_fraction = decline_fraction
@@ -407,6 +411,12 @@ class PhaseTracker:
         slope = self._slope(monotonic_time)
         if slope is None:
             self.state = self.RISING
+            return self.state
+
+        if self.peak_fraction - self.baseline < self.minimum_peak_rise:
+            self._plateau_since = None
+            self._decline_since = None
+            self.state = self.RISING if slope > self.plateau_slope_per_minute else self.WAITING
             return self.state
 
         drop = self.peak_fraction - smooth
