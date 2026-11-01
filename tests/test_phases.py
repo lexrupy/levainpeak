@@ -73,3 +73,11 @@ def test_a_flat_levain_that_has_not_risen_yet_is_not_at_its_peak():
         states.add(tracker.update(float(second), 0.39, 0.35))
     assert states <= {PhaseTracker.WAITING, PhaseTracker.RISING}
     assert PhaseTracker.PEAK not in states and PhaseTracker.PLATEAU not in states
+
+
+def test_an_abrupt_collapse_that_does_not_come_back_is_a_decline_even_with_no_top_before_it():
+    tracker = PhaseTracker()
+    run(tracker, lambda m: 0.2 + 0.2 * min(1, m / 30), 30)
+    states = run(tracker, lambda m: 0.23, 30, start=1800)  # down by 0.17 and staying down
+    assert states[-1] == PhaseTracker.FALLING
+    assert PhaseTracker.FALLING not in states[:60]  # not in the first ten minutes

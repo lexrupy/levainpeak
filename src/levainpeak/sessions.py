@@ -336,6 +336,7 @@ class PhaseTracker:
         decline_fraction: float = 0.02,
         decline_slope_per_minute: float = 0.0003,
         decline_seconds: float = 600,
+        artifact_seconds: float = 720,
         slope_window_seconds: float = 300,
         plateau_window_seconds: float = 900,
         filter_dips: bool = True,
@@ -349,6 +350,9 @@ class PhaseTracker:
         self.decline_fraction = decline_fraction
         self.decline_slope_per_minute = decline_slope_per_minute
         self.decline_seconds = decline_seconds
+        # A fall that does not come back within this time was real, whatever came before it: a lamp or a
+        # lifted pot is back within ten minutes, a collapse of the dough is not.
+        self.artifact_seconds = artifact_seconds
         self.slope_window_seconds = slope_window_seconds
         self.plateau_window_seconds = plateau_window_seconds
         # Readings overtaken by a later recovery are left out of the trend. Turn it
@@ -367,6 +371,7 @@ class PhaseTracker:
         self._plateau_since: float | None = None
         self._decline_since: float | None = None
         self._topped_out = False  # the volume has levelled off since it last made a new high
+        self._low_since: float | None = None  # when the volume fell below its high by the decline fraction
         self.state = self.WAITING
 
     def set_baseline(self, baseline: float | None) -> None:
@@ -423,12 +428,25 @@ class PhaseTracker:
             return self.state
 
         drop = self.peak_fraction - smooth
-        # A real decline always follows a stretch of stable readings at the top. A drop with no such
-        # stretch before it (the pot lifted out, a lamp coming on) is not a decline.
-        if drop >= self.decline_fraction and slope <= -self.decline_slope_per_minute and not self._topped_out:
+        if drop >= self.decline_fraction:
+            if self._low_since is None:
+                self._low_since = monotonic_time
+        else:
+            self._low_since = None
+        stayed_low = self._low_since is not None and monotonic_time - self._low_since >= self.artifact_seconds
+        # A decline normally follows a stretch of stable readings at the top. A drop with no such
+        # stretch before it (the pot lifted out, a lamp coming on) is not a decline yet: it is one
+        # only once it has stayed low longer than such an artifact lasts.
+        if drop >= self.decline_fraction and not self._topped_out and not stayed_low:
             self._decline_since = None
             self._plateau_since = None
-            self.state = self.RISING if self.state == self.RISING else self.WAITING if self.state == self.WAITING else self.state
+            if self.state not in (self.RISING, self.WAITING):
+                self.state = self.RISING
+            return self.state
+        if drop >= self.decline_fraction and stayed_low and slope > -self.decline_slope_per_minute:
+            # fallen and settled low: it has declined, even if it no longer falls
+            self._plateau_since = None
+            self.state = self.FALLING
             return self.state
         if drop >= self.decline_fraction and slope <= -self.decline_slope_per_minute:
             if self._decline_since is None:
