@@ -78,3 +78,23 @@ def test_a_nine_minute_departure_that_returns_is_dropped_as_a_lamp_artifact(tmp_
                              f"{volume:.6f}", "0.35", "1.1", "Aquecimento", "teste"])
     samples = prepare_graph_data(path)["samples"]
     assert max(volume for _, volume, _ in samples) < 0.45
+
+
+def test_the_artifact_time_decides_how_long_a_departure_may_last(tmp_path):
+    import csv
+    from datetime import datetime, timedelta, timezone
+
+    start = datetime(2026, 11, 1, 1, 0, tzinfo=timezone(timedelta(hours=-3)))
+    path = tmp_path / "s.csv"
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["session_id", "timestamp", "mix_time", "temperature_c", "volume_fraction",
+                         "initial_volume_fraction", "growth_factor", "phase", "session_name"])
+        for i in range(1200):
+            volume = 0.39 + 0.00002 * i + (0.11 if 500 <= i < 554 else 0.0)  # nine minutes
+            writer.writerow(["s", (start + timedelta(seconds=10 * i)).isoformat(), "", "26.0",
+                             f"{volume:.6f}", "0.35", "1.1", "Aquecendo", "teste"])
+    kept = prepare_graph_data(path, artifact_seconds=180)["samples"]  # three minutes: nine is not an artifact
+    assert max(volume for _, volume, _ in kept) > 0.45
+    dropped = prepare_graph_data(path, artifact_seconds=720)["samples"]
+    assert max(volume for _, volume, _ in dropped) < 0.45

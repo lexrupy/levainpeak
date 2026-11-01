@@ -72,7 +72,9 @@ def build_packet(
         if points:
             packet["points"] = points
             newest = points[-1]["t"]
-        chart = chart_payload(prepare_graph_data(session_csv), **(chart_options or {}))
+        options = dict(chart_options or {})
+        times = {key: options.pop(key) for key in ("peak_seconds", "artifact_seconds") if key in options}
+        chart = chart_payload(prepare_graph_data(session_csv, **times), **options)
         if chart is not None:
             packet["chart"] = chart
     if snapshot and len(snapshot.get("jpeg_b64", "")) <= MAX_SNAPSHOT_CHARS:

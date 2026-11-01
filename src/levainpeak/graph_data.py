@@ -14,8 +14,12 @@ from levainpeak.graph_phases import graph_phase_segments
 from levainpeak.sessions import PhaseTracker
 
 
-def prepare_graph_data(path: Path) -> dict:
-    """The graph's series from a session CSV: cleaned, phased and smoothed."""
+def prepare_graph_data(path: Path, *, peak_seconds: float = 600, artifact_seconds: float = 720) -> dict:
+    """The graph's series from a session CSV: cleaned, phased and smoothed.
+
+    ``peak_seconds``: how long the readings stay level before the levain is at its peak.
+    ``artifact_seconds``: a departure that comes back within this is dropped (a lamp, a lifted pot).
+    """
     samples = []
     phases: list[str] = []
     last_temperature: float | None = None
@@ -43,7 +47,7 @@ def prepare_graph_data(path: Path) -> dict:
     # departure that returns within that time is an artifact. The window is in time, not samples.
     steps = sorted((b[0] - a[0]).total_seconds() for a, b in zip(samples, samples[1:]) if b[0] > a[0])
     step = steps[len(steps) // 2] if steps else 10.0
-    window = max(80, int(round(DESPIKE_WINDOW_SECONDS / max(1.0, step))))
+    window = max(80, int(round(2 * artifact_seconds / max(1.0, step))))
     cleaned = despike([sample[1] for sample in samples], window=window)
     # A later reading that rises above an earlier level proves the readings
     # under that level in between were wrong: rebuild them from the valid
@@ -57,7 +61,7 @@ def prepare_graph_data(path: Path) -> dict:
         ]
     # Phases are recomputed from the cleaned readings, so the shading does
     # not inherit labels that were produced while a wrong reading was live.
-    graph_tracker = PhaseTracker(filter_dips=False)  # the readings are already clean
+    graph_tracker = PhaseTracker(filter_dips=False, plateau_seconds=peak_seconds, artifact_seconds=artifact_seconds)  # the readings are already clean
     # The mark may sit below the level the session started at (placed late, or the dough already
     # up): the rise to judge is the one since the first reading, not since the mark.
     graph_tracker.reset(max(baseline, cleaned[0]) if baseline and baseline > 0 else cleaned[0])
@@ -110,7 +114,6 @@ def prepare_graph_data(path: Path) -> dict:
     }
 
 
-DESPIKE_WINDOW_SECONDS = 1500  # a departure that returns within ~12 minutes (about half of this) is dropped
 VOLUME_SCALES = ("auto", "máximo", "capacidade")
 
 

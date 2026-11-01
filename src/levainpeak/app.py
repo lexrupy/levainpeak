@@ -38,7 +38,7 @@ from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, 
                                  INK_CUT_INFRARED, MAX_OVERLAY_BRIGHTNESS,
                                  MAX_PHONE_SECONDS, MAX_RECORD_SECONDS, MIN_OVERLAY_BRIGHTNESS,
                                  MIN_PHONE_SECONDS, MIN_RECORD_SECONDS,
-                                 MARK_SHAPES, Settings, load_settings, save_settings)
+                                 ARTIFACT_MINUTES, MARK_SHAPES, PEAK_MINUTES, Settings, load_settings, save_settings)
 from levainpeak.stream import RtspStream
 from levainpeak.vision import (ContainerMeasurement, draw_measurement,
                                set_initial_marker,
@@ -108,7 +108,10 @@ class LevainPeakApp:
         self._phone_applied: tuple | None = None
         self._phone_status_text = ""
         self._live_state: dict = {}
-        self._phase_tracker = PhaseTracker()
+        self._phase_tracker = PhaseTracker(
+            plateau_seconds=self._settings.peak_minutes * 60,
+            artifact_seconds=self._settings.artifact_minutes * 60,
+        )
         self._forecaster = DoublingForecaster()
         self._phase = "Aguardando sessão"
         self._mix_time: datetime | None = None
@@ -1475,6 +1478,30 @@ class LevainPeakApp:
         )
         self._settings_note.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
+        phases = ttk.LabelFrame(parent, text="Fases do levain", padding=12)
+        phases.pack(fill="x", pady=(12, 0))
+        self._peak_var = tk.StringVar(value=str(self._settings.peak_minutes))
+        self._artifact_var = tk.StringVar(value=str(self._settings.artifact_minutes))
+        for row, (label, variable, limits, note) in enumerate((
+            ("Pico: leituras estáveis por", self._peak_var, PEAK_MINUTES,
+             "Quanto tempo o volume fica parado no topo até o app dizer \"Em pico\"."),
+            ("Artefato: volta em até", self._artifact_var, ARTIFACT_MINUTES,
+             "Uma mudança que volta ao nível anterior dentro desse tempo (lâmpada, pote retirado) é descartada;"
+             " uma queda que não volta passa a valer depois dele."),
+        )):
+            ttk.Label(phases, text=label).grid(row=row * 2, column=0, sticky="w")
+            box_ = ttk.Spinbox(
+                phases, from_=limits[0], to=limits[1], increment=1, width=5,
+                textvariable=variable, command=self._apply_settings,
+            )
+            box_.grid(row=row * 2, column=1, padx=6)
+            box_.bind("<Return>", lambda _e: self._apply_settings(), add="+")
+            box_.bind("<FocusOut>", lambda _e: self._apply_settings(), add="+")
+            ttk.Label(phases, text="minutos").grid(row=row * 2, column=2, sticky="w")
+            ttk.Label(phases, text=note, foreground="#59645e", wraplength=520, justify="left").grid(
+                row=row * 2 + 1, column=0, columnspan=3, sticky="w", pady=(2, 8)
+            )
+
         video = ttk.LabelFrame(parent, text="Vídeo", padding=12)
         video.pack(fill="x", pady=(12, 0))
         ttk.Label(video, text="Brilho fora das regiões marcadas").grid(row=0, column=0, sticky="w")
@@ -1542,6 +1569,14 @@ class LevainPeakApp:
             phone_seconds = int(float(self._phone_interval_var.get()))
         except ValueError:
             phone_seconds = self._settings.phone_interval_seconds
+        try:
+            peak_minutes = int(float(self._peak_var.get()))
+        except ValueError:
+            peak_minutes = self._settings.peak_minutes
+        try:
+            artifact_minutes = int(float(self._artifact_var.get()))
+        except ValueError:
+            artifact_minutes = self._settings.artifact_minutes
         # replace(), not a new Settings: the options this tab does not show (graph scales,
         # the display's black/white cuts) must survive a change here.
         self._settings = replace(
@@ -1551,10 +1586,16 @@ class LevainPeakApp:
             phone_interval_seconds=phone_seconds,
             phone_snapshot=self._phone_snapshot_var.get(),
             overlay_brightness=int(float(self._overlay_var.get())),
+            peak_minutes=peak_minutes,
+            artifact_minutes=artifact_minutes,
         ).clamped()
         self._overlay_var.set(self._settings.overlay_brightness)
         self._interval_var.set(str(self._settings.record_interval_seconds))
         self._phone_interval_var.set(str(self._settings.phone_interval_seconds))
+        self._peak_var.set(str(self._settings.peak_minutes))
+        self._artifact_var.set(str(self._settings.artifact_minutes))
+        self._phase_tracker.plateau_seconds = self._settings.peak_minutes * 60
+        self._phase_tracker.artifact_seconds = self._settings.artifact_minutes * 60
         self._session_log.sample_seconds = self._settings.record_interval_seconds
         try:
             save_settings(self._settings)
@@ -1673,6 +1714,8 @@ class LevainPeakApp:
         return {
             "temperature_scale": self._settings.graph_temperature_scale,
             "volume_mode": self._settings.graph_volume_scale,
+            "peak_seconds": self._settings.peak_minutes * 60,
+            "artifact_seconds": self._settings.artifact_minutes * 60,
         }
 
     def _phone_snapshot(self) -> dict | None:
@@ -1711,11 +1754,13 @@ class LevainPeakApp:
     def _graph_data(self, path: Path) -> dict:
         """The graph's series, rebuilt only when the CSV file changes."""
         stat = path.stat()
-        key = (str(path), stat.st_mtime_ns, stat.st_size)
+        key = (str(path), stat.st_mtime_ns, stat.st_size, self._settings.peak_minutes, self._settings.artifact_minutes)
         cached = getattr(self, "_graph_cache", None)
         if cached is not None and cached[0] == key:
             return cached[1]
-        data = prepare_graph_data(path)
+        data = prepare_graph_data(
+            path, peak_seconds=self._settings.peak_minutes * 60, artifact_seconds=self._settings.artifact_minutes * 60
+        )
         self._graph_cache = (key, data)
         return data
 
