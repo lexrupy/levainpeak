@@ -869,13 +869,18 @@ class LevainPeakApp:
         self._measurement = None
         self.auto_pot_button.configure(state="normal")
         if self._session_log.active:
+            kept_baseline = self._session_baseline
             self._session_baseline = None
             self._reset_tracking()
             self._session_log.save_regions(roi, self._temperature_roi, outline=outline)
-            # A new contour reads the same levain at another level: join the series at the last one logged.
+            # A new contour reads the same levain at another level: join the series at the last one
+            # logged, and keep the session's initial level, so the growth factor goes on from where it was.
             if self._analyzer is not None and self._session_log.last_volume is not None:
                 self._analyzer.anchor_volume = self._session_log.last_volume
                 self._analyzer.rejoin()
+                if kept_baseline is not None:
+                    self._session_baseline = kept_baseline
+                    self._reset_tracking(kept_baseline)
         self._set_message("Contorno do pote definido. Procurando o nível do levain dentro dele.")
 
     def _apply_face_quad(self) -> None:
