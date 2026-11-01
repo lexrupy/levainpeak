@@ -38,7 +38,7 @@ from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, 
                                  INK_CUT_INFRARED, MAX_OVERLAY_BRIGHTNESS,
                                  MAX_PHONE_SECONDS, MAX_RECORD_SECONDS, MIN_OVERLAY_BRIGHTNESS,
                                  MIN_PHONE_SECONDS, MIN_RECORD_SECONDS,
-                                 Settings, load_settings, save_settings)
+                                 MARK_SHAPES, Settings, load_settings, save_settings)
 from levainpeak.stream import RtspStream
 from levainpeak.vision import (ContainerMeasurement, draw_measurement,
                                set_initial_marker,
@@ -170,6 +170,13 @@ class LevainPeakApp:
             label='Detectar marca "+" ou "X" no pote (alinha a altura)',
             variable=self._mark_var, command=self._toggle_mark_alignment,
         )
+        self._shape_var = tk.StringVar(value=self._settings.mark_shape)
+        self._video_menu.add_separator()
+        for shape in MARK_SHAPES:
+            self._video_menu.add_radiobutton(
+                label=f"Marcar com {'círculo' if shape == 'círculo' else 'quadrado'}",
+                variable=self._shape_var, value=shape, command=self._choose_mark_shape,
+            )
         self.video.bind("<Button-3>", lambda event: self._video_menu.tk_popup(event.x_root, event.y_root))
         self._placeholder_item = self.video.create_text(
             240,
@@ -332,7 +339,10 @@ class LevainPeakApp:
             layer = shown.copy()
             cv2.line(layer, (x - arm, y), (x + arm, y), red, 3, cv2.LINE_AA)
             cv2.line(layer, (x, y - arm), (x, y + arm), red, 3, cv2.LINE_AA)
-            cv2.rectangle(layer, (x - arm, y - arm), (x + arm, y + arm), red, 3, cv2.LINE_AA)
+            if self._settings.mark_shape == "quadrado":
+                cv2.rectangle(layer, (x - arm, y - arm), (x + arm, y + arm), red, 3, cv2.LINE_AA)
+            else:
+                cv2.circle(layer, (x, y), arm, red, 3, cv2.LINE_AA)
             shown = cv2.addWeighted(layer, 0.4, shown, 0.6, 0)  # translucent: the mark below shows through
         return shown
 
@@ -814,6 +824,14 @@ class LevainPeakApp:
             a, b, c = polygon[index], polygon[(index + 1) % len(polygon)], polygon[(index + 2) % len(polygon)]
             signs.append(np.sign((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])))
         return abs(sum(signs)) == len(signs)  # all turns the same way: convex, not crossed
+
+    def _choose_mark_shape(self) -> None:
+        self._settings = replace(self._settings, mark_shape=self._shape_var.get()).clamped()
+        try:
+            save_settings(self._settings)
+        except OSError:
+            logging.exception("Falha ao salvar o formato da marca")
+        self._redraw_current_frame()
 
     def _toggle_mark_alignment(self) -> None:
         enabled = bool(self._mark_var.get())

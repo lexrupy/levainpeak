@@ -22,6 +22,9 @@ DEFAULT_INK_CUT_INFRARED = 0.30  # what "auto" puts back
 DEFAULT_INK_CUT_DAY = 40
 
 
+MARK_SHAPES = ("círculo", "quadrado")
+
+
 @dataclass
 class Settings:
     record_interval_seconds: int = 10
@@ -33,6 +36,7 @@ class Settings:
     graph_volume_scale: str = "auto"
     ink_cut_infrared: float = DEFAULT_INK_CUT_INFRARED
     ink_cut_day: int = DEFAULT_INK_CUT_DAY
+    mark_shape: str = "círculo"  # drawn around the followed mark: "círculo" or "quadrado"
     mark_alignment: bool = False  # follow the pot's height by the "+" or "X" on its label
 
     def clamped(self) -> "Settings":
@@ -55,6 +59,7 @@ class Settings:
             ink_cut_infrared=round(min(INK_CUT_INFRARED[1], max(INK_CUT_INFRARED[0], float(self.ink_cut_infrared))), 2),
             ink_cut_day=min(INK_CUT_DAY[1], max(INK_CUT_DAY[0], int(self.ink_cut_day))),
             mark_alignment=bool(self.mark_alignment),
+            mark_shape=self.mark_shape if self.mark_shape in MARK_SHAPES else "círculo",
         )
 
 
@@ -74,6 +79,7 @@ def load_settings(path: Path = SETTINGS_PATH) -> Settings:
             ink_cut_infrared=float(data.get("ink_cut_infrared", defaults.ink_cut_infrared)),
             ink_cut_day=int(data.get("ink_cut_day", defaults.ink_cut_day)),
             mark_alignment=bool(data.get("mark_alignment", defaults.mark_alignment)),
+            mark_shape=str(data.get("mark_shape", defaults.mark_shape)),
         ).clamped()
     except FileNotFoundError:
         return defaults
