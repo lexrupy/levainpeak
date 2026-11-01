@@ -141,7 +141,8 @@ def measure_container(
         )
     surface = None
     if outline_edges is not None:
-        surface = _find_surface_from_below(gray, left, right, inner_top, inner_bottom)
+        infrared = float(np.abs(frame[..., 0].astype(np.int16) - frame[..., 2]).mean()) < 3
+        surface = _find_surface_from_below(gray, left, right, inner_top, inner_bottom, infrared)
     if surface is None and marker_confidence >= 0.2:
         surface = _find_surface_by_columns(frame, left, right, inner_top, inner_bottom, marker_y)
     if surface is None:
@@ -612,7 +613,7 @@ def column_scan(
 
 
 def _find_surface_from_below(
-    gray: np.ndarray, left: int, right: int, top: int, bottom: int
+    gray: np.ndarray, left: int, right: int, top: int, bottom: int, infrared: bool = False
 ) -> tuple[int, float] | None:
     """The top of the opaque, bright levain, found by climbing from the bottom of the jar.
 
@@ -632,7 +633,9 @@ def _find_surface_from_below(
     glass = float(np.percentile(profile[: int(height * 0.6)], 10))
     if levain <= 0 or levain - glass < 0.2 * levain:
         return None  # nothing dimmer than the levain above it: no surface to find
-    limit = glass + 0.6 * (levain - glass)
+    # Infrared shows the levain's edge sharply, so its middle is the surface; by day the
+    # foam's pale rim makes the transition wider and the edge sits nearer the levain.
+    limit = glass + (0.4 if infrared else 0.65) * (levain - glass)
     # A stretch of clear glass is long; a dark band or ring on the levain is thin and
     # darker than any glass, so neither stops the climb.
     run = max(16, height // 25)
