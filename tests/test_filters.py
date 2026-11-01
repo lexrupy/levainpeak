@@ -94,3 +94,17 @@ def test_a_big_jump_needs_many_more_confirmations_than_a_small_one():
     assert gate.accept(20.8) and gate.trusted == 20.8  # ...but a real, lasting change gets in
     gate.trusted = 25.6
     assert not any(gate.accept(26.2) for _ in range(5)) and gate.accept(26.2)  # a small step: the usual 6
+
+
+def test_a_big_temperature_jump_that_holds_for_minutes_is_still_rejected():
+    from levainpeak.analysis import BIG_TEMPERATURE_CONFIRMATIONS, BIG_TEMPERATURE_JUMP_C
+    from levainpeak.filters import OutlierGate
+
+    gate = OutlierGate(
+        max_jump=3.0, confirmations=3,
+        big_jump=BIG_TEMPERATURE_JUMP_C, big_confirmations=BIG_TEMPERATURE_CONFIRMATIONS,
+    )
+    gate.accept(24.7)
+    assert not any(gate.accept(43.6) for _ in range(BIG_TEMPERATURE_CONFIRMATIONS - 1))
+    assert gate.accept(43.6)  # a swapped thermometer is adopted in the end
+    assert gate.accept(46.0)  # and small steps after it are fine

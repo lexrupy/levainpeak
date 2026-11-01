@@ -25,6 +25,10 @@ from levainpeak.vision import ContainerMeasurement, measure_container
 
 MIN_TEMPERATURE_C = 0.0
 MAX_TEMPERATURE_C = 60.0
+# A fermenter does not change by this much in minutes: a jump past it is a misread display
+# (the camera moved, the region lies over something else) and must hold this many reads (2 s each).
+BIG_TEMPERATURE_JUMP_C = 5.0
+BIG_TEMPERATURE_CONFIRMATIONS = 900
 
 
 MAX_PLUS_SLIDE = 200  # px the mark alone may move the drawing sideways
@@ -87,7 +91,10 @@ class ContainerAnalyzer:
         # Infrared reads are blurrier, so a wrong digit is likelier: only small,
         # well-confirmed moves are trusted there, anchored on the last good read.
         self._temperature_gates = {
-            DAY.name: OutlierGate(max_jump=3.0, confirmations=3),
+            DAY.name: OutlierGate(
+                max_jump=3.0, confirmations=3,
+                big_jump=BIG_TEMPERATURE_JUMP_C, big_confirmations=BIG_TEMPERATURE_CONFIRMATIONS,
+            ),
             INFRARED.name: OutlierGate(max_jump=0.25, confirmations=6, big_jump=1.0, big_confirmations=40),
         }
         self._gate_profile: str | None = None
