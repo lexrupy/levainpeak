@@ -1723,6 +1723,8 @@ class LevainPeakApp:
             on_close=self._close_session_graph,
         )
         self._graph_canvas.bind("<Configure>", self._on_graph_configure, add="+")
+        self._graph_canvas.bind("<Motion>", self._graph_hover_at, add="+")
+        self._graph_canvas.bind("<Leave>", lambda _e: self._graph_canvas.delete("hover"), add="+")
         self._refresh_session_graph()
         self._graph_window.after_idle(self._refresh_session_graph)
 
@@ -2147,6 +2149,7 @@ class LevainPeakApp:
         first_time = samples[0][0]
         duration = max(1.0, (samples[-1][0] - first_time).total_seconds())
         x_of = lambda stamp: left + (stamp - first_time).total_seconds() / duration * plot_width
+        initial_volume = baseline  # the growth factor in the hover text counts from here
         # 0% is the initial volume; see volume_scale for what 100% is.
         baseline, full_scale, scale_label = volume_scale(
             baseline, [v for _, v, _ in samples], self._settings.graph_volume_scale
@@ -2223,6 +2226,11 @@ class LevainPeakApp:
                 canvas.create_line(*previous, *point, fill="#c46b35", width=2)
             previous = point
 
+        self._graph_hover = {
+            "samples": samples, "xs": [x_of(stamp) for stamp, _, _ in samples], "initial": initial_volume,
+            "y_volume": y_volume, "y_temperature": y_temperature, "bounds": (left, right, top, bottom),
+        }
+
         legend_y = 42
         canvas.create_line(left + 8, legend_y, left + 32, legend_y, fill="#397a9b", width=3)
         canvas.create_text(
@@ -2235,6 +2243,41 @@ class LevainPeakApp:
             text="Temperatura" if temperatures else "Temperatura indisponível",
             anchor="w", fill="#202723",
         )
+
+    def _graph_hover_at(self, event: tk.Event) -> None:
+        """Mark the reading nearest the pointer and say its time, growth factor and temperature."""
+        canvas = getattr(self, "_graph_canvas", None)
+        hover = getattr(self, "_graph_hover", None)
+        if canvas is None or not hover:
+            return
+        canvas.delete("hover")
+        left, right, top, bottom = hover["bounds"]
+        if not left <= event.x <= right or not top <= event.y <= bottom:
+            return
+        xs, samples = hover["xs"], hover["samples"]
+        index = min(range(len(xs)), key=lambda i: abs(xs[i] - event.x))
+        stamp, volume, temperature = samples[index]
+        x = xs[index]
+        factor = volume / hover["initial"] if hover["initial"] > 0 else 0.0
+        canvas.create_line(x, top, x, bottom, fill="#8a948e", dash=(3, 3), tags="hover")
+        y = hover["y_volume"](volume)
+        canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill="#397a9b", outline="#ffffff", width=2, tags="hover")
+        lines = [stamp.strftime("%d/%m %H:%M"), f"{factor:.2f}x"]
+        if temperature is not None:
+            y = hover["y_temperature"](temperature)
+            canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill="#c46b35", outline="#ffffff", width=2, tags="hover")
+            lines.append(f"{temperature:.1f} °C")
+        text = canvas.create_text(0, 0, text="\n".join(lines), anchor="nw", fill="#202723", tags="hover")
+        x0, y0, x1, y1 = canvas.bbox(text)
+        box_width, box_height = x1 - x0 + 12, y1 - y0 + 8
+        box_left = x + 12 if x + 12 + box_width <= right else x - 12 - box_width
+        box_top = min(max(top, event.y - box_height // 2), bottom - box_height)
+        canvas.coords(text, box_left + 6, box_top + 4)
+        box = canvas.create_rectangle(
+            box_left, box_top, box_left + box_width, box_top + box_height,
+            fill="#fffefa", outline="#8a948e", tags="hover",
+        )
+        canvas.tag_lower(box, text)
 
     _GRAPH_PHASE_FILL = {
         LATENCY: "#f2f0e8",
