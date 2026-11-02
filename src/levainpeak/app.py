@@ -218,7 +218,7 @@ class LevainPeakApp:
         self._turn_scale.bind("<Button-4>", lambda e: self._fine_turned(self._rotation_var.get() + 0.1))
         self._turn_scale.bind("<Button-5>", lambda e: self._fine_turned(self._rotation_var.get() - 0.1))
         ttk.Label(turn_row, textvariable=self._rotation_text, width=7, anchor="e").pack(side="left")
-        ttk.Button(turn_row, text="Zerar", width=6, command=lambda: self._set_rotation(0)).pack(side="left", padx=(6, 0))
+        ttk.Button(turn_row, text="Zerar", width=6, command=self._reset_rotation).pack(side="left", padx=(6, 0))
         ttk.Button(turn_row, text="Time-lapse", command=self._open_timelapse).pack(side="left", padx=(6, 0))
         self._mark_var = tk.BooleanVar(value=self._settings.mark_alignment)
         self._video_menu = tk.Menu(self.video, tearoff=False)
@@ -912,6 +912,17 @@ class LevainPeakApp:
         fine = min(FINE_TURN_DEGREES, max(-FINE_TURN_DEGREES, float(value)))
         quarter = round(self._settings.rotation / 90) * 90
         self._set_rotation(quarter + round(fine, 1))
+
+    def _reset_rotation(self) -> None:
+        if self._settings.rotation == 0:
+            return
+        if messagebox.askyesno(
+            "Zerar o ângulo",
+            f"Voltar a imagem de {self._settings.rotation:.1f}° para 0°?\n"
+            "O pote e o visor ficam onde estão na tela, e talvez precisem de ajuste.",
+            parent=self.root,
+        ):
+            self._set_rotation(0)
 
     def _set_rotation(self, value: float) -> None:
         degrees = Settings(rotation=value).clamped().rotation
