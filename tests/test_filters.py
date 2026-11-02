@@ -146,3 +146,19 @@ def test_a_light_that_keeps_changing_cannot_hold_the_volume_for_hours():
         if second > 3600 + 1800:
             held_late.append(held)
     assert not all(held_late)
+
+
+def test_a_lamp_that_moved_for_good_is_told_apart_from_one_that_went_off_and_on():
+    from levainpeak.filters import LampWatch
+
+    for final, stays in ((100.0, False), (150.0, True)):
+        watch = LampWatch()
+        now = 0.0
+        for _ in range(12):
+            watch.update(now, 100.0, 60.0)
+            now += 10
+        assert watch.update(now, 150.0, 60.0)  # the picture brightens: held
+        for _ in range(20):
+            now += 10
+            watch.update(now, 150.0, 60.0)
+        assert watch.stayed_changed(final) is stays

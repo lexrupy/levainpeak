@@ -69,6 +69,12 @@ class LampWatch:
         self._samples: list[tuple[float, float]] = []
         self.held_until = float("-inf")
         self._held_since: float | None = None
+        self.reference: float | None = None  # the brightness the last hold was held against
+
+    def stayed_changed(self, brightness: float) -> bool:
+        """After a hold: the picture is still as different from before it as when it began (a lamp moved,
+        not one that went off and on again)."""
+        return bool(self.reference) and abs(brightness - self.reference) / self.reference > self.jump
 
     def reset(self) -> None:
         self._samples.clear()
@@ -89,6 +95,7 @@ class LampWatch:
             if reference > 1 and abs(brightness - reference) / reference > self.jump:
                 if self._held_since is None or now >= self.held_until:
                     self._held_since = now
+                    self.reference = reference
                 self.held_until = max(self.held_until, now + hold_seconds)
         self._samples.append((now, brightness))
         if now >= self.held_until:

@@ -412,7 +412,13 @@ class ContainerAnalyzer:
             now = time.monotonic()
             # The lamp changes how the surface looks for minutes: keep the level it had before.
             brightness = float(frame[::8, ::8].mean())
+            was_held = self.lamp_held
             held = self._lamp.update(now, brightness, self.lamp_hold_seconds)
+            if was_held and not held and self._last_volume is not None and self._lamp.stayed_changed(brightness):
+                # The light moved for good: what is read now sits a step away from what was held, and the
+                # step is the light, not the levain. Join the series at the level it was held at.
+                self.anchor_volume = self._last_volume
+                self.rejoin()
             if held and self.lamp_held is False:
                 older = [item for stamp, item in self._recent if now - stamp >= 20.0]
                 self._frozen = older[-1] if older else None
