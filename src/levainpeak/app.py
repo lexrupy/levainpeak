@@ -984,6 +984,9 @@ class LevainPeakApp:
         margin = int(0.12 * max(max(xs) - min(xs), max(ys) - min(ys)))
         roi = (max(0, min(xs) - margin), max(0, min(ys) - margin),
                min(width, max(xs) + margin), min(height, max(ys) + margin))
+        kept = self._temperature_roi
+        if kept is not None and kept[0] <= min(xs) and kept[1] <= min(ys) and kept[2] >= max(xs) and kept[3] >= max(ys):
+            roi = tuple(kept)  # the box the user drew around the display still holds the new corners
         self._cancel_outline_mode()
         self._temperature_quad = quad
         self._temperature_roi = roi
