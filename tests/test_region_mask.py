@@ -119,3 +119,14 @@ def test_every_diagnostic_panel_box_lies_inside_the_mosaic():
     assert len(boxes) == 7
     for left, top, width, height in boxes:
         assert 0 <= left and left + width <= WIDTH and 0 <= top and top + height <= HEIGHT
+
+
+def test_level_lines_stop_at_the_walls_of_a_tapered_pot():
+    from types import SimpleNamespace as NS
+    from levainpeak.vision import _edges_at
+
+    profile = tuple((100 + row // 2, 300 - row // 2) for row in range(101))  # narrows toward the bottom
+    measurement = NS(edge_profile=profile, top=0, bottom=100, left=100, right=300)
+    assert _edges_at(measurement, 0) == (100, 300)
+    assert _edges_at(measurement, 100) == (150, 250)
+    assert _edges_at(NS(edge_profile=(), top=0, bottom=100, left=100, right=300), 50) == (100, 300)

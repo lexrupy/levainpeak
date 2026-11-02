@@ -284,20 +284,22 @@ def draw_measurement(
         cv2.addWeighted(overlay, 0.4, annotated, 0.6, 0, annotated)
     else:
         cv2.rectangle(annotated, *corners, color, 3)
+    surface_left, surface_right = _edges_at(measurement, measurement.surface_y)
     cv2.line(
         annotated,
-        (measurement.left, measurement.surface_y),
-        (measurement.right, measurement.surface_y),
+        (surface_left, measurement.surface_y),
+        (surface_right, measurement.surface_y),
         (40, 210, 255),
         3,
     )
     if measurement.marker_y is not None:
         marker_color = (255, 190, 60) if measurement.marker_manual else (255, 160, 50)
-        for x in range(measurement.left, measurement.right, 24):
+        marker_left, marker_right = _edges_at(measurement, measurement.marker_y)
+        for x in range(marker_left, marker_right, 24):
             cv2.line(
                 annotated,
                 (x, measurement.marker_y),
-                (min(x + 12, measurement.right), measurement.marker_y),
+                (min(x + 12, marker_right), measurement.marker_y),
                 marker_color,
                 2,
             )
@@ -308,6 +310,18 @@ def draw_measurement(
     cv2.putText(annotated, label, (measurement.left, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4, cv2.LINE_AA)
     cv2.putText(annotated, label, (measurement.left, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2, cv2.LINE_AA)
     return annotated
+
+
+def _edges_at(measurement: ContainerMeasurement, y: int) -> tuple[int, int]:
+    """The vessel's left and right wall at row ``y``: a level line stops at the walls of a tapered pot."""
+    profile = measurement.edge_profile
+    if not profile or measurement.bottom <= measurement.top:
+        return measurement.left, measurement.right
+    fraction = min(1.0, max(0.0, (y - measurement.top) / (measurement.bottom - measurement.top)))
+    left, right = profile[round(fraction * (len(profile) - 1))]
+    if right - left < 10:
+        return measurement.left, measurement.right
+    return int(left), int(right)
 
 
 MAX_WALL_SLOPE = 0.05
