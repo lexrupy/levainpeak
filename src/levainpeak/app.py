@@ -859,7 +859,7 @@ class LevainPeakApp:
     def _move_outline_handle(self, event: tk.Event) -> None:
         if self._outline_drag is None or self._source_frame_size is None:
             return
-        point = self._source_point(event)
+        point = self._source_point(event, clamp=True)
         if point is None:
             return
         width, height = self._source_frame_size
@@ -1081,7 +1081,7 @@ class LevainPeakApp:
     def _preview_reposition(self, event: tk.Event) -> None:
         if not self._reposition_mode:
             return
-        point = self._source_point(event)
+        point = self._source_point(event, clamp=True)
         if point is None:
             return
         self._reposition_center = (float(point[0]), float(point[1]))
@@ -1134,7 +1134,7 @@ class LevainPeakApp:
     def _preview_roi(self, event: tk.Event) -> None:
         if not self._roi_mode or self._roi_drag_start is None:
             return
-        point = self._source_point(event)
+        point = self._source_point(event, clamp=True)
         if point is None:
             return
         start_x, start_y = self._roi_drag_start
@@ -1159,7 +1159,7 @@ class LevainPeakApp:
             return
         if not self._roi_mode or self._roi_drag_start is None:
             return
-        point = self._source_point(event)
+        point = self._source_point(event, clamp=True)
         start = self._roi_drag_start
         self._roi_drag_start = None
         if point is None:
@@ -1240,18 +1240,24 @@ class LevainPeakApp:
             self._session_log.save_regions(None, self._temperature_roi, outline=None)
         self._set_message("Detecção automática ativada.")
 
-    def _source_point(self, event: tk.Event) -> tuple[int, int] | None:
+    def _source_point(self, event: tk.Event, clamp: bool = False) -> tuple[int, int] | None:
+        """The picture's point under the mouse; with ``clamp`` a mouse outside the picture (a drag
+        that went past its edge, which Tk still reports) counts as the nearest point on the edge."""
         if self._source_frame_size is None or self._displayed_image_size is None:
             return None
         image_width, image_height = self._display_visible_size or self._displayed_image_size
         offset_x, offset_y = self._display_offsets
-        if not (offset_x <= event.x < offset_x + image_width and offset_y <= event.y < offset_y + image_height):
+        x, y = event.x, event.y
+        if clamp:
+            x = min(max(x, offset_x), offset_x + image_width - 1)
+            y = min(max(y, offset_y), offset_y + image_height - 1)
+        if not (offset_x <= x < offset_x + image_width and offset_y <= y < offset_y + image_height):
             return None
         source_width, source_height = self._source_frame_size
         crop_x, crop_y = self._display_crop_origin
         full_width, full_height = self._displayed_image_size
-        source_x = int((event.x - offset_x + crop_x) * source_width / full_width)
-        source_y = int((event.y - offset_y + crop_y) * source_height / full_height)
+        source_x = min(source_width - 1, int((x - offset_x + crop_x) * source_width / full_width))
+        source_y = min(source_height - 1, int((y - offset_y + crop_y) * source_height / full_height))
         return source_x, source_y
 
     def _preview_marker(self, event: tk.Event) -> None:

@@ -101,3 +101,12 @@ def test_repositioning_moves_resizes_and_keeps_the_mark_in_proportion():
     assert abs((sum(ys) / 4) - 400) <= 1
     assert marker == round(400 + 2 * (250 - 200))
     assert roi[0] < min(xs) and roi[2] > max(xs)
+
+
+def test_a_drag_past_the_picture_edge_counts_as_the_edge():
+    app = SimpleNamespace(_source_frame_size=(1920, 1080), _displayed_image_size=(960, 540),
+                          _display_visible_size=None, _display_offsets=(10, 20), _display_crop_origin=(0, 0))
+    outside = SimpleNamespace(x=2000, y=-50)
+    assert LevainPeakApp._source_point(app, outside) is None
+    assert LevainPeakApp._source_point(app, outside, clamp=True) == (1918, 0)
+    assert LevainPeakApp._source_point(app, SimpleNamespace(x=-5, y=900), clamp=True) == (0, 1078)
