@@ -40,7 +40,7 @@ from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, 
                                  MIN_PHONE_SECONDS, MIN_RECORD_SECONDS,
                                  ARTIFACT_MINUTES, LAMP_MINUTES, MARK_SHAPES, PEAK_MINUTES, ROTATIONS, SNAPSHOT_MINUTES, Settings, load_settings, save_settings)
 from levainpeak.stream import RtspStream
-from levainpeak.timelapse import TimelapseWindow, session_photos
+from levainpeak.timelapse import TimelapseWindow, recent_sessions
 
 FINE_TURN_DEGREES = 15.0  # the slider's reach either way; whole quarter turns come from the menu
 from levainpeak.vision import (ContainerMeasurement, draw_measurement,
@@ -564,12 +564,16 @@ class LevainPeakApp:
         if self._timelapse is not None and self._timelapse.open:
             self._timelapse.lift()
             return
-        photos = session_photos(self._session_log.path)
-        if not photos:
-            messagebox.showinfo("Time-lapse", "Esta sessão ainda não tem fotos guardadas.")
+        sessions = recent_sessions(self._session_log.directory, self._session_log.path)
+        if not sessions:
+            messagebox.showinfo("Time-lapse", "Ainda não há fotos guardadas.")
             return
-        self._timelapse = TimelapseWindow(self.root, photos, self._settings.rotation)
-        self._timelapse.go_to(len(photos) - 1)
+        current = self._session_log.path
+        chosen = 0
+        if current is not None:
+            chosen = next((i for i, (_, p) in enumerate(sessions) if p and p[0].parent.name == f"{current.stem}_fotos"), 0)
+        self._timelapse = TimelapseWindow(self.root, sessions, chosen, self._settings.rotation)
+        self._timelapse.go_to(len(sessions[chosen][1]) - 1)
 
     def _open_debug_view(self) -> None:
         if self._debug_window is not None and self._debug_window.open:

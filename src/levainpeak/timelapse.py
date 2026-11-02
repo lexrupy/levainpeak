@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +17,7 @@ MIN_FPS = 1
 MAX_FPS = 30
 DEFAULT_FPS = 5
 CACHE_FRAMES = 24
+RECENT_SESSIONS = 10
 
 
 def session_photos(session_path: Path | None) -> list[Path]:
@@ -23,6 +25,28 @@ def session_photos(session_path: Path | None) -> list[Path]:
     if session_path is None:
         return []
     return sorted(session_path.with_name(f"{session_path.stem}_fotos").glob("*.jpg"))
+
+
+def recent_sessions(directory: Path, current: Path | None = None, limit: int = RECENT_SESSIONS) -> list[tuple[str, list[Path]]]:
+    """(menu label, frames) of the newest `limit` sessions that kept frames; the active one is always kept."""
+    found: list[tuple[str, list[Path]]] = []
+    for folder in sorted(directory.glob("*_fotos"), reverse=True):
+        photos = sorted(folder.glob("*.jpg"))
+        if not photos and (current is None or folder.name != f"{current.stem}_fotos"):
+            continue
+        started = photo_time(Path(folder.name.removesuffix("_fotos")))
+        when = f"{started:%d/%m %H:%M}" if started else folder.name
+        name = session_name(folder.with_name(folder.name.removesuffix("_fotos") + ".json"))
+        count = f"{len(photos)} foto{'s' if len(photos) != 1 else ''}"
+        found.append((" · ".join(part for part in (name, when, count) if part), photos))
+    return found[:limit]
+
+
+def session_name(metadata: Path) -> str:
+    try:
+        return str(json.loads(metadata.read_text(encoding="utf-8")).get("session_name") or "").strip()
+    except (OSError, ValueError, AttributeError):
+        return ""
 
 
 def photo_time(path: Path) -> datetime | None:
@@ -37,8 +61,12 @@ def step_index(index: int, step: int, count: int) -> int:
 
 
 class TimelapseWindow:
-    def __init__(self, parent: tk.Misc, photos: list[Path], rotation: float = 0.0) -> None:
-        self._photos = photos
+    def __init__(
+        self, parent: tk.Misc, sessions: list[tuple[str, list[Path]]], chosen: int = 0, rotation: float = 0.0
+    ) -> None:
+        self._sessions = sessions
+        self._photos = sessions[chosen][1] if sessions else []
+        photos = self._photos
         self._rotation = rotation
         self._index = 0
         self._playing = False
@@ -51,6 +79,16 @@ class TimelapseWindow:
         self.window.title("Time-lapse da sessão")
         self.window.geometry("960x620")
         self.window.protocol("WM_DELETE_WINDOW", self.close)
+        top = ttk.Frame(self.window)
+        top.pack(fill="x", padx=8, pady=(8, 4))
+        ttk.Label(top, text="Sessão").pack(side="left")
+        self._menu = ttk.Combobox(
+            top, state="readonly", values=[label for label, _ in sessions], takefocus=0, width=44,
+        )
+        if sessions:
+            self._menu.current(chosen)
+        self._menu.pack(side="left", padx=6)
+        self._menu.bind("<<ComboboxSelected>>", self._chose_session)
         self.canvas = tk.Canvas(self.window, background="#202723", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", lambda _e: self._show())
@@ -92,6 +130,15 @@ class TimelapseWindow:
                 self.window.bind(key, lambda _e, c=command: (c(), "break")[1])
         self.window.focus_set()
         self._show()
+
+    def _chose_session(self, _event=None) -> None:
+        self._stop()
+        self._photos = self._sessions[self._menu.current()][1]
+        self._cache.clear()
+        self._slider.configure(to=max(0, len(self._photos) - 1))
+        self._index = 0
+        self.go_to(len(self._photos) - 1)
+        self.window.focus_set()
 
     def lift(self) -> None:
         self.window.lift()
