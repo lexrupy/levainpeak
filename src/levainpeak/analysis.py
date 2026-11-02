@@ -58,6 +58,8 @@ class ContainerAnalyzer:
         # resumed, the new reading is joined to the last value instead of stepping.
         self.anchor_volume: float | None = None  # last logged volume of a resumed session
         self._join_offset = 0.0
+        self._surface_offset = 0.0  # moves the surface reading only: a lamp step or a resume, not the pot's geometry
+        self._surface_rejoin = True  # the next join is of that kind (a fresh process joins to the last logged volume)
         self._joined_profile: str | None = None
         self._last_volume: float | None = None
         self.align_enabled = True
@@ -152,27 +154,40 @@ class ContainerAnalyzer:
         self.volume_offset = 0.0
         self.anchor_volume = None
         self._join_offset = 0.0
+        self._surface_offset = 0.0
+        self._surface_rejoin = True
         self._joined_profile = None
         self._last_volume = None
 
     @property
     def volume_shift(self) -> float:
-        """How far the series is moved from the raw reading (join across contours and profiles)."""
+        """How far the pot's geometry moves the series from the raw reading (join across contours and
+        profiles). It also applies to the initial level; a lamp step or a resume (``_surface_offset``) does not."""
         return self.volume_offset + self._join_offset
 
-    def rejoin(self) -> None:
-        """Join the series again at the next reading, to ``anchor_volume`` (after a pause)."""
+    def rejoin(self, surface_only: bool = False) -> None:
+        """Join the series again at the next reading, to ``anchor_volume`` (after a pause).
+
+        ``surface_only``: the step is in how the surface reads (the light moved), not in the pot's
+        geometry, so the initial level stays where it was."""
         self._last_volume = None
         self._joined_profile = None
+        self._surface_rejoin = surface_only
 
     def _join_volume(self, raw: float) -> float:
         name = self.profile.name
         if self._joined_profile != name:
             reference = self._last_volume if self._last_volume is not None else self.anchor_volume
+            base = raw + self.volume_offset + self._join_offset
             if reference is not None and abs(reference - (raw + self.volume_offset)) < 0.15:
-                self._join_offset = reference - raw - self.volume_offset
+                if self._surface_rejoin:
+                    self._surface_offset = reference - base
+                else:
+                    self._join_offset = reference - raw - self.volume_offset
+                    self._surface_offset = 0.0
             self._joined_profile = name
-        volume = raw + self.volume_offset + self._join_offset
+            self._surface_rejoin = False  # a later join (another profile) is the pot's geometry
+        volume = raw + self.volume_offset + self._join_offset + self._surface_offset
         self._last_volume = volume
         return volume
 
@@ -418,7 +433,7 @@ class ContainerAnalyzer:
                 # The light moved for good: what is read now sits a step away from what was held, and the
                 # step is the light, not the levain. Join the series at the level it was held at.
                 self.anchor_volume = self._last_volume
-                self.rejoin()
+                self.rejoin(surface_only=True)
             if held and self.lamp_held is False:
                 older = [item for stamp, item in self._recent if now - stamp >= 20.0]
                 self._frozen = older[-1] if older else None
