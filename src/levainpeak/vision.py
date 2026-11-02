@@ -264,7 +264,7 @@ def set_initial_volume_reference(
 
 def draw_measurement(
     frame: np.ndarray, measurement: ContainerMeasurement, *, detail: bool = False,
-    faint_box: bool = False,
+    faint_box: bool = False, outline: tuple[tuple[int, int], ...] | None = None,
 ) -> np.ndarray:
     """Draw the detected vessel bounds and estimated levain surface.
 
@@ -284,7 +284,10 @@ def draw_measurement(
         cv2.addWeighted(overlay, 0.4, annotated, 0.6, 0, annotated)
     else:
         cv2.rectangle(annotated, *corners, color, 3)
-    surface_left, surface_right = _edges_at(measurement, measurement.surface_y)
+    def span(y: int) -> tuple[int, int]:
+        return _outline_span(outline, y) or _edges_at(measurement, y)
+
+    surface_left, surface_right = span(measurement.surface_y)
     cv2.line(
         annotated,
         (surface_left, measurement.surface_y),
@@ -294,7 +297,7 @@ def draw_measurement(
     )
     if measurement.marker_y is not None:
         marker_color = (255, 190, 60) if measurement.marker_manual else (255, 160, 50)
-        marker_left, marker_right = _edges_at(measurement, measurement.marker_y)
+        marker_left, marker_right = span(measurement.marker_y)
         for x in range(marker_left, marker_right, 24):
             cv2.line(
                 annotated,
@@ -306,10 +309,24 @@ def draw_measurement(
     label = f"Pote | volume ~{measurement.volume_fraction:.0%}"
     if measurement.growth_factor is not None:
         label += f" | {measurement.growth_factor:.1f}x marca inicial"
-    y = max(30, measurement.top - 12)
-    cv2.putText(annotated, label, (measurement.left, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4, cv2.LINE_AA)
-    cv2.putText(annotated, label, (measurement.left, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2, cv2.LINE_AA)
+    label_x, label_top = (min(x for x, _ in outline), min(y for _, y in outline)) if outline else (measurement.left, measurement.top)
+    y = max(30, label_top - 12)
+    cv2.putText(annotated, label, (label_x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4, cv2.LINE_AA)
+    cv2.putText(annotated, label, (label_x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2, cv2.LINE_AA)
     return annotated
+
+
+def _outline_span(outline, y: int) -> tuple[int, int] | None:
+    """Where the polygon's sides cross row ``y`` (leftmost, rightmost), or None when the row is outside it."""
+    if not outline:
+        return None
+    crossings = []
+    for (x1, y1), (x2, y2) in zip(outline, outline[1:] + outline[:1]):
+        if y1 != y2 and min(y1, y2) <= y <= max(y1, y2):
+            crossings.append(x1 + (x2 - x1) * (y - y1) / (y2 - y1))
+    if len(crossings) < 2:
+        return None
+    return int(round(min(crossings))), int(round(max(crossings)))
 
 
 def _edges_at(measurement: ContainerMeasurement, y: int) -> tuple[int, int]:

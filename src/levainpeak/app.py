@@ -393,7 +393,8 @@ class LevainPeakApp:
 
     def _annotate(self, frame, measurement):
         shown = draw_measurement(
-            frame, measurement, detail=self._show_detail, faint_box=self._pot_outline is not None
+            frame, measurement, detail=self._show_detail, faint_box=self._pot_outline is not None,
+            outline=tuple(tuple(point) for point in self._pot_outline) if self._pot_outline else None,
         )
         seen = self._analyzer.mark_seen if self._analyzer is not None else None
         if seen is not None:  # the "+" or "X" the app is following, in red

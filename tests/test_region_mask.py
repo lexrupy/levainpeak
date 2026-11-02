@@ -130,3 +130,13 @@ def test_level_lines_stop_at_the_walls_of_a_tapered_pot():
     assert _edges_at(measurement, 0) == (100, 300)
     assert _edges_at(measurement, 100) == (150, 250)
     assert _edges_at(NS(edge_profile=(), top=0, bottom=100, left=100, right=300), 50) == (100, 300)
+
+
+def test_level_lines_follow_the_outline_as_the_window_shows_it():
+    from levainpeak.vision import _outline_span
+
+    outline = ((100, 0), (300, 0), (250, 100), (150, 100))  # wide at the top, narrow at the bottom
+    assert _outline_span(outline, 0) == (100, 300)
+    assert _outline_span(outline, 50) == (125, 275)
+    assert _outline_span(outline, 100) == (150, 250)
+    assert _outline_span(outline, 120) is None
