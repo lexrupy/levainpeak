@@ -2445,6 +2445,13 @@ class LevainPeakApp:
             return
         forecast = self._forecaster.minutes_until(current, target)
         if forecast is None:
+            known = self._session_log.last_forecast
+            if known:
+                try:
+                    label.configure(text=self._forecast_text(datetime.fromisoformat(known["at"]), known["basis"], "última conhecida"))
+                    return
+                except (ValueError, KeyError):
+                    pass
             label.configure(text="Sem crescimento sustentado para estimar")
             return
         minutes = forecast.minutes
