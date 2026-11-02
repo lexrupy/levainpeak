@@ -40,6 +40,7 @@ from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, 
                                  MIN_PHONE_SECONDS, MIN_RECORD_SECONDS,
                                  ARTIFACT_MINUTES, LAMP_MINUTES, MARK_SHAPES, PEAK_MINUTES, ROTATIONS, Settings, load_settings, save_settings)
 from levainpeak.stream import RtspStream
+from levainpeak.timelapse import TimelapseWindow, session_photos
 
 FINE_TURN_DEGREES = 15.0  # the slider's reach either way; whole quarter turns come from the menu
 from levainpeak.vision import (ContainerMeasurement, draw_measurement,
@@ -136,6 +137,7 @@ class LevainPeakApp:
         self._session_name = ""
         self._show_detail = False
         self._debug_window: DebugWindow | None = None
+        self._timelapse: TimelapseWindow | None = None
         self._phone_pusher: PhonePusher | None = None
         self._phone_applied: tuple | None = None
         self._phone_status_text = ""
@@ -216,6 +218,7 @@ class LevainPeakApp:
         self._turn_scale.bind("<Button-5>", lambda e: self._fine_turned(self._rotation_var.get() - 0.1))
         ttk.Label(turn_row, textvariable=self._rotation_text, width=7, anchor="e").pack(side="left")
         ttk.Button(turn_row, text="Zerar", width=6, command=lambda: self._set_rotation(0)).pack(side="left", padx=(6, 0))
+        ttk.Button(turn_row, text="Time-lapse", command=self._open_timelapse).pack(side="left", padx=(6, 0))
         self._mark_var = tk.BooleanVar(value=self._settings.mark_alignment)
         self._video_menu = tk.Menu(self.video, tearoff=False)
         self._video_menu.add_checkbutton(
@@ -556,6 +559,17 @@ class LevainPeakApp:
                 self._session_log.save_vessel_bounds(bounds)
             except OSError:
                 logging.exception("Falha ao salvar os limites do pote")
+
+    def _open_timelapse(self) -> None:
+        if self._timelapse is not None and self._timelapse.open:
+            self._timelapse.lift()
+            return
+        photos = session_photos(self._session_log.path)
+        if not photos:
+            messagebox.showinfo("Time-lapse", "Esta sessão ainda não tem fotos guardadas.")
+            return
+        self._timelapse = TimelapseWindow(self.root, photos, self._settings.rotation)
+        self._timelapse.go_to(len(photos) - 1)
 
     def _open_debug_view(self) -> None:
         if self._debug_window is not None and self._debug_window.open:
