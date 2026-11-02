@@ -373,6 +373,10 @@ def _profile_panel(raw, stable, texts: list[Text], row2_y: int) -> np.ndarray:
         cv2.line(canvas, (0, row_of(found)), (PANEL_W, row_of(found)), AUTO_MARKER, 1)
     if used is not None:
         cv2.line(canvas, (0, row_of(used)), (PANEL_W, row_of(used)), BLUE, 2 if manual else 1)
+        if raw.volume_below_profile:
+            index = int(np.clip(used - raw.top, 0, len(raw.volume_below_profile) - 1))
+            below_mark = raw.volume_below_profile[index]
+            texts.append((PANEL_W - 70, row_of(used) + row2_y + TITLE_H + 4, f"{below_mark:.0%}", BLUE, 11))
     texts.append((6, row2_y + TITLE_H + 2, "ciano: largura · laranja: volume abaixo da linha", YELLOW, 9))
     return canvas
 
