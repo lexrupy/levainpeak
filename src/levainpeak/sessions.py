@@ -115,10 +115,14 @@ class SessionLog:
             self.face_quad = None if face_quad is None else tuple((int(x), int(y)) for x, y in face_quad)
         if self.metadata_path is None:
             return
-        payload = {
+        try:  # keep what other methods saved here (snapshot interval, last forecast)
+            payload = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+        payload.update({
             name: list(region) if region is not None else None
             for name, region in self.regions.items()
-        }
+        })
         payload["session_name"] = self.session_name
         payload["vessel_bounds"] = {name: list(bounds) for name, bounds in self.vessel_bounds.items()}
         payload["marker_y"] = self.manual_marker_y

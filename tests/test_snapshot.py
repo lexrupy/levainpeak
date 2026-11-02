@@ -71,3 +71,16 @@ def test_the_regions_and_the_last_forecast_survive_a_resume(tmp_path):
     _, regions = again.resume(path)
     assert regions["thermometer"] == (1532, 133, 1909, 353)
     assert again.last_forecast == {"at": at.isoformat(), "basis": "início marcado"}
+
+
+def test_saving_the_regions_keeps_the_snapshot_interval_and_the_last_forecast(tmp_path):
+    import json
+    from datetime import datetime
+
+    log = SessionLog(tmp_path)
+    log.start(datetime.now().astimezone(), "t")
+    log.save_snapshot_seconds(300)
+    log.save_forecast(datetime.now().astimezone(), "início marcado")
+    log.save_regions((1, 2, 3, 4), (5, 6, 7, 8))
+    saved = json.loads(log.metadata_path.read_text())
+    assert saved["snapshot_seconds"] == 300.0 and saved["last_forecast"]["basis"] == "início marcado"
