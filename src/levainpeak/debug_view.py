@@ -558,7 +558,7 @@ class DebugWindow:
         self._cut_scale.bind("<B1-Motion>", lambda _e: self._cut_changed(False), add="+")
         self._cut_scale.bind("<ButtonRelease-1>", lambda _e: self._cut_changed(True), add="+")
         # Drag the picture to move the window, the border to resize it.
-        self._controls = FloatingWindowControls(self.window, self._label, on_close=self.close)
+        self._controls = FloatingWindowControls(self.window, self._label, on_close=self._escape)
         self._label.bind("<Double-Button-1>", self._toggle_panel_zoom, add="+")
         self._photo: ImageTk.PhotoImage | None = None
         self._latest: np.ndarray | None = None
@@ -599,6 +599,15 @@ class DebugWindow:
             self._on_ink_cut(float(self._cut_var.get()), release)
         if release:
             self._dragging_cut = False
+
+    def _escape(self) -> None:
+        """Esc leaves a zoomed panel first; the window closes only from the mosaic."""
+        if self._zoomed is None:
+            self.close()
+            return
+        self._zoomed = None
+        if self._latest is not None:
+            self._show(self._latest)
 
     def _toggle_panel_zoom(self, event: tk.Event) -> None:
         """Double click on a panel shows it alone; a double click again brings back the mosaic."""
