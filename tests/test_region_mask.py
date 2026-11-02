@@ -110,3 +110,12 @@ def test_a_drag_past_the_picture_edge_counts_as_the_edge():
     assert LevainPeakApp._source_point(app, outside) is None
     assert LevainPeakApp._source_point(app, outside, clamp=True) == (1918, 0)
     assert LevainPeakApp._source_point(app, SimpleNamespace(x=-5, y=900), clamp=True) == (0, 1078)
+
+
+def test_every_diagnostic_panel_box_lies_inside_the_mosaic():
+    from levainpeak.debug_view import HEIGHT, WIDTH, panel_boxes
+
+    boxes = panel_boxes()
+    assert len(boxes) == 7
+    for left, top, width, height in boxes:
+        assert 0 <= left and left + width <= WIDTH and 0 <= top and top + height <= HEIGHT

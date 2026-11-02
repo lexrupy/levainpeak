@@ -504,6 +504,16 @@ def _diagnostics_worker(
         stop.wait(max(0.5, 5 * (time.perf_counter() - started)))
 
 
+def panel_boxes() -> tuple[tuple[int, int, int, int], ...]:
+    """(x, y, width, height) in mosaic pixels of panels 1 to 7, title bar included."""
+    row2_y = TITLE_H + PANEL_H + GAP
+    top = tuple((index * (PANEL_W + GAP), 0, PANEL_W, TITLE_H + PANEL_H) for index in range(5))
+    return top + (
+        (0, row2_y, PANEL_W, TITLE_H + SECOND_ROW_H),
+        (PANEL_W + GAP, row2_y, 3 * PANEL_W + 2 * GAP, TITLE_H + SECOND_ROW_H),
+    )
+
+
 def ink_slider_box() -> tuple[int, int, int]:
     """(x, y, width) in mosaic pixels of the black/white control: right under the binary picture."""
     row2_y = TITLE_H + PANEL_H + GAP
@@ -521,6 +531,8 @@ class DebugWindow:
         self._get_state = get_state
         self._on_ink_cut = on_ink_cut
         self._dragging_cut = False
+        self._zoomed: int | None = None  # index of the panel shown alone (double click), or None
+        self._view_scale, self._view_offset = 1.0, (0, 0)
         self.window = tk.Toplevel(root, class_="Pythontkfloating")
         self.window.title("LevainPeak · Diagnóstico")
         self.window.geometry("980x780")
@@ -543,6 +555,7 @@ class DebugWindow:
         self._cut_scale.bind("<ButtonRelease-1>", lambda _e: self._cut_changed(True), add="+")
         # Drag the picture to move the window, the border to resize it.
         self._controls = FloatingWindowControls(self.window, self._label, on_close=self.close)
+        self._label.bind("<Double-Button-1>", self._toggle_panel_zoom, add="+")
         self._photo: ImageTk.PhotoImage | None = None
         self._latest: np.ndarray | None = None
         self._frames: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
@@ -583,13 +596,28 @@ class DebugWindow:
         if release:
             self._dragging_cut = False
 
-    def _place_cut_control(self, scale: float, offset: tuple[int, int]) -> None:
+    def _toggle_panel_zoom(self, event: tk.Event) -> None:
+        """Double click on a panel shows it alone; a double click again brings back the mosaic."""
+        if self._zoomed is not None:
+            self._zoomed = None
+        elif self._latest is not None:
+            crop_x, crop_y = 0, 0
+            x = (event.x - self._view_offset[0]) / self._view_scale + crop_x
+            y = (event.y - self._view_offset[1]) / self._view_scale + crop_y
+            for index, (left, top, width, height) in enumerate(panel_boxes()):
+                if left <= x < left + width and top <= y < top + height:
+                    self._zoomed = index
+                    break
+        if self._latest is not None:
+            self._show(self._latest)
+
+    def _place_cut_control(self, scale: float, offset: tuple[int, int], crop: tuple[int, int] = (0, 0)) -> None:
         """Put the control over the picture, or hide it when there is no display marked."""
         try:
             control = self._get_state().get("ink_control")
         except Exception:  # noqa: BLE001 - the window must survive a bad read
             control = None
-        if not control:
+        if not control or (self._zoomed is not None and self._zoomed != 6):
             self._cut_scale.place_forget()
             self._cut_text.place_forget()
             self._cut_auto.place_forget()
@@ -599,17 +627,25 @@ class DebugWindow:
         self._cut_text.configure(text=f"traço do visor · perfil {control['profile']} · {control['percent']:.0f}%")
         self._cut_auto.configure(text="auto ✓" if control.get("auto") else "auto")
         x, y, width = ink_slider_box()
+        x, y = x - crop[0], y - crop[1]
         self._cut_text.place(x=offset[0] + int(x * scale), y=offset[1] + int(y * scale) - 15)
         slider_width = max(60, int(width * scale) - 62)
         self._cut_scale.place(x=offset[0] + int(x * scale), y=offset[1] + int(y * scale) + 2, width=slider_width)
         self._cut_auto.place(x=offset[0] + int(x * scale) + slider_width + 6, y=offset[1] + int(y * scale) - 2)
 
     def _show(self, mosaic: np.ndarray) -> None:
+        crop = (0, 0)
+        if self._zoomed is not None:
+            left, top, width, height = panel_boxes()[self._zoomed]
+            mosaic = mosaic[top:top + height, left:left + width]
+            crop = (left, top)
         available_w = max(1, self._label.winfo_width())
         available_h = max(1, self._label.winfo_height())
         scale = min(available_w / mosaic.shape[1], available_h / mosaic.shape[0])
         size = (max(1, int(mosaic.shape[1] * scale)), max(1, int(mosaic.shape[0] * scale)))
-        self._place_cut_control(scale, ((available_w - size[0]) // 2, (available_h - size[1]) // 2))
+        offset = ((available_w - size[0]) // 2, (available_h - size[1]) // 2)
+        self._view_scale, self._view_offset = scale, offset
+        self._place_cut_control(scale, offset, crop)
         image = Image.fromarray(cv2.cvtColor(mosaic, cv2.COLOR_BGR2RGB)).resize(size, Image.LANCZOS)
         self._photo = ImageTk.PhotoImage(image)
         self._label.configure(image=self._photo)
