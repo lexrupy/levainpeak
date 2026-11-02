@@ -81,3 +81,22 @@ def test_an_abrupt_collapse_that_does_not_come_back_is_a_decline_even_with_no_to
     states = run(tracker, lambda m: 0.23, 30, start=1800)  # down by 0.17 and staying down
     assert states[-1] == PhaseTracker.FALLING
     assert PhaseTracker.FALLING not in states[:60]  # not in the first ten minutes
+
+
+def test_once_rising_a_slow_stretch_or_a_moved_mark_does_not_go_back_to_warming_up():
+    from levainpeak.sessions import PhaseTracker
+
+    tracker = PhaseTracker()
+    time = 0.0
+    state = tracker.update(time, 0.20, 0.20)
+    for step in range(1, 40):
+        time += 10
+        state = tracker.update(time, 0.20 + step * 0.001, 0.20)
+    assert state == PhaseTracker.RISING
+    for _ in range(120):  # a long, almost flat stretch
+        time += 10
+        state = tracker.update(time, 0.2395, 0.20)
+        assert state != PhaseTracker.WAITING
+    tracker.set_baseline(0.23)  # the mark moved up: the rise over it is smaller than the minimum
+    time += 10
+    assert tracker.update(time, 0.2395, 0.23) != PhaseTracker.WAITING

@@ -410,6 +410,7 @@ class PhaseTracker:
         self._plateau_since: float | None = None
         self._decline_since: float | None = None
         self._topped_out = False  # the volume has levelled off since it last made a new high
+        self._risen = False  # the volume has risen the minimum over the baseline: it is no longer warming up
         self._low_since: float | None = None  # when the volume fell below its high by the decline fraction
         self.state = self.WAITING
 
@@ -449,10 +450,13 @@ class PhaseTracker:
             while self._samples and self._samples[0][0] < cutoff:
                 self._samples.popleft()
 
+        if self.peak_fraction - self.baseline >= self.minimum_rise:
+            self._risen = True
         if self.peak_fraction - self.baseline < self.minimum_rise:
             self._plateau_since = None
             self._decline_since = None
-            self.state = self.WAITING
+            # Once it has started rising, a moved mark or a slow stretch does not send it back to warming up.
+            self.state = self.RISING if self._risen else self.WAITING
             return self.state
 
         slope = self._slope(monotonic_time)
@@ -463,7 +467,7 @@ class PhaseTracker:
         if self.peak_fraction - self.baseline < self.minimum_peak_rise:
             self._plateau_since = None
             self._decline_since = None
-            self.state = self.RISING if slope > self.plateau_slope_per_minute else self.WAITING
+            self.state = self.RISING if self._risen or slope > self.plateau_slope_per_minute else self.WAITING
             return self.state
 
         drop = self.peak_fraction - smooth
