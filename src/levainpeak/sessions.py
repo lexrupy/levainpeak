@@ -156,6 +156,20 @@ class SessionLog:
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
+    def save_snapshot_seconds(self, seconds: float) -> None:
+        """Set how often frames are kept and remember it with the session, so a resume keeps it."""
+        self.snapshot_seconds = float(seconds)
+        if self.metadata_path is None:
+            return
+        try:
+            payload = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+        payload["snapshot_seconds"] = self.snapshot_seconds
+        self.metadata_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
     def save_marker(self, marker_y: int | None) -> None:
         """Remember the hand-placed initial-level mark (None: back to automatic)."""
         self.manual_marker_y = None if marker_y is None else int(marker_y)
@@ -219,6 +233,8 @@ class SessionLog:
             marker = raw.get("marker_y")
             self.manual_marker_y = None if marker is None else int(marker)
             self.volume_offset = float(raw.get("volume_offset") or 0.0)
+            if raw.get("snapshot_seconds"):  # older sessions keep the caller's value
+                self.snapshot_seconds = float(raw["snapshot_seconds"])
             self.geometry = int(raw.get("geometry", 1))  # files from before this existed are version 1
         else:
             self.regions = {"pot": None, "thermometer": None}

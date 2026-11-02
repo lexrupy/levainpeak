@@ -31,3 +31,20 @@ def test_the_last_volume_written_is_kept_for_a_pause(tmp_path):
     log.record(0.0, measurement, "Aquecendo")
     assert log.last_volume == 0.37
     log.stop()
+
+
+def test_the_snapshot_interval_is_kept_with_the_session_and_in_the_settings(tmp_path):
+    from levainpeak.settings import Settings, load_settings, save_settings
+
+    log = SessionLog(tmp_path)
+    log.start()
+    log.save_snapshot_seconds(300)
+    import json
+
+    assert json.loads(log.metadata_path.read_text())["snapshot_seconds"] == 300.0
+
+    path = tmp_path / "settings.json"
+    save_settings(Settings(snapshot_minutes=3), path)
+    assert load_settings(path).snapshot_minutes == 3
+    save_settings(Settings(snapshot_minutes=999), path)
+    assert load_settings(path).snapshot_minutes == 120

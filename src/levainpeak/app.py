@@ -38,7 +38,7 @@ from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, 
                                  INK_CUT_INFRARED, MAX_OVERLAY_BRIGHTNESS,
                                  MAX_PHONE_SECONDS, MAX_RECORD_SECONDS, MIN_OVERLAY_BRIGHTNESS,
                                  MIN_PHONE_SECONDS, MIN_RECORD_SECONDS,
-                                 ARTIFACT_MINUTES, LAMP_MINUTES, MARK_SHAPES, PEAK_MINUTES, ROTATIONS, Settings, load_settings, save_settings)
+                                 ARTIFACT_MINUTES, LAMP_MINUTES, MARK_SHAPES, PEAK_MINUTES, ROTATIONS, SNAPSHOT_MINUTES, Settings, load_settings, save_settings)
 from levainpeak.stream import RtspStream
 from levainpeak.timelapse import TimelapseWindow, session_photos
 
@@ -1637,6 +1637,7 @@ class LevainPeakApp:
                 return
             self._session_name = name.strip() or suggested_name
             session_id = self._session_log.start(self._mix_time, self._session_name)
+            self._session_log.save_snapshot_seconds(self._settings.snapshot_minutes * 60.0)
             self._session_log.volume_offset = 0.0
             if self._analyzer is not None:
                 self._analyzer.reset_join()
@@ -1769,11 +1770,21 @@ class LevainPeakApp:
         spinbox.bind("<Return>", lambda _e: self._apply_settings(), add="+")
         spinbox.bind("<FocusOut>", lambda _e: self._apply_settings(), add="+")
         ttk.Label(box, text="segundos").grid(row=0, column=2, sticky="w")
+        ttk.Label(box, text="Guardar uma foto da câmera a cada").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self._snapshot_var = tk.StringVar(value=str(self._settings.snapshot_minutes))
+        snapshot_box = ttk.Spinbox(
+            box, from_=SNAPSHOT_MINUTES[0], to=SNAPSHOT_MINUTES[1], increment=1, width=5,
+            textvariable=self._snapshot_var, command=self._apply_settings,
+        )
+        snapshot_box.grid(row=1, column=1, padx=6, pady=(6, 0))
+        snapshot_box.bind("<Return>", lambda _e: self._apply_settings(), add="+")
+        snapshot_box.bind("<FocusOut>", lambda _e: self._apply_settings(), add="+")
+        ttk.Label(box, text="minutos").grid(row=1, column=2, sticky="w", pady=(6, 0))
         self._settings_note = ttk.Label(
             box, text=f"Entre {MIN_RECORD_SECONDS} e {MAX_RECORD_SECONDS} s. Vale já na sessão ativa.",
             foreground="#59645e",
         )
-        self._settings_note.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self._settings_note.grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         phases = ttk.LabelFrame(parent, text="Fases do levain", padding=12)
         phases.pack(fill="x", pady=(12, 0))
@@ -1882,6 +1893,10 @@ class LevainPeakApp:
             lamp_minutes = int(float(self._lamp_var.get()))
         except ValueError:
             lamp_minutes = self._settings.lamp_minutes
+        try:
+            snapshot_minutes = int(float(self._snapshot_var.get()))
+        except ValueError:
+            snapshot_minutes = self._settings.snapshot_minutes
         # replace(), not a new Settings: the options this tab does not show (graph scales,
         # the display's black/white cuts) must survive a change here.
         self._settings = replace(
@@ -1894,6 +1909,7 @@ class LevainPeakApp:
             peak_minutes=peak_minutes,
             artifact_minutes=artifact_minutes,
             lamp_minutes=lamp_minutes,
+            snapshot_minutes=snapshot_minutes,
         ).clamped()
         self._overlay_var.set(self._settings.overlay_brightness)
         self._interval_var.set(str(self._settings.record_interval_seconds))
@@ -1901,6 +1917,13 @@ class LevainPeakApp:
         self._peak_var.set(str(self._settings.peak_minutes))
         self._artifact_var.set(str(self._settings.artifact_minutes))
         self._lamp_var.set(str(self._settings.lamp_minutes))
+        self._snapshot_var.set(str(self._settings.snapshot_minutes))
+        snapshot_seconds = self._settings.snapshot_minutes * 60.0
+        if snapshot_seconds != self._session_log.snapshot_seconds:
+            try:
+                self._session_log.save_snapshot_seconds(snapshot_seconds)
+            except OSError:
+                logging.exception("Falha ao salvar o intervalo das fotos na sessão")
         if self._analyzer is not None:
             self._analyzer.lamp_hold_seconds = self._settings.lamp_minutes * 60.0
         self._phase_tracker.plateau_seconds = self._settings.peak_minutes * 60
@@ -2261,11 +2284,13 @@ class LevainPeakApp:
             self._set_message("Encerre a sessão ativa antes de retomar outra.")
             return
         try:
+            self._session_log.snapshot_seconds = self._settings.snapshot_minutes * 60.0
             session_id, regions = self._session_log.resume(selected)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             self._set_message(f"Não foi possível retomar o CSV: {exc}")
             return
         self._session_name = self._session_log.session_name
+        self._snapshot_var.set(str(round(self._session_log.snapshot_seconds / 60)))
         self._manual_pot_roi = regions.get("pot")
         self._temperature_roi = regions.get("thermometer")
         self._pot_outline = self._session_log.pot_outline
