@@ -48,3 +48,26 @@ def test_the_snapshot_interval_is_kept_with_the_session_and_in_the_settings(tmp_
     assert load_settings(path).snapshot_minutes == 3
     save_settings(Settings(snapshot_minutes=999), path)
     assert load_settings(path).snapshot_minutes == 120
+
+
+def test_the_regions_and_the_last_forecast_survive_a_resume(tmp_path):
+    from datetime import datetime
+
+    from levainpeak.sessions import SessionLog
+
+    log = SessionLog(tmp_path)
+    log.start(datetime.now().astimezone(), "t")
+    log.save_regions((1, 2, 300, 400), (1532, 133, 1909, 353), face_quad=((1632, 180), (1808, 154), (1816, 293), (1636, 311)))
+    at = datetime.now().astimezone()
+    log.save_forecast(at, "início marcado")
+    from levainpeak.vision import ContainerMeasurement
+
+    log.record(0.0, ContainerMeasurement(
+        left=0, right=1, top=0, bottom=1, surface_y=0, volume_fraction=0.37, confidence=1.0
+    ), "Aquecendo")
+    path = log.path
+    log.stop()
+    again = SessionLog(tmp_path)
+    _, regions = again.resume(path)
+    assert regions["thermometer"] == (1532, 133, 1909, 353)
+    assert again.last_forecast == {"at": at.isoformat(), "basis": "início marcado"}

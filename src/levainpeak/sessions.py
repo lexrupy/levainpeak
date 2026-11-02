@@ -36,6 +36,7 @@ class SessionLog:
         self._writer = None
         self._last_write_time: float | None = None
         self.snapshot_seconds = 600.0
+        self.last_forecast: dict | None = None  # {"at": ISO time of the doubling, "basis": text}
         self._last_snapshot_time: float | None = None
         self._last_phase: str | None = None
         self.mix_time: datetime | None = None
@@ -170,6 +171,20 @@ class SessionLog:
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
+    def save_forecast(self, predicted_at: datetime, basis: str) -> None:
+        """Remember the last doubling forecast, to show it again after a restart until a new one exists."""
+        self.last_forecast = {"at": predicted_at.isoformat(), "basis": basis}
+        if self.metadata_path is None:
+            return
+        try:
+            payload = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+        payload["last_forecast"] = self.last_forecast
+        self.metadata_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
     def save_marker(self, marker_y: int | None) -> None:
         """Remember the hand-placed initial-level mark (None: back to automatic)."""
         self.manual_marker_y = None if marker_y is None else int(marker_y)
@@ -233,6 +248,8 @@ class SessionLog:
             marker = raw.get("marker_y")
             self.manual_marker_y = None if marker is None else int(marker)
             self.volume_offset = float(raw.get("volume_offset") or 0.0)
+            forecast = raw.get("last_forecast")
+            self.last_forecast = forecast if isinstance(forecast, dict) and forecast.get("at") else None
             if raw.get("snapshot_seconds"):  # older sessions keep the caller's value
                 self.snapshot_seconds = float(raw["snapshot_seconds"])
             self.geometry = int(raw.get("geometry", 1))  # files from before this existed are version 1

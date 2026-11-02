@@ -147,6 +147,7 @@ class LevainPeakApp:
             artifact_seconds=self._settings.artifact_minutes * 60,
         )
         self._forecaster = DoublingForecaster()
+        self._forecast_saved_at = 0.0
         self._phase = "Aguardando sessão"
         self._paused = False  # the session is open but nothing is logged (the fermenter is being handled)
         self._mix_time: datetime | None = None
@@ -2297,6 +2298,7 @@ class LevainPeakApp:
         self._snapshot_var.set(str(round(self._session_log.snapshot_seconds / 60)))
         self._manual_pot_roi = regions.get("pot")
         self._temperature_roi = regions.get("thermometer")
+        logging.info("Sessão retomada: pote %s, termômetro %s", self._manual_pot_roi, self._temperature_roi)
         self._pot_outline = self._session_log.pot_outline
         self._temperature_quad = self._session_log.face_quad
         if self._analyzer is not None:
@@ -2315,8 +2317,9 @@ class LevainPeakApp:
         try:
             with selected.open("r", newline="", encoding="utf-8") as source:
                 rows = list(csv.DictReader(source))
-            first_time = datetime.fromisoformat(rows[0]["timestamp"])
-            clock_origin = time.monotonic()
+            # Each row lands on the monotonic clock where it really happened, so the hours
+            # the app was closed stay a gap and the live readings come after the history.
+            now_wall, now_clock = datetime.now().astimezone(), time.monotonic()
             last_temperature = None
             for row in rows:
                 stamp = datetime.fromisoformat(row["timestamp"])
@@ -2329,7 +2332,7 @@ class LevainPeakApp:
                     # and the trend starts over, exactly as it did live.
                     self._session_baseline = baseline
                     self._reset_tracking(baseline)
-                elapsed = clock_origin + (stamp - first_time).total_seconds()
+                elapsed = now_clock - (now_wall - stamp).total_seconds()
                 self._phase = self._phase_tracker.update(elapsed, volume, baseline)
                 temperature = row.get("temperature_c")
                 if temperature:
@@ -2410,6 +2413,13 @@ class LevainPeakApp:
             label.configure(text="Inicie uma sessão para estimar")
             return
         if self._forecaster.rate_per_thermal_minute() is None:
+            known = self._session_log.last_forecast
+            if known:
+                try:
+                    label.configure(text=self._forecast_text(datetime.fromisoformat(known["at"]), known["basis"], "última conhecida"))
+                    return
+                except (ValueError, KeyError):
+                    pass
             label.configure(text="Calculando tendência; aguarde ao menos 2 minutos")
             return
         if self._measurement is None:
@@ -2444,6 +2454,16 @@ class LevainPeakApp:
             label.configure(text="Projeção muito distante; aguardando mais crescimento")
             return
         predicted_at = now + timedelta(minutes=minutes)
+        known = self._session_log.last_forecast
+        if known is None or monotonic_time - self._forecast_saved_at >= 60:
+            try:
+                self._session_log.save_forecast(predicted_at, basis)
+                self._forecast_saved_at = monotonic_time
+            except OSError:
+                logging.exception("Falha ao salvar a previsão do dobro")
+        label.configure(text=self._forecast_text(predicted_at, basis))
+
+    def _forecast_text(self, predicted_at: datetime, basis: str, note: str = "") -> str:
         mix_elapsed = predicted_at - (self._mix_time or predicted_at)
         total_minutes = max(0, int(mix_elapsed.total_seconds() // 60))
         elapsed_days, remainder = divmod(total_minutes, 24 * 60)
@@ -2453,9 +2473,7 @@ class LevainPeakApp:
         else:
             elapsed_text = f"{elapsed_hours}h{elapsed_minutes:02d} após mistura"
         # Three short lines: when, how long after mixing, and what it rests on.
-        label.configure(
-            text=f"{predicted_at.strftime('%d/%m às %H:%M')}\n{elapsed_text}\n{basis}"
-        )
+        return f"{predicted_at.strftime('%d/%m às %H:%M')}\n{elapsed_text}\n{basis}" + (f" ({note})" if note else "")
 
     def _set_mix_time(self) -> None:
         default_time = self._mix_time or datetime.now().astimezone()
