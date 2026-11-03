@@ -356,6 +356,7 @@ class LevainPeakApp:
             session, "Iniciar sessão", self._toggle_session, width=15
         )
         self.pause_button = button(session, "Pausar", self._toggle_pause, width=8, state="disabled")
+        self.clear_button = button(session, "Limpar", self._clear_session, width=7)
         self.resume_button = button(files, "Retomar", self._resume_session, width=9)
         self.open_csv_button = button(files, "CSV", self._open_session_csv, width=6)
         self.graph_button = ttk.Menubutton(files, text="Gráfico ▾", width=9, direction="below")
@@ -2461,6 +2462,56 @@ class LevainPeakApp:
         )
         self.auto_pot_button.configure(state="normal" if self._manual_pot_roi else "disabled")
         self._set_message(f"Sessão retomada; as próximas medições serão acrescentadas em {self._session_log.path}.")
+
+    def _clear_session(self) -> None:
+        """Close the session (saving it) and leave the app as if it had been opened without --resume."""
+        if not messagebox.askyesno(
+            "Limpar",
+            "Encerrar a sessão e limpar a tela?\n"
+            "A sessão fica salva e pode ser retomada. O pote, o contorno, o visor e a marca saem da tela.",
+            parent=self.root,
+        ):
+            return
+        if self._session_log.active:
+            self._toggle_session()
+        self._session_log = SessionLog(sample_seconds=self._settings.record_interval_seconds)
+        self._settings = load_settings()  # the global choices, not what the closed session carried
+        self._phone_enabled_var.set(self._settings.phone_enabled)
+        self._phone_interval_var.set(str(self._settings.phone_interval_seconds))
+        self._phone_snapshot_var.set(self._settings.phone_snapshot)
+        self._snapshot_var.set(str(self._settings.snapshot_minutes))
+        self._apply_phone_settings()
+        self._manual_pot_roi = self._pot_outline = None
+        self._temperature_roi = self._temperature_quad = None
+        self._manual_marker_y = None
+        self._mix_time = None
+        self._session_name = ""
+        self._measurement = None
+        self._session_baseline = None
+        self._last_container_box = None
+        self._temperature_c = None
+        self._last_known_temperature = None
+        self._forecast_saved_at = 0.0
+        self._reset_tracking()
+        self._set_paused(False)
+        if self._analyzer is not None:
+            self._analyzer.roi = self._analyzer.outline = None
+            self._analyzer.temperature_roi = self._analyzer.temperature_quad = None
+            self._analyzer.vessel_bounds.clear()
+            self._analyzer.marker_y = None
+            self._analyzer.anchor_temperature = None
+            self._analyzer.reset_join()
+        self._phase = "Aguardando sessão"
+        self.metric_values["Sessão"].configure(text="Nenhuma sessão iniciada")
+        self.metric_values["Pote"].configure(text="Aguardando calibração")
+        self.metric_values["Volume relativo"].configure(text="—")
+        self.metric_values["Estado do levain"].configure(text="Aguardando análise")
+        self._update_temperature_label()
+        self._update_double_forecast(time.monotonic())
+        self.draw_pot_button.configure(text="Pote")
+        self.auto_pot_button.configure(state="disabled")
+        self.mix_time_button.configure(text="Hora da mistura")
+        self._set_message("Sessão fechada; a tela está limpa. Marque o pote e inicie outra, ou retome uma salva.")
 
     def _toggle_pause(self) -> None:
         if not self._session_log.active:
