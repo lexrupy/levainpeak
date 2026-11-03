@@ -904,7 +904,7 @@ class LevainPeakApp:
             self.video.configure(cursor="")
 
     def _outline_handle_at(self, point: tuple[int, int]) -> int | None:
-        reach = 40  # picture pixels; the corners are drawn with a 12 px radius
+        reach = max(8, round(40 / self._zoom))  # picture pixels; the corners are drawn with a 12 px radius at no zoom
         distances = [
             (float(np.hypot(point[0] - x, point[1] - y)), index)
             for index, (x, y) in enumerate(self._outline_points)
@@ -1589,6 +1589,12 @@ class LevainPeakApp:
             return frame
         height, width = frame.shape[:2]
         drawn = {"pot": self._pot_outline, "thermometer": self._temperature_quad}
+        # The marks keep the size they have with no zoom: they are drawn on the picture, which is scaled up.
+        k = 1.0 / self._zoom
+
+        def thick(pixels: float) -> int:
+            return max(1, round(pixels * k))
+
         if self._roi_mode or self._outline_mode or self._reposition_mode:
             # Drawing a new region: the thing to find may have moved out of the old
             # ones, so keep the whole picture visible and only outline them.
@@ -1611,16 +1617,16 @@ class LevainPeakApp:
             if shape:
                 # The contour is the outline; the search area around it is only a faint hint.
                 overlay = result.copy()
-                cv2.rectangle(overlay, (left, top), (right, bottom), (190, 200, 195), 1, cv2.LINE_AA)
+                cv2.rectangle(overlay, (left, top), (right, bottom), (190, 200, 195), thick(1), cv2.LINE_AA)
                 cv2.addWeighted(overlay, 0.35, result, 0.65, 0, result)
                 label_x, label_y = min(x for x, _ in shape), min(y for _, y in shape)
             else:
-                cv2.rectangle(result, (left, top), (right, bottom), color, 2)
+                cv2.rectangle(result, (left, top), (right, bottom), color, thick(2))
                 label_x, label_y = left, top
             if shape and label == "POTE":
                 continue  # the measurement label ("Pote | volume ...") already names it
-            cv2.putText(result, label, (label_x, max(22, label_y - 8)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2, cv2.LINE_AA)
+            cv2.putText(result, label, (label_x, max(round(22 * k), label_y - round(8 * k))),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65 * k, color, thick(2), cv2.LINE_AA)
         for target, saved, base_color in (
             ("pot", self._pot_outline, (50, 220, 130)),
             ("thermometer", self._temperature_quad, (40, 190, 245)),
@@ -1630,22 +1636,24 @@ class LevainPeakApp:
             if not outline:
                 continue
             color = (0, 235, 255) if editing else base_color
-            cv2.polylines(result, [np.asarray(outline, np.int32)], True, color, 2, cv2.LINE_AA)
+            cv2.polylines(result, [np.asarray(outline, np.int32)], True, color, thick(2), cv2.LINE_AA)
             if editing:
+                radius = max(3, round(12 * k))
                 for x, y in outline:
-                    cv2.circle(result, (int(x), int(y)), 12, color, -1, cv2.LINE_AA)
-                    cv2.circle(result, (int(x), int(y)), 12, (0, 0, 0), 2, cv2.LINE_AA)
+                    cv2.circle(result, (int(x), int(y)), radius, color, -1, cv2.LINE_AA)
+                    cv2.circle(result, (int(x), int(y)), radius, (0, 0, 0), thick(2), cv2.LINE_AA)
         moved = self._repositioned() if self._reposition_mode else None
         if moved is not None:
             outline, _roi, marker_y = moved
-            cv2.polylines(result, [np.asarray(outline, np.int32)], True, (0, 235, 255), 3, cv2.LINE_AA)
+            cv2.polylines(result, [np.asarray(outline, np.int32)], True, (0, 235, 255), thick(3), cv2.LINE_AA)
             center = np.mean(np.asarray(outline, np.float32), axis=0)
             cx, cy = int(center[0]), int(center[1])
-            cv2.line(result, (cx - 14, cy), (cx + 14, cy), (0, 235, 255), 2, cv2.LINE_AA)
-            cv2.line(result, (cx, cy - 14), (cx, cy + 14), (0, 235, 255), 2, cv2.LINE_AA)
+            arm = max(3, round(14 * k))
+            cv2.line(result, (cx - arm, cy), (cx + arm, cy), (0, 235, 255), thick(2), cv2.LINE_AA)
+            cv2.line(result, (cx, cy - arm), (cx, cy + arm), (0, 235, 255), thick(2), cv2.LINE_AA)
             if marker_y is not None:
                 xs = [x for x, _ in outline]
-                cv2.line(result, (min(xs), marker_y), (max(xs), marker_y), (0, 235, 255), 2, cv2.LINE_AA)
+                cv2.line(result, (min(xs), marker_y), (max(xs), marker_y), (0, 235, 255), thick(2), cv2.LINE_AA)
         return result
 
     def _center_video_items(self, event: tk.Event) -> None:

@@ -8,7 +8,7 @@ from levainpeak.app import LevainPeakApp
 def test_region_mask_keeps_the_whole_picture_while_drawing_a_new_region():
     frame = np.full((200, 300, 3), 200, np.uint8)
     app = SimpleNamespace(_manual_pot_roi=(10, 10, 100, 150), _temperature_roi=(120, 20, 200, 80), _roi_mode=False,
-                         _reposition_mode=False, _outline_mode=False, _outline_points=[], _pot_outline=None,
+                         _reposition_mode=False, _zoom=1.0, _outline_mode=False, _outline_points=[], _pot_outline=None,
                          _outline_target="pot", _temperature_quad=None,
                          _settings=SimpleNamespace(overlay_brightness=50))
     dimmed = LevainPeakApp._apply_region_mask(app, frame)
@@ -23,7 +23,7 @@ def test_the_outline_is_drawn_on_the_picture_with_handles_while_editing():
     frame = np.full((200, 300, 3), 200, np.uint8)
     points = [[60, 30], [240, 30], [210, 170], [90, 170]]
     app = SimpleNamespace(_manual_pot_roi=None, _temperature_roi=None, _roi_mode=False,
-                          _reposition_mode=False, _outline_mode=True, _outline_points=points, _pot_outline=None,
+                          _reposition_mode=False, _zoom=1.0, _outline_mode=True, _outline_points=points, _pot_outline=None,
                           _outline_target="pot", _temperature_quad=None,
                          _settings=SimpleNamespace(overlay_brightness=50))
     shown = LevainPeakApp._apply_region_mask(app, frame)
@@ -39,7 +39,7 @@ def test_the_thermometer_face_is_outlined_in_its_own_color_and_edited_on_its_own
     pot = ((60, 30), (240, 30), (210, 170), (90, 170))
     face = [[20, 20], [80, 20], [80, 50], [20, 50]]
     app = SimpleNamespace(_manual_pot_roi=None, _temperature_roi=None, _roi_mode=False,
-                          _reposition_mode=False, _outline_mode=True, _outline_points=face, _pot_outline=pot,
+                          _reposition_mode=False, _zoom=1.0, _outline_mode=True, _outline_points=face, _pot_outline=pot,
                           _outline_target="thermometer", _temperature_quad=None,
                           _settings=SimpleNamespace(overlay_brightness=50))
     shown = LevainPeakApp._apply_region_mask(app, frame)
@@ -55,7 +55,7 @@ def test_the_hole_in_the_overlay_is_the_outer_box_and_the_brightness_is_a_settin
     outline = ((70, 40), (230, 40), (200, 160), (100, 160))  # inside the box
     def app(brightness):
         return SimpleNamespace(_manual_pot_roi=pot_box, _temperature_roi=None, _roi_mode=False,
-                               _reposition_mode=False, _outline_mode=False, _outline_points=[], _pot_outline=outline,
+                               _reposition_mode=False, _zoom=1.0, _outline_mode=False, _outline_points=[], _pot_outline=outline,
                                _outline_target="pot", _temperature_quad=None,
                                _settings=SimpleNamespace(overlay_brightness=brightness))
     shown = LevainPeakApp._apply_region_mask(app(30), frame)
@@ -140,3 +140,18 @@ def test_level_lines_follow_the_outline_as_the_window_shows_it():
     assert _outline_span(outline, 50) == (125, 275)
     assert _outline_span(outline, 100) == (150, 250)
     assert _outline_span(outline, 120) is None
+
+
+def test_the_corner_marks_keep_their_size_when_the_picture_is_zoomed():
+    import numpy as np
+
+    def drawn(zoom):
+        app = SimpleNamespace(_manual_pot_roi=None, _temperature_roi=None, _roi_mode=False, _reposition_mode=False,
+                              _zoom=zoom, _outline_mode=True, _outline_target="pot", _pot_outline=None,
+                              _outline_points=[(100, 100), (200, 100), (200, 200), (100, 200)],
+                              _temperature_quad=None, _settings=SimpleNamespace(overlay_brightness=50))
+        picture = np.zeros((300, 300, 3), np.uint8)
+        return (LevainPeakApp._apply_region_mask(app, picture)[:, :, 2] > 0).sum()
+
+    # Drawn on the picture, which is then scaled by the zoom: the marks are drawn smaller by that much.
+    assert drawn(4.0) < drawn(1.0) * 0.6  # the polygon's length is the same, so the lines do not shrink with it
