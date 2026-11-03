@@ -545,6 +545,7 @@ class LevainPeakApp:
             dx = (sum(x for x, _ in self._pot_outline) - sum(x for x, _ in old)) // len(old)
             dy = (sum(y for _, y in self._pot_outline) - sum(y for _, y in old)) // len(old)
             size = (width(self._pot_outline) / max(1, width(old)) - 1) * 100
+            logging.warning("Contorno do pote acompanhou o pote: deslocou %d,%d px e mudou %+.1f%% de largura", dx, dy, size)
             text = (
                 f"Pote reposicionado: {dx:+d} px na horizontal, {dy:+d} px na vertical"
                 f"{f', tamanho {size:+.0f}%' if abs(size) >= 1 else ''}. O contorno e a marca acompanharam."
