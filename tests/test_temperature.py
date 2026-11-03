@@ -303,3 +303,15 @@ def test_no_digit_comes_out_that_contradicts_a_lit_or_a_dark_segment():
             assert any(digit == d for d, shape in _SHAPES if shape in allowed), (strengths, digit)
             checked += 1
     assert checked > 20
+
+
+def test_a_five_without_its_bottom_bar_is_still_a_five():
+    import numpy as np
+    from levainpeak.temperature import _SEGMENTS, _classify_digit
+
+    for bottom in (0.0, 0.15, 0.3):
+        glyph = np.zeros((80, 40), np.uint8)
+        for name, strength in {"a": 0.9, "b": 0.0, "c": 0.8, "d": bottom, "e": 0.0, "f": 0.95, "g": 0.85}.items():
+            x0, y0, x1, y1 = _SEGMENTS[name]
+            glyph[int(80 * y0):max(int(80 * y0) + 1, int(80 * y1)), int(40 * x0):max(int(40 * x0) + 1, int(40 * x1))] = int(255 * strength)
+        assert _classify_digit(glyph) == 5
