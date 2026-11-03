@@ -1671,6 +1671,9 @@ class LevainPeakApp:
             self._session_name = name.strip() or suggested_name
             session_id = self._session_log.start(self._mix_time, self._session_name)
             self._session_log.save_snapshot_seconds(self._settings.snapshot_minutes * 60.0)
+            self._session_log.save_phone(
+                self._settings.phone_enabled, self._settings.phone_interval_seconds, self._settings.phone_snapshot
+            )
             self._session_log.volume_offset = 0.0
             if self._analyzer is not None:
                 self._analyzer.reset_join()
@@ -1959,6 +1962,14 @@ class LevainPeakApp:
                 self._session_log.save_snapshot_seconds(snapshot_seconds)
             except OSError:
                 logging.exception("Falha ao salvar o intervalo das fotos na sessão")
+        if self._session_log.active:
+            phone = (self._settings.phone_enabled, self._settings.phone_interval_seconds, self._settings.phone_snapshot)
+            known = self._session_log.phone
+            if known is None or phone != (known["enabled"], known["interval_seconds"], known["snapshot"]):
+                try:
+                    self._session_log.save_phone(*phone)
+                except OSError:
+                    logging.exception("Falha ao salvar o envio para o celular na sessão")
         if self._analyzer is not None:
             self._analyzer.lamp_hold_seconds = self._settings.lamp_minutes * 60.0
         self._phase_tracker.plateau_seconds = self._settings.peak_minutes * 60
@@ -2367,6 +2378,18 @@ class LevainPeakApp:
             return
         self._session_name = self._session_log.session_name
         self._snapshot_var.set(str(round(self._session_log.snapshot_seconds / 60)))
+        known_phone = self._session_log.phone
+        if known_phone is not None:  # what this session was sent with, not the last global choice
+            self._settings = replace(
+                self._settings,
+                phone_enabled=bool(known_phone["enabled"]),
+                phone_interval_seconds=int(known_phone.get("interval_seconds", self._settings.phone_interval_seconds)),
+                phone_snapshot=bool(known_phone.get("snapshot", self._settings.phone_snapshot)),
+            ).clamped()
+            self._phone_enabled_var.set(self._settings.phone_enabled)
+            self._phone_interval_var.set(str(self._settings.phone_interval_seconds))
+            self._phone_snapshot_var.set(self._settings.phone_snapshot)
+            self._apply_phone_settings()
         self._manual_pot_roi = regions.get("pot")
         self._temperature_roi = regions.get("thermometer")
         logging.info("Sessão retomada: pote %s, termômetro %s", self._manual_pot_roi, self._temperature_roi)

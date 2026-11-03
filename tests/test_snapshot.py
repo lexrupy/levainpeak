@@ -98,3 +98,16 @@ def test_reached_at_and_repeats(tmp_path):
         log.record(0.0, row(factor), "Crescendo", force=True)
     assert log.reached_at(2.0) is not None and log.reached_at(3.0) is None
     assert log.growth_repeats == 3 and log.last_growth_factor == 2.013
+
+
+def test_phone_choice_goes_with_the_session(tmp_path):
+    from types import SimpleNamespace
+    log = SessionLog(tmp_path, sample_seconds=0)
+    log.start()
+    log.record(0.0, SimpleNamespace(volume_fraction=0.4, initial_volume_fraction=0.2, growth_factor=2.0), "Crescendo", force=True)
+    assert log.phone is None
+    log.save_phone(False, 300, True)
+    log.stop()
+    again = SessionLog(tmp_path, sample_seconds=0)
+    again.resume(log.path)
+    assert again.phone == {"enabled": False, "interval_seconds": 300, "snapshot": True}
