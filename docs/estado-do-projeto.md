@@ -53,7 +53,7 @@ a fase e a temperatura lida do visor de um termômetro. Grava uma linha de CSV a
 - **Fases:** depois que a subida mínima aconteceu (`_risen`) a fase não volta a "Aquecendo".
 - **Lâmpada:** segura o volume quando o brilho muda >12% (padrão 10 min, no máximo 3×). Se a luz mudou de vez, a
   série é emendada no nível em que foi segurada.
-- **Gráfico:** passar o mouse mostra hora, fator (`1.00x`) e temperatura. "Zerar" o ângulo pede confirmação.
+- **Gráfico:** passar o mouse mostra hora, fator (`1.00x`) e temperatura. Todo "Zerar" pede confirmação (o ângulo e "Imagem sem girar"); vale também para o ângulo da câmera futuro.
 - **Quadro "Volume relativo":** mostra também o fator da leitura anterior gravada, com a contagem de repetições.
 - **Defeito aberto:** o nível inicial acompanha as emendas da série e o fator oscila a cada reinício. A superfície
   lida fica ~30–40 px abaixo do topo visível da massa densa (contraste baixo com o pote de vidro).

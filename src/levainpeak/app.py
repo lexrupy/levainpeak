@@ -230,7 +230,7 @@ class LevainPeakApp:
         for degrees in ROTATIONS:
             self._video_menu.add_radiobutton(
                 label="Imagem sem girar" if degrees == 0 else f"Girar a imagem {degrees}°",
-                command=lambda degrees=degrees: self._set_rotation(degrees + self._fine_part(self._settings.rotation)),
+                command=lambda degrees=degrees: self._turn_quarters(degrees),
             )
         self._shape_var = tk.StringVar(value=self._settings.mark_shape)
         self._video_menu.add_separator()
@@ -919,6 +919,16 @@ class LevainPeakApp:
         fine = min(FINE_TURN_DEGREES, max(-FINE_TURN_DEGREES, float(value)))
         quarter = round(self._settings.rotation / 90) * 90
         self._set_rotation(quarter + round(fine, 1))
+
+    def _turn_quarters(self, degrees: int) -> None:
+        if degrees == 0 and round(self._settings.rotation / 90) != 0 and not messagebox.askyesno(
+            "Imagem sem girar",
+            "Tirar a volta de 90° da imagem?\n"
+            "O pote e o visor ficam onde estão na tela, e talvez precisem de ajuste.",
+            parent=self.root,
+        ):
+            return
+        self._set_rotation(degrees + self._fine_part(self._settings.rotation))
 
     def _reset_rotation(self) -> None:
         if self._settings.rotation == 0:
