@@ -1022,6 +1022,9 @@ class LevainPeakApp:
         margin = int(0.03 * max(max(xs) - min(xs), max(ys) - min(ys)))
         roi = (max(0, min(xs) - margin), max(0, min(ys) - margin),
                min(width, max(xs) + margin), min(height, max(ys) + margin))
+        kept = self._manual_pot_roi
+        if kept is not None and kept[0] <= roi[0] and kept[1] <= roi[1] and kept[2] >= roi[2] and kept[3] >= roi[3]:
+            roi = tuple(kept)  # the box the user drew around the pot still holds the new contour
         self._cancel_outline_mode()
         self._pot_outline = outline
         self._manual_pot_roi = roi
