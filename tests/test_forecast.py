@@ -91,3 +91,25 @@ def test_flat_temperature_cannot_fit_session_model():
     forecaster = DoublingForecaster()
     feed(forecaster, 0.001, 25, minutes=90)
     assert forecaster.minutes_until(0.4, 0.6).model == "tabela"
+
+
+def test_the_table_forecast_comes_from_the_ratio_and_the_temperature():
+    from levainpeak.forecast import DoublingForecaster, base_hours_for
+
+    assert base_hours_for(8.0, (1, 5, 5)) == 8.0
+    assert 8.5 < base_hours_for(8.0, (1, 10, 10)) < 9.5  # less starter: about an hour later
+    assert base_hours_for(8.0, (1, 1, 1)) < 8.0  # more starter: earlier
+    assert base_hours_for(8.0, None) == 8.0
+
+    def forecast(ratio, temperature=24.0, age_hours=1.0):
+        forecaster = DoublingForecaster()
+        for step in range(30):
+            forecaster.add(1000.0 + step * 10, 0.2, temperature)
+        return forecaster.table_forecast(age_hours * 3600, 1300.0, 8.0, ratio)
+
+    early, late = forecast((1, 5, 5)), forecast((1, 10, 10))
+    assert early.model == "tabela" and 6.5 * 60 < early.minutes < 7.5 * 60  # 8 h less the hour already gone
+    assert late.minutes > early.minutes
+    assert forecast((1, 5, 5), temperature=18.0).minutes > early.minutes  # cooler: slower
+    assert forecast((1, 5, 5), age_hours=12.0).minutes == 0.0  # past the time: nothing left
+    assert DoublingForecaster().table_forecast(3600.0, 0.0, 8.0) is None  # no temperature read yet

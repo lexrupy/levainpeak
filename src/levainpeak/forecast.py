@@ -46,6 +46,26 @@ MIN_Q10, MAX_Q10 = 1.2, 4.0
 
 TemperatureModel = Callable[[float | None], float]
 
+# Before the levain has really risen there is no rate of its own to measure, so the forecast comes from
+# the table: this long to double at 24 °C with the reference ratio (starter:water:flour), scaled by the
+# temperature the dough went through, and moved by how much starter it began with.
+REFERENCE_RATIO = (1.0, 5.0, 5.0)
+HOURS_PER_HALVING = 1.0  # one more hour each time the starter share is halved
+MIN_BASE_HOURS = 1.5
+
+
+def inoculation(ratio: tuple[float, float, float]) -> float:
+    """The starter's share of the whole dough."""
+    return ratio[0] / sum(ratio)
+
+
+def base_hours_for(base_hours: float, ratio: tuple[float, float, float] | None) -> float:
+    """Hours to double at 24 °C for this ratio, from the value for the reference ratio."""
+    if ratio is None or min(ratio) <= 0:
+        return base_hours
+    shift = HOURS_PER_HALVING * math.log2(inoculation(REFERENCE_RATIO) / inoculation(ratio))
+    return max(MIN_BASE_HOURS, base_hours + shift)
+
 
 def literature_factor(temperature_c: float | None) -> float:
     """Relative activity from the fixed literature table (linear interpolation)."""
@@ -180,6 +200,31 @@ class DoublingForecaster:
     def rate_per_thermal_minute(self) -> float | None:
         result = self._thermal_rate(self.temperature_model()[0])
         return None if result is None else result[0]
+
+    def table_forecast(
+        self, mix_age_seconds: float, now: float, base_hours: float, ratio: tuple[float, float, float] | None = None
+    ) -> Forecast | None:
+        """Minutes left to double by the table alone: the base time for the ratio, less the thermal time the
+        dough has had since it was mixed (the first temperature read stands for the hours before the app
+        saw it), over the activity at the temperature it has now. None before any temperature is known."""
+        known = [sample for sample in self._samples if sample[2] is not None]
+        if not known:
+            return None
+        first_time, _, first_temperature = known[0]
+        seen = max(0.0, now - first_time)
+        thermal = max(0.0, mix_age_seconds - seen) * literature_factor(first_temperature)
+        previous: tuple[float, float] | None = None
+        for time_s, _, temperature in known:
+            factor = literature_factor(temperature)
+            if previous is not None:
+                thermal += (time_s - previous[0]) * (previous[1] + factor) / 2
+            previous = (time_s, factor)
+        last_time, last_factor = previous
+        thermal += max(0.0, now - last_time) * last_factor
+        recent = [sample[2] for sample in known][-5:]
+        current_factor = literature_factor(sum(recent) / len(recent))
+        remaining = base_hours_for(base_hours, ratio) * 3600 - thermal
+        return Forecast(minutes=max(0.0, remaining / current_factor / 60), uses_temperature=True, model="tabela")
 
     def minutes_until(self, current: float, target: float) -> Forecast | None:
         """Minutes until ``target`` volume, or None without a rising trend."""

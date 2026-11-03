@@ -23,6 +23,7 @@ DEFAULT_INK_CUT_DAY = 40
 PEAK_MINUTES = (3, 60)  # how long the readings stay level before the levain is called at its peak
 LAMP_MINUTES = (0, 60)  # how long the volume is held after the lamp changes the picture; 0 turns it off
 SNAPSHOT_MINUTES = (1, 120)  # how often a raw frame is kept beside the session log
+BASE_DOUBLING_HOURS = (2.0, 48.0)  # hours to double at 24 °C with a 1:5:5 starter, for the forecast by the table
 ARTIFACT_MINUTES = (3, 60)  # a departure that comes back within this is a lamp or a lifted pot, not the levain
 
 
@@ -47,6 +48,7 @@ class Settings:
     artifact_minutes: int = 12
     lamp_minutes: int = 10
     snapshot_minutes: int = 10
+    base_doubling_hours: float = 8.0
     rotation: float = 0.0
     mark_alignment: bool = False  # follow the pot's height by the "+" or "X" on its label
 
@@ -73,6 +75,9 @@ class Settings:
             artifact_minutes=min(ARTIFACT_MINUTES[1], max(ARTIFACT_MINUTES[0], int(self.artifact_minutes))),
             lamp_minutes=min(LAMP_MINUTES[1], max(LAMP_MINUTES[0], int(self.lamp_minutes))),
             snapshot_minutes=min(SNAPSHOT_MINUTES[1], max(SNAPSHOT_MINUTES[0], int(self.snapshot_minutes))),
+            base_doubling_hours=round(
+                min(BASE_DOUBLING_HOURS[1], max(BASE_DOUBLING_HOURS[0], float(self.base_doubling_hours))), 1
+            ),
             rotation=round(min(ROTATION_DEGREES[1], max(ROTATION_DEGREES[0], float(self.rotation))), 1),
             mark_alignment=bool(self.mark_alignment),
             mark_shape=self.mark_shape if self.mark_shape in MARK_SHAPES else "círculo",
@@ -98,6 +103,7 @@ def load_settings(path: Path = SETTINGS_PATH) -> Settings:
             artifact_minutes=int(data.get("artifact_minutes", defaults.artifact_minutes)),
             lamp_minutes=int(data.get("lamp_minutes", defaults.lamp_minutes)),
             snapshot_minutes=int(data.get("snapshot_minutes", defaults.snapshot_minutes)),
+            base_doubling_hours=float(data.get("base_doubling_hours", defaults.base_doubling_hours)),
             rotation=float(data.get("rotation", defaults.rotation)),
             mark_alignment=bool(data.get("mark_alignment", defaults.mark_alignment)),
             mark_shape=str(data.get("mark_shape", defaults.mark_shape)),

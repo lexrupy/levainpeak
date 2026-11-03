@@ -32,7 +32,7 @@ from levainpeak.graph_phases import (DECLINE, EXPONENTIAL, LATENCY, STATIONARY,
                                      graph_phase_segments)
 from levainpeak.phone_config import load_phone_config, local_link, online_link
 from levainpeak.phone_push import PhonePusher, make_snapshot
-from levainpeak.sessions import (GEOMETRY_VERSION, PhaseTracker, SessionLog,
+from levainpeak.sessions import (GEOMETRY_VERSION, PhaseTracker, SessionLog, parse_ratio,
                                  find_session_csv, latest_session_csv)
 from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, INK_CUT_DAY,
                                  INK_CUT_INFRARED, MAX_OVERLAY_BRIGHTNESS,
@@ -1711,7 +1711,14 @@ class LevainPeakApp:
             if name is None:
                 return
             self._session_name = name.strip() or suggested_name
+            asked = simpledialog.askstring(
+                "Proporção", "Proporção isca : água : farinha:",
+                initialvalue="{:g}:{:g}:{:g}".format(*(parse_ratio(self._session_name) or (1, 1, 1))),
+                parent=self.root,
+            )
+            ratio = parse_ratio(asked or "") or parse_ratio(self._session_name) or (1.0, 1.0, 1.0)
             session_id = self._session_log.start(self._mix_time, self._session_name)
+            self._session_log.save_ratio(ratio)
             self._session_log.save_snapshot_seconds(self._settings.snapshot_minutes * 60.0)
             self._session_log.save_phone(
                 self._settings.phone_enabled, self._settings.phone_interval_seconds, self._settings.phone_snapshot
@@ -2429,6 +2436,13 @@ class LevainPeakApp:
             return
         self._session_name = self._session_log.session_name
         self._snapshot_var.set(str(round(self._session_log.snapshot_seconds / 60)))
+        if self._session_log.ratio is None:  # a session from before the ratio was kept: read it from its name
+            named = parse_ratio(self._session_log.session_name)
+            if named is not None:
+                try:
+                    self._session_log.save_ratio(named)
+                except OSError:
+                    logging.exception("Falha ao salvar a proporção na sessão")
         if self._session_log.rotation is not None:  # the angle its pot, visor and mark were drawn at
             self._set_rotation(self._session_log.rotation)
         else:  # a session from before the angle was kept: it is taken to be at the one in use now
@@ -2616,6 +2630,31 @@ class LevainPeakApp:
         label = self.metric_values["Previsão do dobro"]
         if not self._session_log.active:
             label.configure(text="Inicie uma sessão para estimar")
+            return
+        if not self._phase_tracker.risen:
+            # No rise yet: whatever slope the readings have is noise. The forecast comes from the table
+            # (time to double at 24 °C for this ratio, scaled by the temperatures since the mix), and a
+            # forecast made from that noise before is not shown nor kept.
+            try:
+                self._session_log.clear_forecast()
+            except OSError:
+                logging.exception("Falha ao apagar a previsão da sessão")
+            mix = self._mix_time or datetime.now().astimezone()
+            ratio = self._session_log.ratio
+            table = self._forecaster.table_forecast(
+                (datetime.now().astimezone() - mix).total_seconds(), monotonic_time,
+                self._settings.base_doubling_hours, ratio,
+            )
+            if table is None:
+                label.configure(text="Aguardando a temperatura para estimar pela tabela")
+                return
+            basis = "tabela" + ("" if ratio is None else " · " + ":".join(f"{part:g}" for part in ratio))
+            if table.minutes <= 0:
+                label.configure(text=f"Pela tabela já devia ter dobrado\n{basis}")
+                return
+            label.configure(text=self._forecast_text(
+                datetime.now().astimezone() + timedelta(minutes=table.minutes), basis, "antes do crescimento"
+            ))
             return
         if self._forecaster.rate_per_thermal_minute() is None:
             known = self._session_log.last_forecast

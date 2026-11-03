@@ -140,3 +140,33 @@ def test_rotation_goes_with_the_session(tmp_path):
     again = SessionLog(tmp_path, sample_seconds=0)
     again.resume(log.path)
     assert again.rotation == -0.2
+
+
+def test_clear_forecast_removes_it_from_the_session_file(tmp_path):
+    from datetime import datetime
+    from types import SimpleNamespace
+    log = SessionLog(tmp_path, sample_seconds=0)
+    log.start()
+    log.record(0.0, SimpleNamespace(volume_fraction=0.4, initial_volume_fraction=0.2, growth_factor=2.0), "Crescendo", force=True)
+    log.save_forecast(datetime.now().astimezone(), "início marcado")
+    log.clear_forecast()
+    log.stop()
+    again = SessionLog(tmp_path, sample_seconds=0)
+    again.resume(log.path)
+    assert again.last_forecast is None
+
+
+def test_ratio_is_read_from_text_and_kept_with_the_session(tmp_path):
+    from types import SimpleNamespace
+    from levainpeak.sessions import parse_ratio
+    assert parse_ratio("Bdk 1:5:5 02/11 22:26") == (1.0, 5.0, 5.0)
+    assert parse_ratio("Levain 1 : 2,5 : 3") == (1.0, 2.5, 3.0)
+    assert parse_ratio("Levain 02/11 22:26") is None and parse_ratio("1:0:5") is None
+    log = SessionLog(tmp_path, sample_seconds=0)
+    log.start()
+    log.record(0.0, SimpleNamespace(volume_fraction=0.4, initial_volume_fraction=0.2, growth_factor=2.0), "Crescendo", force=True)
+    log.save_ratio((1, 10, 10))
+    log.stop()
+    again = SessionLog(tmp_path, sample_seconds=0)
+    again.resume(log.path)
+    assert again.ratio == (1.0, 10.0, 10.0)

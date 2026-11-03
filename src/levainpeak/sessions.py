@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import re
 import json
 import os
 from collections import deque
@@ -12,6 +13,18 @@ from statistics import median
 from typing import TextIO
 
 from levainpeak.filters import valid_after_recovery
+
+
+_RATIO_PATTERN = re.compile(r"(\d+(?:[.,]\d+)?)\s*:\s*(\d+(?:[.,]\d+)?)\s*:\s*(\d+(?:[.,]\d+)?)")
+
+
+def parse_ratio(text: str) -> tuple[float, float, float] | None:
+    """Starter:water:flour from text such as "1:5:5" (inside a longer name too), or None."""
+    found = _RATIO_PATTERN.search(text or "")
+    if found is None:
+        return None
+    ratio = tuple(float(part.replace(",", ".")) for part in found.groups())
+    return ratio if min(ratio) > 0 else None
 
 
 def latest_session_csv(directory: Path | None = None) -> Path | None:
@@ -54,6 +67,7 @@ class SessionLog:
         self._writer = None
         self._last_write_time: float | None = None
         self.snapshot_seconds = 600.0
+        self.ratio: tuple[float, float, float] | None = None  # starter:water:flour; None: not told
         self.rotation: float | None = None  # None: not known (a session from before it was kept)
         self.phone: dict | None = None  # {enabled, interval_seconds, snapshot}; None: the global setting applies
         self.last_forecast: dict | None = None  # {"at": ISO time of the doubling, "basis": text}
@@ -225,6 +239,20 @@ class SessionLog:
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
+    def save_ratio(self, ratio: tuple[float, float, float]) -> None:
+        """The starter:water:flour ratio of this session: the table forecast depends on it."""
+        self.ratio = tuple(float(part) for part in ratio)
+        if self.metadata_path is None:
+            return
+        try:
+            payload = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+        payload["ratio"] = list(self.ratio)
+        self.metadata_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
     def save_forecast(self, predicted_at: datetime, basis: str) -> None:
         """Remember the last doubling forecast, to show it again after a restart until a new one exists."""
         self.last_forecast = {"at": predicted_at.isoformat(), "basis": basis}
@@ -235,6 +263,22 @@ class SessionLog:
         except (OSError, ValueError):
             payload = {}
         payload["last_forecast"] = self.last_forecast
+        self.metadata_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    def clear_forecast(self) -> None:
+        """Forget the saved forecast: it was made from readings that were not real growth."""
+        if self.last_forecast is None:
+            return
+        self.last_forecast = None
+        if self.metadata_path is None:
+            return
+        try:
+            payload = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        payload.pop("last_forecast", None)
         self.metadata_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -304,6 +348,12 @@ class SessionLog:
             self.volume_offset = float(raw.get("volume_offset") or 0.0)
             forecast = raw.get("last_forecast")
             self.last_forecast = forecast if isinstance(forecast, dict) and forecast.get("at") else None
+            saved_ratio = raw.get("ratio")
+            self.ratio = (
+                tuple(float(part) for part in saved_ratio)
+                if isinstance(saved_ratio, list) and len(saved_ratio) == 3 and min(saved_ratio) > 0
+                else None
+            )
             angle = raw.get("rotation")
             self.rotation = None if angle is None else float(angle)
             phone = raw.get("phone")
@@ -474,6 +524,11 @@ class PhaseTracker:
         # off when the readings were already cleaned (the graph does).
         self.filter_dips = filter_dips
         self.reset()
+
+    @property
+    def risen(self) -> bool:
+        """The volume has risen the minimum over the baseline at least once: the levain is past warming up."""
+        return self._risen
 
     def reset(self, baseline: float | None = None) -> None:
         self.baseline = baseline
