@@ -545,8 +545,8 @@ _LIT_THRESHOLD = 0.34
 # The bottom bar sits against the display's frame and is the first to fade (or be cropped) in the picture:
 # a 9 or an 8 that lost it must not turn into a 4 or a 6 for that.
 _SEGMENT_WEIGHT = {"d": 0.3}
-# A segment this lit is there: no digit without it can be the one on the display (a lit lower-left bar
-# leaves only 0, 2, 6 and 8, whatever else faded).
+# A segment this lit is there: no digit without it can be the one on the display (a lit top bar rules
+# out 1 and 4, a lit lower-left bar leaves only 0, 2, 6 and 8, whatever else faded).
 _STRONG_SEGMENT = 0.5
 # And the other way: a segment this dark is off, so a digit that needs it is out (a dark top bar leaves
 # only 1 and 4). The bottom bar is exempt, it fades on its own.

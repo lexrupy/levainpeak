@@ -16,12 +16,14 @@ def test_needs_enough_history():
 
 
 def test_plain_trend_without_temperature():
+    """Growth is an exponential: a doubling every 60 minutes is forecast as 60 minutes, not as a line's."""
     forecaster = DoublingForecaster()
-    feed(forecaster, 0.001, None)
-    current = 0.3 + 0.001 * 10
+    for step in range(61):
+        forecaster.add(step * 10, 0.3 * 2 ** (step * 10 / 3600), None)
+    current = 0.3 * 2 ** (600 / 3600)
     forecast = forecaster.minutes_until(current, 0.6)
     assert forecast.uses_temperature is False
-    assert forecast.minutes == pytest.approx((0.6 - current) / 0.001, rel=0.01)
+    assert forecast.minutes == pytest.approx(50.0, rel=0.02)  # from 0.3 * 2**(1/6) to 0.6: five sixths of an hour
 
 
 def test_constant_temperature_keeps_observed_pace():
@@ -79,12 +81,13 @@ def test_learns_sensitivity_from_session_history():
     for step in range(12 * 60):  # 2 hours at 10 s, temperature drifting 20 -> 30 °C
         temperature = 20 + 10 * step / (12 * 60)
         forecaster.add(t, volume, temperature)
-        volume += 0.0005 * 2 ** ((temperature - 24) / 10) / 6
+        volume *= 1 + 0.002 * 2 ** ((temperature - 24) / 10) / 6
         t += 10
-    forecast = forecaster.minutes_until(volume, volume + 0.1)
+    forecast = forecaster.minutes_until(volume, volume * 1.3)
     assert forecast.model == "sessão"
-    # at 30 °C the rate is 0.0005 * 2**0.6 per minute
-    assert forecast.minutes == pytest.approx(0.1 / (0.0005 * 2 ** 0.6), rel=0.1)
+    # at 30 °C the rate is 0.002 * 2**0.6 per minute of ln(volume)
+    import math
+    assert forecast.minutes == pytest.approx(math.log(1.3) / (0.002 * 2 ** 0.6), rel=0.1)
 
 
 def test_flat_temperature_cannot_fit_session_model():

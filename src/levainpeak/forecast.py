@@ -194,7 +194,8 @@ class DoublingForecaster:
             if previous is not None:
                 thermal += (time_s - previous[0]) * (previous[1] + factor) / 2
             previous = (time_s, factor)
-            points.append((thermal, volume))
+            points.append((thermal, math.log(max(volume, 1e-6))))
+        # Levain grows like an exponential, not a line: the rate is that of ln(volume) over thermal time.
         return _slope(points) * 60, [sample[2] for sample in window]
 
     def rate_per_thermal_minute(self) -> float | None:
@@ -235,7 +236,7 @@ class DoublingForecaster:
         rate, temperatures = result
         recent = [temp for temp in temperatures if temp is not None][-5:]
         temperature = sum(recent) / len(recent) if recent else None
-        thermal_minutes = (target - current) / rate
+        thermal_minutes = math.log(max(target, 1e-6) / max(current, 1e-6)) / rate
         return Forecast(
             minutes=max(0.0, thermal_minutes / model(temperature)),
             uses_temperature=bool(recent),
