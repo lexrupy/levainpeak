@@ -95,7 +95,8 @@ a fase e a temperatura lida do visor de um termômetro. Grava uma linha de CSV a
 
 - Não edita o código enquanto o assistente trabalha. O nvim reformata ao salvar. Conferir `git status` e
   `git diff` no começo de cada rodada. Commitar só os arquivos próprios, nunca `git add -A`.
-- Reiniciar o app com `--resume` sempre que for preciso.
+- Reiniciar o app com `--resume` sempre que for preciso. Com duas instâncias, `--resume NOME` retoma a sessão pelo nome
+  (ou nome do arquivo; vale também parte do nome; a mais nova se houver várias). Sem NOME retoma a mais nova.
 
 ## Celular: o app envia para uma planilha e um painel lê
 

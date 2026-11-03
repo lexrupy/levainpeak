@@ -33,7 +33,7 @@ from levainpeak.graph_phases import (DECLINE, EXPONENTIAL, LATENCY, STATIONARY,
 from levainpeak.phone_config import load_phone_config, local_link, online_link
 from levainpeak.phone_push import PhonePusher, make_snapshot
 from levainpeak.sessions import (GEOMETRY_VERSION, PhaseTracker, SessionLog,
-                                 latest_session_csv)
+                                 find_session_csv, latest_session_csv)
 from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, INK_CUT_DAY,
                                  INK_CUT_INFRARED, MAX_OVERLAY_BRIGHTNESS,
                                  MAX_PHONE_SECONDS, MAX_RECORD_SECONDS, MIN_OVERLAY_BRIGHTNESS,
@@ -77,7 +77,7 @@ class _SessionTitle(ttk.Label):
 
 
 class LevainPeakApp:
-    def __init__(self, root: tk.Tk, *, resume_last: bool = False) -> None:
+    def __init__(self, root: tk.Tk, *, resume_last: bool | str = False) -> None:
         self.root = root
         self.root.title("LevainPeak")
         screen_width = self.root.winfo_screenwidth()
@@ -174,7 +174,7 @@ class LevainPeakApp:
         self._tick_phone_status()
         self.root.after(40, self._refresh)
         if resume_last:
-            self.root.after(200, self._resume_latest_session)
+            self.root.after(200, self._resume_latest_session, resume_last if isinstance(resume_last, str) else None)
 
     def _build_layout(self) -> None:
         header = ttk.Frame(self.root, padding=(20, 16))
@@ -631,6 +631,12 @@ class LevainPeakApp:
                 self._analyzer.align_enabled = not (self._roi_mode or self._outline_mode or self._reposition_mode)
                 self._take_alignment()
                 self._take_visor_alignment()
+                if self._pot_outline is not None and self._analyzer.outline is None and not self._outline_mode:
+                    # The screen draws a contour the reading does not use: the walls and the shading come from
+                    # the automatic search then. Hand the drawn one back to the reading.
+                    logging.warning("O contorno desenhado não estava na leitura; reaplicado")
+                    self._analyzer.outline = self._pot_outline
+                    self._analyzer.roi = self._manual_pot_roi
             if status != self._last_stream_status:
                 self._last_stream_status = status
                 if self._measurement is None:
@@ -994,9 +1000,6 @@ class LevainPeakApp:
         margin = int(0.03 * max(max(xs) - min(xs), max(ys) - min(ys)))
         roi = (max(0, min(xs) - margin), max(0, min(ys) - margin),
                min(width, max(xs) + margin), min(height, max(ys) + margin))
-        kept = self._manual_pot_roi
-        if kept is not None and kept[0] <= roi[0] and kept[1] <= roi[1] and kept[2] >= roi[2] and kept[3] >= roi[3]:
-            roi = tuple(kept)  # the box the user drew around the pot still holds the new contour
         self._cancel_outline_mode()
         self._pot_outline = outline
         self._manual_pot_roi = roi
@@ -2360,8 +2363,14 @@ class LevainPeakApp:
         if selected:
             self._resume_from(Path(selected))
 
-    def _resume_latest_session(self) -> None:
-        latest = latest_session_csv(self._session_log.directory)
+    def _resume_latest_session(self, name: str | None = None) -> None:
+        if name:
+            latest = find_session_csv(name, self._session_log.directory)
+            if latest is None:
+                self._set_message(f"Nenhuma sessão chamada ‘{name}’ para retomar.")
+                return
+        else:
+            latest = latest_session_csv(self._session_log.directory)
         if latest is None:
             self._set_message("Nenhuma sessão anterior para retomar.")
             return
@@ -2677,8 +2686,8 @@ class LevainPeakApp:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="levainpeak")
     parser.add_argument(
-        "--resume", "--retomar", dest="resume_last", action="store_true",
-        help="retoma a sessão gravada mais recentemente em data/sessions",
+        "--resume", "--retomar", dest="resume_last", nargs="?", const=True, default=False, metavar="NOME",
+        help="retoma a sessão gravada mais recentemente em data/sessions, ou a de NOME (nome da sessão ou do arquivo)",
     )
     arguments = parser.parse_args()
     root = tk.Tk()

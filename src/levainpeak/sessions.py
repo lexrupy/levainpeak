@@ -20,6 +20,24 @@ def latest_session_csv(directory: Path | None = None) -> Path | None:
     return max(files, key=lambda path: path.stat().st_mtime, default=None)
 
 
+def find_session_csv(name: str, directory: Path | None = None) -> Path | None:
+    """The newest session CSV called ``name`` (its name or its file name, ignoring case); failing that,
+    the newest whose name contains it."""
+    wanted = name.strip().casefold()
+    exact, partial = [], []
+    for path in (directory or Path("data/sessions")).glob("*.csv"):
+        try:
+            called = str(json.loads(path.with_suffix(".json").read_text(encoding="utf-8")).get("session_name") or "")
+        except (OSError, ValueError, AttributeError):
+            called = ""
+        names = (called.strip().casefold(), path.stem.casefold())
+        if wanted in names:
+            exact.append(path)
+        elif wanted and any(wanted in item for item in names):
+            partial.append(path)
+    return max(exact or partial, key=lambda path: path.stat().st_mtime, default=None)
+
+
 # How the volume is measured. Bump it when the geometry changes, so a session
 # saved with an older measurement gets its initial level taken again: dividing
 # a new volume by an old initial level is wrong by several percent.

@@ -111,3 +111,19 @@ def test_phone_choice_goes_with_the_session(tmp_path):
     again = SessionLog(tmp_path, sample_seconds=0)
     again.resume(log.path)
     assert again.phone == {"enabled": False, "interval_seconds": 300, "snapshot": True}
+
+
+def test_find_session_csv_by_name(tmp_path):
+    import json, os
+    from levainpeak.sessions import find_session_csv
+
+    for index, name in enumerate(("Bradok 2L", "Bradok 2L", "Outro")):
+        csv_path = tmp_path / f"20261102_00000{index}_{index}.csv"
+        csv_path.write_text("a\n", encoding="utf-8")
+        csv_path.with_suffix(".json").write_text(json.dumps({"session_name": name}), encoding="utf-8")
+        os.utime(csv_path, (1000 + index, 1000 + index))
+    assert find_session_csv("bradok 2l", tmp_path).stem.endswith("_1")  # the newer of the two
+    assert find_session_csv("outro", tmp_path).stem.endswith("_2")
+    assert find_session_csv("brad", tmp_path).stem.endswith("_1")  # part of a name
+    assert find_session_csv("20261102_000000_0", tmp_path).stem.endswith("_0")  # the file name
+    assert find_session_csv("nada", tmp_path) is None
