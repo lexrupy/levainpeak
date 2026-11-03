@@ -43,6 +43,21 @@ a fase e a temperatura lida do visor de um termômetro. Grava uma linha de CSV a
   inicial gravado com a medição antiga faziam o fator de crescimento sair ~14% abaixo do real (1,87 em vez de 2,14
   na mesma imagem). `GEOMETRY_VERSION` (em `sessions.py`) fica no JSON da sessão; ao retomar uma sessão de versão
   menor, o nível inicial é refeito uma vez a partir da marca. **Mudou a forma de medir? Suba a versão.**
+- **Time-lapse** (`timelapse.py`): botão ao lado do "Girar". Janela com as fotos da sessão (menu das últimas 10 com
+  nome, data e nº de fotos), barra, play, fps de 1 a 30 e teclas (↑ → espaço avançam; ↓ ← Shift+espaço voltam;
+  Home/End; Esc). O intervalo das fotos é configurável (1 a 120 min), na sessão (`snapshot_seconds` no JSON) e global.
+- **Previsão do dobro:** `last_forecast` (`at`, `basis`) vai para o JSON da sessão (no máximo a cada 60 s) e aparece
+  como "(última conhecida)" quando não há tendência. No resume o histórico do CSV volta ao previsor com o relógio
+  real. Com o dobro alcançado, o texto traz a hora (primeira linha do CSV com fator ≥ 2,0).
+- **JSON da sessão:** `save_regions` faz merge e preserva `snapshot_seconds`, `last_forecast` e `volume_offset`.
+- **Fases:** depois que a subida mínima aconteceu (`_risen`) a fase não volta a "Aquecendo".
+- **Lâmpada:** segura o volume quando o brilho muda >12% (padrão 10 min, no máximo 3×). Se a luz mudou de vez, a
+  série é emendada no nível em que foi segurada.
+- **Gráfico:** passar o mouse mostra hora, fator (`1.00x`) e temperatura. "Zerar" o ângulo pede confirmação.
+- **Quadro "Volume relativo":** mostra também o fator da leitura anterior gravada, com a contagem de repetições.
+- **Defeito aberto:** o nível inicial acompanha as emendas da série e o fator oscila a cada reinício. A superfície
+  lida fica ~30–40 px abaixo do topo visível da massa densa (contraste baixo com o pote de vidro).
+
 - **Marca de início:** pode ser manual. Fica no JSON da sessão (`marker_y`) e volta ao retomar.
   O nível inicial da retomada vem da última linha do CSV.
 - **Perfis:** em infravermelho a imagem é cinza (cor média 0,00 contra ~10 de dia). O topo e o fundo do pote
@@ -157,3 +172,20 @@ Publicado em 2026-10-31 em **github.com/lexrupy/levainpeak** (público, MIT). Re
 - Publicar o `Code.gs` novo no Apps Script, limpar a aba `serie` e trocar o token (sem colar no chat).
 - Opcionais: faixa de aviso sobre o vídeo, `data/` no `.gitignore`, marca de polaridade invertida, salvar gráfico
   como PNG.
+
+## Próxima funcionalidade: geometria do pote e ângulo da câmera (decidido em 2/11/2026)
+
+Pote novo medido (interno): topo 7,0 cm, fundo 4,1 cm, parede em ângulo ~5,1 cm, altura vertical ~4,9 cm,
+capacidade ~120 mL; a metade da altura guarda só ~37% do volume.
+
+1. Campos opcionais topo, fundo e altura em Configurações (padrão global e por sessão no JSON). O volume usa o
+   tronco de cone real e mostra mL.
+2. Sem contorno desenhado, um trapézio na proporção certa surge na tela para encaixar (ou é detectado). A sessão
+   atual conta como já ajustada.
+3. Ângulo da câmera: correção de perspectiva (keystone) vertical, e horizontal opcional, com sugestão automática
+   pela proporção do pote. Ajustável no meio da sessão: coordenadas gravadas no quadro original, correção aplicada
+   na hora, marca recalculada na geometria nova, série emendada no instante (como a lâmpada) e cada mudança gravada
+   no JSON com hora e valor. Os pontos antigos ficam na escala antiga; reprocessar pelas fotos seria ferramenta à parte.
+
+Ideias guardadas: rede pequena, silhueta da massa (área^1,5), leitura junto às paredes, fundo preto fosco, pote de
+plástico fosco, marca física no pote, fotos a cada 2 min.
