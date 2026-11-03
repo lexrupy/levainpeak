@@ -5,6 +5,7 @@ from __future__ import annotations
 import queue
 import threading
 import time
+from pathlib import Path
 from collections import deque
 from dataclasses import replace
 from statistics import median
@@ -17,7 +18,7 @@ from levainpeak.visor_follow import (
 )
 from levainpeak.alignment import (
     MIN_SCORE, Alignment, PotReference, carry, load_reference, locate, make_reference,
-    reference_path, save_reference,
+    save_reference,
 )
 from levainpeak.filters import LampWatch, OutlierGate
 from levainpeak.target import find_plus
@@ -61,6 +62,7 @@ class ContainerAnalyzer:
         self._joined_profile: str | None = None
         self._last_volume: float | None = None
         self.align_enabled = True
+        self.reference_base: Path | None = None  # the session's path without suffix; None: kept in memory only
         self.detect_enabled = True  # off while the pot is being drawn: nothing is measured or published
         self.mark_seen: tuple[float, float, int] | None = None  # the last "+"/"X" found: x, y, size
         self._mark_slide = 0.0  # px the label has slid sideways on the pot, from the edges' view
@@ -201,17 +203,29 @@ class ContainerAnalyzer:
         self.mark_seen = None if found is None else (found.x, found.y, found.size)
         return None if found is None else (found.x, found.y)
 
+    def _reference_file(self, name: str) -> Path | None:
+        """Where this session keeps how its pot looks: beside its own files, never shared. A reference
+        of another session's pot would carry the drawing onto that pot."""
+        if self.reference_base is None:
+            return None
+        return self.reference_base.with_name(f"{self.reference_base.name}_referencia_{name}.npz")
+
     def load_references(self) -> None:
-        """The references of an earlier run, so a pot moved while the app was off is found."""
+        """The references of an earlier run of this session, so a pot moved while the app was off is found."""
+        self._references.clear()
         for profile in (DAY, INFRARED):
-            reference = load_reference(reference_path(profile.name))
+            path = self._reference_file(profile.name)
+            reference = None if path is None else load_reference(path)
             if reference is not None:
                 self._references[profile.name] = reference
 
     def _store_reference(self, name: str, reference: PotReference) -> None:
         self._references[name] = reference
+        path = self._reference_file(name)
+        if path is None:
+            return
         try:
-            save_reference(reference, reference_path(name))
+            save_reference(reference, path)
         except OSError:
             pass
 

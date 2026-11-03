@@ -62,6 +62,8 @@ def _lowercase_rows(scale: float, thickness: int) -> tuple[int, int]:
     return baseline - int(rows.max()), baseline - int(rows.min())
 
 
+MAX_ZOOM = 12.0  # the wheel zoom of the video; only the visible part is scaled, so it stays cheap
+
 class _SessionTitle(ttk.Label):
     """The title of the session group: "Sessão · " and then whatever text it is given."""
 
@@ -1491,7 +1493,7 @@ class LevainPeakApp:
             self._redraw_reposition()
             return
         old_zoom = self._zoom
-        new_zoom = min(4.0, max(1.0, old_zoom * (1.25 if direction > 0 else 0.8)))
+        new_zoom = min(MAX_ZOOM, max(1.0, old_zoom * (1.25 if direction > 0 else 0.8)))
         if new_zoom == old_zoom:
             return
         self._zoom_around_pointer(event, new_zoom)
@@ -1700,6 +1702,8 @@ class LevainPeakApp:
             self._session_log.volume_offset = 0.0
             if self._analyzer is not None:
                 self._analyzer.reset_join()
+                self._analyzer.reference_base = self._session_log.path.with_suffix("")
+                self._capture_pot_reference()
             self._session_log.save_regions(self._manual_pot_roi, self._temperature_roi, outline=self._pot_outline, face_quad=self._temperature_quad)
             self._persist_marker()
         except OSError as exc:
@@ -2432,6 +2436,7 @@ class LevainPeakApp:
             self._analyzer.vessel_bounds = dict(self._session_log.vessel_bounds)
             self._analyzer.volume_offset = self._session_log.volume_offset
             self._analyzer.marker_y = self._session_log.manual_marker_y
+            self._analyzer.reference_base = selected.with_suffix("")
             self._analyzer.load_references()
         self._manual_marker_y = self._session_log.manual_marker_y
         self._mix_time = self._session_log.mix_time
@@ -2529,6 +2534,8 @@ class LevainPeakApp:
             self._analyzer.marker_y = None
             self._analyzer.anchor_temperature = None
             self._analyzer.reset_join()
+            self._analyzer.reference_base = None
+            self._analyzer.load_references()
         self._phase = "Aguardando sessão"
         self.metric_values["Sessão"].configure(text="Nenhuma sessão iniciada")
         self.metric_values["Pote"].configure(text="Aguardando calibração")

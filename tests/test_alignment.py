@@ -61,11 +61,10 @@ def test_the_reference_survives_a_restart(tmp_path):
 
 
 def test_the_analyzer_moves_the_drawing_after_two_agreeing_searches(tmp_path, monkeypatch):
-    import levainpeak.analysis as analysis
     from levainpeak.analysis import ContainerAnalyzer
 
-    monkeypatch.setattr(analysis, "reference_path", lambda name: tmp_path / f"{name}.npz")
     analyzer = ContainerAnalyzer(stream=None)
+    analyzer.reference_base = tmp_path / "sessao"
     analyzer.outline, analyzer.roi, analyzer.marker_y = OUTLINE, (300, 200, 720, 610), 450
     frame = _scene()
 
@@ -123,3 +122,21 @@ def test_a_pot_sliding_over_a_static_room_is_followed_not_the_room():
     found = locate(reference, _pot_over_a_static_room(38))
     assert found is not None and found.score >= MIN_SCORE
     assert abs((found.dx - reference.origin[0]) - 38) <= 3
+
+
+def test_references_are_kept_per_session(tmp_path):
+    from levainpeak.analysis import ContainerAnalyzer
+
+    frame = _scene()
+    first, second = ContainerAnalyzer(stream=None), ContainerAnalyzer(stream=None)
+    first.reference_base, second.reference_base = tmp_path / "um", tmp_path / "dois"
+    first.outline, first.roi = OUTLINE, (300, 200, 720, 610)
+    first._follow_pot(frame)  # the first look stores the reference of the first session only
+    second.load_references()
+    assert second._references == {}
+    first._references.clear()
+    first.load_references()
+    assert first._references
+    loose = ContainerAnalyzer(stream=None)  # no session: nothing is read from or written to disk
+    loose.load_references()
+    assert loose._references == {}
