@@ -2322,8 +2322,9 @@ class LevainPeakApp:
             )
             start_x = x_of(monitoring_start)
             canvas.create_line(start_x, top, start_x, bottom, fill="#a9b0aa", dash=(2, 4))
+            # At the foot of the plot, under the 0% line: the phase names own the top.
             canvas.create_text(
-                start_x + 4, top + 2, text="início do monitoramento", anchor="nw", fill="#7d8a83",
+                start_x + 4, bottom - 4, text="início do monitoramento", anchor="sw", fill="#7d8a83",
                 font=("TkDefaultFont", 8),
             )
 
