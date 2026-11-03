@@ -399,8 +399,6 @@ class LevainPeakApp:
         shown = draw_measurement(
             frame, measurement, detail=self._show_detail, faint_box=self._pot_outline is not None,
             outline=tuple(tuple(point) for point in self._pot_outline) if self._pot_outline else None,
-            previous_factor=self._session_log.last_growth_factor,
-            previous_repeats=self._session_log.growth_repeats,
         )
         seen = self._analyzer.mark_seen if self._analyzer is not None else None
         if seen is not None:  # the "+" or "X" the app is following, in red
@@ -714,7 +712,9 @@ class LevainPeakApp:
         measurement = self._measurement
         self.metric_values["Pote"].configure(text="Recipiente detectado")
         self.metric_values["Volume relativo"].configure(
-            text=self._volume_text(measurement)
+            text=self._volume_text(
+                measurement, self._session_log.last_growth_factor, self._session_log.growth_repeats
+            )
         )
         self.metric_values["Estado do levain"].configure(text=self._phase)
         marker_text = "marca ajustada manualmente" if measurement.marker_manual else "faixa inicial detectada"
@@ -736,10 +736,15 @@ class LevainPeakApp:
         self.metric_values["Temperatura"].configure(text=text)
 
     @staticmethod
-    def _volume_text(measurement: ContainerMeasurement) -> str:
+    def _volume_text(
+        measurement: ContainerMeasurement, previous: float | None = None, repeats: int = 1
+    ) -> str:
         capacity = f"≈ {measurement.volume_fraction:.0%} da capacidade"
         if measurement.growth_factor is not None:
-            return f"{capacity}\n≈ {measurement.growth_factor:.2f}× do nível inicial"
+            text = f"{capacity}\n≈ {measurement.growth_factor:.2f}× do nível inicial"
+            if previous is not None:  # the last row written: "3.02 (5x)" when it came up several times
+                text += f"\nanterior {previous:.2f}×" + (f" ({repeats}x)" if repeats > 1 else "")
+            return text
         return capacity
 
     def _handle_container_change(self, measurement: ContainerMeasurement | None) -> None:
