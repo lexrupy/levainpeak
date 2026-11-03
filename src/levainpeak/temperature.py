@@ -542,6 +542,9 @@ def _deslant(binary: np.ndarray) -> np.ndarray:
 # lower-left (0.29), so the threshold sits between them at 0.34.
 _PATTERNS = {frozenset(pattern) for _, pattern in _SHAPES}
 _LIT_THRESHOLD = 0.34
+# The bottom bar sits against the display's frame and is the first to fade (or be cropped) in the picture:
+# a 9 or an 8 that lost it must not turn into a 4 or a 6 for that.
+_SEGMENT_WEIGHT = {"d": 0.3}
 _MIN_SEPARATION = 0.04
 _MAX_BEST_SCORE = 1.5
 
@@ -568,6 +571,13 @@ def _normalized_occupancy(glyph: np.ndarray) -> tuple[float, ...]:
     return tuple(float(value) for value in occupancy / occupancy.max())
 
 
+def _distance(occupancy: np.ndarray, shape: str, names: list[str]) -> float:
+    """How far the lit segments are from a digit's pattern, the fragile bottom bar counting for less."""
+    target = np.asarray([1.0 if name in shape else 0.0 for name in names])
+    weight = np.asarray([_SEGMENT_WEIGHT.get(name, 1.0) for name in names])
+    return float((weight * np.square(occupancy - target)).sum())
+
+
 def _classify_digit(glyph: np.ndarray) -> int | None:
     names = list(_SEGMENTS)
     occupancy = _segment_occupancy(glyph)
@@ -588,12 +598,10 @@ def _classify_digit(glyph: np.ndarray) -> int | None:
     if match is None:
         match = min(
             _SHAPES,
-            key=lambda item: float(
-                np.square(occupancy - [1.0 if name in item[1] else 0.0 for name in names]).sum()
-            ),
+            key=lambda item: _distance(occupancy, item[1], names),
         )
     digit, shape = match
-    best = float(np.square(occupancy - [1.0 if name in shape else 0.0 for name in names]).sum())
+    best = _distance(occupancy, shape, names)
     if best > _MAX_BEST_SCORE:
         return None
     pattern = frozenset(shape)

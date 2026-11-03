@@ -241,3 +241,14 @@ def test_the_black_white_cut_of_the_drawn_face_changes_what_counts_as_ink():
     h, w = bgr.shape[:2]
     quad = ((0, 0), (w - 1, 0), (w - 1, h - 1), (0, h - 1))
     assert inspect_temperature(bgr, None, infrared=True, face_quad=quad, ink_cut=0.3).reading == pytest.approx(25.6)
+
+
+def test_a_nine_whose_bottom_bar_faded_is_not_read_as_a_four():
+    import numpy as np
+    from levainpeak.temperature import _SEGMENTS, _classify_digit
+
+    glyph = np.zeros((80, 40), np.uint8)
+    for name, strength in {"a": 0.6, "b": 0.95, "c": 0.8, "d": 0.3, "e": 0.0, "f": 1.0, "g": 0.75}.items():
+        x0, y0, x1, y1 = _SEGMENTS[name]
+        glyph[int(80 * y0):max(int(80 * y0) + 1, int(80 * y1)), int(40 * x0):max(int(40 * x0) + 1, int(40 * x1))] = int(255 * strength)
+    assert _classify_digit(glyph) == 9
