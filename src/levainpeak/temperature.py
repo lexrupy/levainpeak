@@ -548,6 +548,10 @@ _SEGMENT_WEIGHT = {"d": 0.3}
 # A segment this lit is there: no digit without it can be the one on the display (a lit lower-left bar
 # leaves only 0, 2, 6 and 8, whatever else faded).
 _STRONG_SEGMENT = 0.5
+# And the other way: a segment this dark is off, so a digit that needs it is out (a dark top bar leaves
+# only 1 and 4). The bottom bar is exempt, it fades on its own.
+_DARK_SEGMENT = 0.12
+_FRAGILE_SEGMENTS = frozenset("d")
 _MIN_SEPARATION = 0.04
 _MAX_BEST_SCORE = 1.5
 
@@ -600,7 +604,10 @@ def _classify_digit(glyph: np.ndarray) -> int | None:
     match = next(((candidate, shape) for candidate, shape in _SHAPES if frozenset(shape) == lit), None)
     if match is None:
         strong = {name for name, value in zip(names, occupancy) if value >= _STRONG_SEGMENT}
-        candidates = [item for item in _SHAPES if strong <= set(item[1])] or _SHAPES
+        dark = {name for name, value in zip(names, occupancy) if value <= _DARK_SEGMENT} - _FRAGILE_SEGMENTS
+        candidates = [
+            item for item in _SHAPES if strong <= set(item[1]) and not dark & set(item[1])
+        ] or [item for item in _SHAPES if strong <= set(item[1])] or _SHAPES
         match = min(candidates, key=lambda item: _distance(occupancy, item[1], names))
     digit, shape = match
     best = _distance(occupancy, shape, names)
