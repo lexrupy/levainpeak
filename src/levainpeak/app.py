@@ -2423,6 +2423,11 @@ class LevainPeakApp:
         self._snapshot_var.set(str(round(self._session_log.snapshot_seconds / 60)))
         if self._session_log.rotation is not None:  # the angle its pot, visor and mark were drawn at
             self._set_rotation(self._session_log.rotation)
+        else:  # a session from before the angle was kept: it is taken to be at the one in use now
+            try:
+                self._session_log.save_rotation(self._settings.rotation)
+            except OSError:
+                logging.exception("Falha ao salvar o ângulo na sessão")
         known_phone = self._session_log.phone
         if known_phone is not None:  # what this session was sent with, not the last global choice
             self._settings = replace(
