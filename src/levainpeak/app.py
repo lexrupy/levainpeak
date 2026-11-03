@@ -399,6 +399,8 @@ class LevainPeakApp:
         shown = draw_measurement(
             frame, measurement, detail=self._show_detail, faint_box=self._pot_outline is not None,
             outline=tuple(tuple(point) for point in self._pot_outline) if self._pot_outline else None,
+            previous_factor=self._session_log.last_growth_factor,
+            previous_repeats=self._session_log.growth_repeats,
         )
         seen = self._analyzer.mark_seen if self._analyzer is not None else None
         if seen is not None:  # the "+" or "X" the app is following, in red
@@ -2495,7 +2497,10 @@ class LevainPeakApp:
             label.configure(text="O dobro estimado excede a capacidade do pote")
             return
         if current >= target:
-            label.configure(text="O dobro do volume inicial da mistura já foi alcançado")
+            reached = self._session_log.reached_at(2.0) or now
+            label.configure(
+                text=f"O dobro do volume inicial já foi alcançado às {reached.astimezone():%H:%M} de {reached.astimezone():%d/%m}"
+            )
             return
         forecast = self._forecaster.minutes_until(current, target)
         if forecast is None:

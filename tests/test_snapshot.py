@@ -84,3 +84,17 @@ def test_saving_the_regions_keeps_the_snapshot_interval_and_the_last_forecast(tm
     log.save_regions((1, 2, 3, 4), (5, 6, 7, 8))
     saved = json.loads(log.metadata_path.read_text())
     assert saved["snapshot_seconds"] == 300.0 and saved["last_forecast"]["basis"] == "início marcado"
+
+
+def test_reached_at_and_repeats(tmp_path):
+    from types import SimpleNamespace
+    log = SessionLog(tmp_path, sample_seconds=0)
+    log.start()
+
+    def row(factor):
+        return SimpleNamespace(volume_fraction=0.4, initial_volume_fraction=0.2, growth_factor=factor)
+
+    for factor in (1.5, 1.99, 2.01, 2.012, 2.013):
+        log.record(0.0, row(factor), "Crescendo", force=True)
+    assert log.reached_at(2.0) is not None and log.reached_at(3.0) is None
+    assert log.growth_repeats == 3 and log.last_growth_factor == 2.013

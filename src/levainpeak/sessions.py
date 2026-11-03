@@ -59,6 +59,8 @@ class SessionLog:
         # change in how the pot is read (redrawn contour) that would show as a step.
         self.volume_offset: float = 0.0
         self.last_volume: float | None = None  # the volume of the last row written this run
+        self.last_growth_factor: float | None = None  # and its growth factor
+        self.growth_repeats = 0  # how many rows in a row carry that factor to two decimals
         # Version of the volume measurement the saved initial level came from.
         self.geometry: int = GEOMETRY_VERSION
 
@@ -323,7 +325,29 @@ class SessionLog:
         self._last_write_time = monotonic_time
         self._last_phase = phase
         self.last_volume = measurement.volume_fraction
+        same = (
+            measurement.growth_factor is not None and self.last_growth_factor is not None
+            and f"{measurement.growth_factor:.2f}" == f"{self.last_growth_factor:.2f}"
+        )
+        self.growth_repeats = self.growth_repeats + 1 if same else 1
+        self.last_growth_factor = measurement.growth_factor
         return True
+
+    def reached_at(self, factor: float) -> datetime | None:
+        """When the growth factor first reached ``factor`` in this session's CSV, or None."""
+        if self.path is None:
+            return None
+        try:
+            with self.path.open(newline="", encoding="utf-8") as handle:
+                for row in csv.DictReader(handle):
+                    try:
+                        if float(row.get("growth_factor") or 0) >= factor:
+                            return datetime.fromisoformat(row["timestamp"])
+                    except (ValueError, KeyError):
+                        continue
+        except OSError:
+            pass
+        return None
 
     def snapshot(self, monotonic_time: float, frame) -> Path | None:
         """Keep the raw frame beside the session every `snapshot_seconds` (ten minutes), to audit it later."""

@@ -265,6 +265,7 @@ def set_initial_volume_reference(
 def draw_measurement(
     frame: np.ndarray, measurement: ContainerMeasurement, *, detail: bool = False,
     faint_box: bool = False, outline: tuple[tuple[int, int], ...] | None = None,
+    previous_factor: float | None = None, previous_repeats: int = 1,
 ) -> np.ndarray:
     """Draw the detected vessel bounds and estimated levain surface.
 
@@ -308,7 +309,9 @@ def draw_measurement(
             )
     label = f"Pote | volume ~{measurement.volume_fraction:.0%}"
     if measurement.growth_factor is not None:
-        label += f" | {measurement.growth_factor:.1f}x marca inicial"
+        label += f" | {measurement.growth_factor:.2f}x marca inicial"
+        if previous_factor is not None:
+            label += f" (anterior {previous_factor:.2f}" + (f" ({previous_repeats}x))" if previous_repeats > 1 else ")")
     label_x, label_top = (min(x for x, _ in outline), min(y for _, y in outline)) if outline else (measurement.left, measurement.top)
     y = max(30, label_top - 12)
     cv2.putText(annotated, label, (label_x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4, cv2.LINE_AA)
