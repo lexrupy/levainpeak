@@ -54,6 +54,7 @@ class SessionLog:
         self._writer = None
         self._last_write_time: float | None = None
         self.snapshot_seconds = 600.0
+        self.rotation: float | None = None  # None: not known (a session from before it was kept)
         self.phone: dict | None = None  # {enabled, interval_seconds, snapshot}; None: the global setting applies
         self.last_forecast: dict | None = None  # {"at": ISO time of the doubling, "basis": text}
         self._last_snapshot_time: float | None = None
@@ -210,6 +211,20 @@ class SessionLog:
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
+    def save_rotation(self, degrees: float) -> None:
+        """The picture's angle the regions of this session were drawn at: they only fit the pot at that angle."""
+        self.rotation = float(degrees)
+        if self.metadata_path is None:
+            return
+        try:
+            payload = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+        payload["rotation"] = self.rotation
+        self.metadata_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
     def save_forecast(self, predicted_at: datetime, basis: str) -> None:
         """Remember the last doubling forecast, to show it again after a restart until a new one exists."""
         self.last_forecast = {"at": predicted_at.isoformat(), "basis": basis}
@@ -289,6 +304,8 @@ class SessionLog:
             self.volume_offset = float(raw.get("volume_offset") or 0.0)
             forecast = raw.get("last_forecast")
             self.last_forecast = forecast if isinstance(forecast, dict) and forecast.get("at") else None
+            angle = raw.get("rotation")
+            self.rotation = None if angle is None else float(angle)
             phone = raw.get("phone")
             self.phone = phone if isinstance(phone, dict) and "enabled" in phone else None
             if raw.get("snapshot_seconds"):  # older sessions keep the caller's value

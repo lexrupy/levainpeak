@@ -979,6 +979,11 @@ class LevainPeakApp:
         self._settings = replace(self._settings, rotation=degrees).clamped()
         if self._stream is not None:
             self._stream.rotation = self._settings.rotation
+        if self._session_log.active:
+            try:
+                self._session_log.save_rotation(degrees)
+            except OSError:
+                logging.exception("Falha ao salvar o ângulo na sessão")
         try:
             save_settings(self._settings)
         except OSError:
@@ -1703,6 +1708,7 @@ class LevainPeakApp:
             self._session_log.save_phone(
                 self._settings.phone_enabled, self._settings.phone_interval_seconds, self._settings.phone_snapshot
             )
+            self._session_log.save_rotation(self._settings.rotation)
             self._session_log.volume_offset = 0.0
             if self._analyzer is not None:
                 self._analyzer.reset_join()
@@ -2415,6 +2421,8 @@ class LevainPeakApp:
             return
         self._session_name = self._session_log.session_name
         self._snapshot_var.set(str(round(self._session_log.snapshot_seconds / 60)))
+        if self._session_log.rotation is not None:  # the angle its pot, visor and mark were drawn at
+            self._set_rotation(self._session_log.rotation)
         known_phone = self._session_log.phone
         if known_phone is not None:  # what this session was sent with, not the last global choice
             self._settings = replace(

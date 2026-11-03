@@ -127,3 +127,16 @@ def test_find_session_csv_by_name(tmp_path):
     assert find_session_csv("brad", tmp_path).stem.endswith("_1")  # part of a name
     assert find_session_csv("20261102_000000_0", tmp_path).stem.endswith("_0")  # the file name
     assert find_session_csv("nada", tmp_path) is None
+
+
+def test_rotation_goes_with_the_session(tmp_path):
+    from types import SimpleNamespace
+    log = SessionLog(tmp_path, sample_seconds=0)
+    log.start()
+    log.record(0.0, SimpleNamespace(volume_fraction=0.4, initial_volume_fraction=0.2, growth_factor=2.0), "Crescendo", force=True)
+    assert log.rotation is None
+    log.save_rotation(-0.2)
+    log.stop()
+    again = SessionLog(tmp_path, sample_seconds=0)
+    again.resume(log.path)
+    assert again.rotation == -0.2
