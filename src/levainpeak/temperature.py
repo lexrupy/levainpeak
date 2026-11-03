@@ -545,6 +545,9 @@ _LIT_THRESHOLD = 0.34
 # The bottom bar sits against the display's frame and is the first to fade (or be cropped) in the picture:
 # a 9 or an 8 that lost it must not turn into a 4 or a 6 for that.
 _SEGMENT_WEIGHT = {"d": 0.3}
+# A segment this lit is there: no digit without it can be the one on the display (a lit lower-left bar
+# leaves only 0, 2, 6 and 8, whatever else faded).
+_STRONG_SEGMENT = 0.5
 _MIN_SEPARATION = 0.04
 _MAX_BEST_SCORE = 1.5
 
@@ -596,10 +599,9 @@ def _classify_digit(glyph: np.ndarray) -> int | None:
     lit = frozenset(name for name, value in zip(names, occupancy) if value > _LIT_THRESHOLD)
     match = next(((candidate, shape) for candidate, shape in _SHAPES if frozenset(shape) == lit), None)
     if match is None:
-        match = min(
-            _SHAPES,
-            key=lambda item: _distance(occupancy, item[1], names),
-        )
+        strong = {name for name, value in zip(names, occupancy) if value >= _STRONG_SEGMENT}
+        candidates = [item for item in _SHAPES if strong <= set(item[1])] or _SHAPES
+        match = min(candidates, key=lambda item: _distance(occupancy, item[1], names))
     digit, shape = match
     best = _distance(occupancy, shape, names)
     if best > _MAX_BEST_SCORE:

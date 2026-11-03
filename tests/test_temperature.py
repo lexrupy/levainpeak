@@ -252,3 +252,14 @@ def test_a_nine_whose_bottom_bar_faded_is_not_read_as_a_four():
         x0, y0, x1, y1 = _SEGMENTS[name]
         glyph[int(80 * y0):max(int(80 * y0) + 1, int(80 * y1)), int(40 * x0):max(int(40 * x0) + 1, int(40 * x1))] = int(255 * strength)
     assert _classify_digit(glyph) == 9
+
+
+def test_a_lit_lower_left_bar_leaves_only_digits_that_have_it():
+    import numpy as np
+    from levainpeak.temperature import _SEGMENTS, _classify_digit
+
+    glyph = np.zeros((80, 40), np.uint8)
+    for name, strength in {"a": 0.9, "b": 1.0, "c": 0.7, "d": 0.1, "e": 0.65, "f": 0.9, "g": 0.2}.items():
+        x0, y0, x1, y1 = _SEGMENTS[name]
+        glyph[int(80 * y0):max(int(80 * y0) + 1, int(80 * y1)), int(40 * x0):max(int(40 * x0) + 1, int(40 * x1))] = int(255 * strength)
+    assert _classify_digit(glyph) in (0, 2, 6, 8, None)  # never a 7 (or a 4, a 9, a 3, a 5, a 1)
