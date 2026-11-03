@@ -506,6 +506,21 @@ class LevainPeakApp:
             self._stream.snapshot()[1], self._pot_outline, self._manual_pot_roi, self._manual_marker_y
         )
 
+    def _sync_analyzer_regions(self) -> None:
+        """The window's pot (box and contour) is the one the reading uses. When they differ the reading is
+        measuring something else (the automatic search, another pot) while the screen shows the drawing."""
+        analyzer = self._analyzer
+        if analyzer.aligned is not None or self._outline_mode or self._roi_mode or self._reposition_mode:
+            return  # the reading just moved the drawing and the window has not taken it yet
+        outline = None if self._pot_outline is None else tuple(tuple(point) for point in self._pot_outline)
+        held = None if analyzer.outline is None else tuple(tuple(point) for point in analyzer.outline)
+        roi = None if self._manual_pot_roi is None else tuple(self._manual_pot_roi)
+        held_roi = None if analyzer.roi is None else tuple(analyzer.roi)
+        if outline == held and roi == held_roi:
+            return
+        logging.warning("O pote da leitura (%s, %s) diferia do desenhado (%s, %s); reaplicado", held_roi, held, roi, outline)
+        analyzer.outline, analyzer.roi = outline, roi
+
     def _take_alignment(self) -> None:
         """The analyzer carried the drawing to where the pot now is: follow it in the window and on disk."""
         aligned = self._analyzer.aligned if self._analyzer is not None else None
@@ -631,12 +646,7 @@ class LevainPeakApp:
                 self._analyzer.align_enabled = not (self._roi_mode or self._outline_mode or self._reposition_mode)
                 self._take_alignment()
                 self._take_visor_alignment()
-                if self._pot_outline is not None and self._analyzer.outline is None and not self._outline_mode:
-                    # The screen draws a contour the reading does not use: the walls and the shading come from
-                    # the automatic search then. Hand the drawn one back to the reading.
-                    logging.warning("O contorno desenhado não estava na leitura; reaplicado")
-                    self._analyzer.outline = self._pot_outline
-                    self._analyzer.roi = self._manual_pot_roi
+                self._sync_analyzer_regions()
             if status != self._last_stream_status:
                 self._last_stream_status = status
                 if self._measurement is None:
