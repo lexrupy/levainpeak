@@ -2238,7 +2238,12 @@ class LevainPeakApp:
 
         left, right, top, bottom = 72, width - 76, 82, height - 58
         plot_width, plot_height = max(1, right - left), max(1, bottom - top)
-        first_time = samples[0][0]
+        # The graph starts at the mix (the zero of the session), even when the monitoring began later.
+        monitoring_start = samples[0][0]
+        mix_time = data.get("mix_time")
+        if mix_time is not None and monitoring_start.tzinfo is not None and mix_time.tzinfo is None:
+            mix_time = mix_time.astimezone()
+        first_time = mix_time if mix_time is not None and mix_time < monitoring_start else monitoring_start
         # What is still to come is drawn too: the doubling forecast of the session being watched.
         predicted = self._forecast_prediction if path == self._session_log.path else None
         if predicted is not None:
@@ -2307,6 +2312,20 @@ class LevainPeakApp:
             )
 
         self._draw_phase_markers(canvas, samples, phases, x_of, top, bottom, plot_width, duration)
+
+        if first_time < monitoring_start and (monitoring_start - first_time).total_seconds() > 0.02 * duration:
+            # No readings between the mix and the start of the monitoring: join the zero to the first reading
+            # with a pale line, and mark where the monitoring began.
+            canvas.create_line(
+                x_of(first_time), y_volume(initial_volume or baseline), x_of(monitoring_start), y_volume(samples[0][1]),
+                fill="#a9c6d6", width=2,
+            )
+            start_x = x_of(monitoring_start)
+            canvas.create_line(start_x, top, start_x, bottom, fill="#a9b0aa", dash=(2, 4))
+            canvas.create_text(
+                start_x + 4, top + 2, text="início do monitoramento", anchor="nw", fill="#7d8a83",
+                font=("TkDefaultFont", 8),
+            )
 
         step = max(1, len(samples) // 300)
         volume_points = []

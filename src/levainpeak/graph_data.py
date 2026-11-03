@@ -24,6 +24,7 @@ def prepare_graph_data(path: Path, *, peak_seconds: float = 600, artifact_second
     phases: list[str] = []
     last_temperature: float | None = None
     baseline = None
+    mix_time = None
     session_name = path.stem
     with path.open("r", newline="", encoding="utf-8") as source:
         for row in csv.DictReader(source):
@@ -39,6 +40,11 @@ def prepare_graph_data(path: Path, *, peak_seconds: float = 600, artifact_second
             phases.append(row.get("phase", ""))
             if row.get("session_name"):
                 session_name = row["session_name"]
+            if row.get("mix_time"):
+                try:
+                    mix_time = datetime.fromisoformat(row["mix_time"])
+                except ValueError:
+                    pass
     if len(samples) < 2:
         return {"too_few": True, "session_name": session_name}
     # Drop dips and peaks that leave the trend and come back (for example the
@@ -111,6 +117,7 @@ def prepare_graph_data(path: Path, *, peak_seconds: float = 600, artifact_second
         "samples": samples,
         "phases": phases,
         "baseline": baseline,
+        "mix_time": mix_time,
     }
 
 

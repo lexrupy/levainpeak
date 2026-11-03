@@ -95,7 +95,7 @@ def _graph_app(prediction, path="sessao.csv"):
 def test_the_graph_draws_the_forecast_as_a_pale_dotted_curve_up_to_the_doubling():
     app, canvas = _graph_app(prediction=3)
     LevainPeakApp._draw_session_graph(app)
-    dotted = [(coords, options) for coords, options in canvas.lines if options.get("dash") == (2, 5)]
+    dotted = [(coords, options) for coords, options in canvas.lines if options.get("dash") == (2, 5) and len(coords) > 10]
     assert len(dotted) == 1
     coords, options = dotted[0]
     assert len(coords) == 82 and options["fill"] == "#a9c6d6"
@@ -109,3 +109,15 @@ def test_the_graph_has_no_forecast_curve_without_a_forecast_or_for_another_sessi
             app._session_log = SimpleNamespace(path="outra.csv")  # the graph shows a different session
         LevainPeakApp._draw_session_graph(app)
         assert not [1 for _c, options in canvas.lines if options.get("dash") == (2, 5)]
+
+
+def test_the_graph_starts_at_the_mix_and_marks_where_the_monitoring_began():
+    app, canvas = _graph_app(prediction=None)
+    data = app._graph_data("x")
+    mix = data["samples"][0][0] - timedelta(hours=2)
+    app._graph_data = lambda _path: {**data, "mix_time": mix}
+    LevainPeakApp._draw_session_graph(app)
+    assert "início do monitoramento" in canvas.texts
+    assert mix.strftime("%d/%m\n%H:%M") in canvas.texts  # the first time on the axis is the mix, not the first reading
+    pale = [coords for coords, options in canvas.lines if options.get("fill") == "#a9c6d6" and len(coords) == 4]
+    assert pale and pale[0][0] < pale[0][2]  # joined from the zero of the mix to the first reading
