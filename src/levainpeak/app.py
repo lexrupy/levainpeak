@@ -632,6 +632,9 @@ class LevainPeakApp:
 
     def _refresh(self) -> None:
         started = time.perf_counter()
+        drawing_pot = self._reposition_mode or (self._outline_mode and self._outline_target == "pot") or (
+            self._roi_mode and self._roi_target == "pot"
+        )
         if self._stream is not None:
             status = self._stream.status
             profile = self._analyzer.profile.name if self._analyzer is not None else None
@@ -644,6 +647,10 @@ class LevainPeakApp:
             )
             if self._analyzer is not None:
                 self._analyzer.align_enabled = not (self._roi_mode or self._outline_mode or self._reposition_mode)
+                if drawing_pot and self._analyzer.detect_enabled:
+                    self._measurement = None  # the automatic search is not shown while the pot is drawn
+                    self._last_container_box = None
+                self._analyzer.detect_enabled = not drawing_pot
                 self._take_alignment()
                 self._take_visor_alignment()
                 self._sync_analyzer_regions()
@@ -654,6 +661,8 @@ class LevainPeakApp:
             analysis_changed = False
             if self._analyzer is not None:
                 result = self._analyzer.latest_result()
+                if drawing_pot:
+                    result = None
                 if result is not None and self._analyzer.latest_key != self._analyzer.region_key():
                     result = None  # measured with a region you have since replaced: not about the new one
                 if result is not None:

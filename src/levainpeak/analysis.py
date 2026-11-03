@@ -61,6 +61,7 @@ class ContainerAnalyzer:
         self._joined_profile: str | None = None
         self._last_volume: float | None = None
         self.align_enabled = True
+        self.detect_enabled = True  # off while the pot is being drawn: nothing is measured or published
         self.mark_seen: tuple[float, float, int] | None = None  # the last "+"/"X" found: x, y, size
         self._mark_slide = 0.0  # px the label has slid sideways on the pot, from the edges' view
         self.use_mark = False  # follow the pot's height by the "+" or "X" on its label
@@ -371,6 +372,8 @@ class ContainerAnalyzer:
                 self._stop.wait(0.1)
                 continue
             last_frame_number = frame_number
+            if not self.detect_enabled:
+                continue
             try:
                 self._follow_pot(frame)
             except cv2.error:
