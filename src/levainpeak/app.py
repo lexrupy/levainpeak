@@ -150,6 +150,7 @@ class LevainPeakApp:
         )
         self._forecaster = DoublingForecaster()
         self._forecast_saved_at = 0.0
+        self._forecast_prediction: datetime | None = None  # when the doubling is expected: the graph draws it
         self._phase = "Aguardando sessão"
         self._paused = False  # the session is open but nothing is logged (the fermenter is being handled)
         self._mix_time: datetime | None = None
@@ -2238,7 +2239,14 @@ class LevainPeakApp:
         left, right, top, bottom = 72, width - 76, 82, height - 58
         plot_width, plot_height = max(1, right - left), max(1, bottom - top)
         first_time = samples[0][0]
-        duration = max(1.0, (samples[-1][0] - first_time).total_seconds())
+        # What is still to come is drawn too: the doubling forecast of the session being watched.
+        predicted = self._forecast_prediction if path == self._session_log.path else None
+        if predicted is not None:
+            predicted = predicted.astimezone(first_time.tzinfo) if first_time.tzinfo else predicted.replace(tzinfo=None)
+            if predicted <= samples[-1][0]:
+                predicted = None
+        end_time = predicted if predicted is not None else samples[-1][0]
+        duration = max(1.0, (end_time - first_time).total_seconds())
         x_of = lambda stamp: left + (stamp - first_time).total_seconds() / duration * plot_width
         initial_volume = baseline  # the growth factor in the hover text counts from here
         # 0% is the initial volume; see volume_scale for what 100% is.
@@ -2290,7 +2298,7 @@ class LevainPeakApp:
 
         for tick in range(5):
             fraction = tick / 4
-            stamp = first_time + (samples[-1][0] - first_time) * fraction
+            stamp = first_time + (end_time - first_time) * fraction
             x = left + fraction * plot_width
             canvas.create_line(x, bottom, x, bottom + 5, fill="#59645e")
             canvas.create_text(
@@ -2306,6 +2314,24 @@ class LevainPeakApp:
             volume_points.extend((x_of(stamp), y_volume(volume)))
         if len(volume_points) >= 4:
             canvas.create_line(*volume_points, fill="#397a9b", width=3, smooth=True)
+
+        if predicted is not None and initial_volume:
+            # An exponential from the last reading to twice the initial volume at the forecast time:
+            # dotted and pale, so it reads as what is expected and not as what was measured.
+            last_time, last_volume = samples[-1][0], max(1e-6, samples[-1][1])
+            target = 2 * initial_volume
+            if target > last_volume:
+                points = []
+                for step in range(41):
+                    fraction = step / 40
+                    stamp = last_time + (predicted - last_time) * fraction
+                    value = last_volume * (target / last_volume) ** fraction
+                    points.extend((x_of(stamp), y_volume(value)))
+                canvas.create_line(*points, fill="#a9c6d6", width=2, dash=(2, 5))
+                canvas.create_text(
+                    points[-2], points[-1] - 10, text=f"dobro {predicted:%H:%M}",
+                    anchor="s", fill="#7fa6bb", font=("TkDefaultFont", 9),
+                )
 
         previous = None
         for stamp, _, temperature in samples:
@@ -2328,6 +2354,9 @@ class LevainPeakApp:
             left + 38, legend_y, text="Volume estabilizado",
             anchor="w", fill="#202723",
         )
+        if predicted is not None:
+            canvas.create_line(left + 190, legend_y, left + 214, legend_y, fill="#a9c6d6", width=2, dash=(2, 5))
+            canvas.create_text(left + 220, legend_y, text="Previsão", anchor="w", fill="#202723")
         canvas.create_line(right - 190, legend_y, right - 166, legend_y, fill="#c46b35", width=3)
         canvas.create_text(
             right - 160, legend_y,
@@ -2564,6 +2593,7 @@ class LevainPeakApp:
         self._temperature_c = None
         self._last_known_temperature = None
         self._forecast_saved_at = 0.0
+        self._forecast_prediction = None
         self._reset_tracking()
         self._set_paused(False)
         if self._analyzer is not None:
@@ -2628,6 +2658,7 @@ class LevainPeakApp:
 
     def _update_double_forecast(self, monotonic_time: float) -> None:
         label = self.metric_values["Previsão do dobro"]
+        self._forecast_prediction = None
         if not self._session_log.active:
             label.configure(text="Inicie uma sessão para estimar")
             return
@@ -2652,18 +2683,18 @@ class LevainPeakApp:
             if table.minutes <= 0:
                 label.configure(text=f"Pela tabela já devia ter dobrado\n{basis}")
                 return
-            label.configure(text=self._forecast_text(
-                datetime.now().astimezone() + timedelta(minutes=table.minutes), basis, "antes do crescimento"
-            ))
+            self._forecast_prediction = datetime.now().astimezone() + timedelta(minutes=table.minutes)
+            label.configure(text=self._forecast_text(self._forecast_prediction, basis, "antes do crescimento"))
             return
         if self._forecaster.rate_per_thermal_minute() is None:
             known = self._session_log.last_forecast
             if known:
                 try:
-                    label.configure(text=self._forecast_text(datetime.fromisoformat(known["at"]), known["basis"], "última conhecida"))
+                    self._forecast_prediction = datetime.fromisoformat(known["at"])
+                    label.configure(text=self._forecast_text(self._forecast_prediction, known["basis"], "última conhecida"))
                     return
                 except (ValueError, KeyError):
-                    pass
+                    self._forecast_prediction = None
             label.configure(text="Calculando tendência; aguarde ao menos 2 minutos")
             return
         if self._measurement is None:
@@ -2695,10 +2726,11 @@ class LevainPeakApp:
             known = self._session_log.last_forecast
             if known:
                 try:
-                    label.configure(text=self._forecast_text(datetime.fromisoformat(known["at"]), known["basis"], "última conhecida"))
+                    self._forecast_prediction = datetime.fromisoformat(known["at"])
+                    label.configure(text=self._forecast_text(self._forecast_prediction, known["basis"], "última conhecida"))
                     return
                 except (ValueError, KeyError):
-                    pass
+                    self._forecast_prediction = None
             label.configure(text="Sem crescimento sustentado para estimar")
             return
         minutes = forecast.minutes
@@ -2715,6 +2747,7 @@ class LevainPeakApp:
                 self._forecast_saved_at = monotonic_time
             except OSError:
                 logging.exception("Falha ao salvar a previsão do dobro")
+        self._forecast_prediction = predicted_at
         label.configure(text=self._forecast_text(predicted_at, basis))
 
     def _forecast_text(self, predicted_at: datetime, basis: str, note: str = "") -> str:
