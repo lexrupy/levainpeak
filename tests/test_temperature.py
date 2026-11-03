@@ -274,3 +274,32 @@ def test_a_dark_top_bar_leaves_only_digits_without_it():
         x0, y0, x1, y1 = _SEGMENTS[name]
         glyph[int(80 * y0):max(int(80 * y0) + 1, int(80 * y1)), int(40 * x0):max(int(40 * x0) + 1, int(40 * x1))] = int(255 * strength)
     assert _classify_digit(glyph) in (1, 4, None)  # f and g are in between: a 7, a 3 or a 9 have a top bar
+
+
+def test_no_digit_comes_out_that_contradicts_a_lit_or_a_dark_segment():
+    import numpy as np
+    from levainpeak.temperature import (
+        _DARK_SEGMENT, _FRAGILE_SEGMENTS, _SEGMENTS, _SHAPES, _STRONG_SEGMENT, _classify_digit,
+    )
+
+    rng = np.random.default_rng(7)
+    names = list(_SEGMENTS)
+    checked = 0
+    for _ in range(400):
+        strengths = rng.uniform(0.0, 1.0, len(names))
+        strengths[rng.integers(len(names))] = 1.0
+        glyph = np.zeros((80, 40), np.uint8)
+        for name, strength in zip(names, strengths):
+            x0, y0, x1, y1 = _SEGMENTS[name]
+            glyph[int(80 * y0):max(int(80 * y0) + 1, int(80 * y1)), int(40 * x0):max(int(40 * x0) + 1, int(40 * x1))] = int(255 * strength)
+        digit = _classify_digit(glyph)
+        if digit is None:
+            continue
+        lit = {name for name, value in zip(names, strengths) if value >= _STRONG_SEGMENT}
+        dark = {name for name, value in zip(names, strengths) if value <= _DARK_SEGMENT} - _FRAGILE_SEGMENTS
+        allowed = [shape for _, shape in _SHAPES if lit <= set(shape) and not dark & set(shape)]
+        exact = [shape for _, shape in _SHAPES if set(shape) == {n for n, v in zip(names, strengths) if v > 0.34}]
+        if allowed and not exact:
+            assert any(digit == d for d, shape in _SHAPES if shape in allowed), (strengths, digit)
+            checked += 1
+    assert checked > 20
