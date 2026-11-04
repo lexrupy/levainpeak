@@ -15,21 +15,21 @@
  *
  * POST de limpeza: { "token": "...", "acao": "limpar" } zera as abas (mantém os cabeçalhos).
  *
- * A aba quadros guarda as últimas 3 imagens recebidas (uma por envio); o painel pede as mais novas que a sua.
+ * A aba quadros guarda as últimas 10 imagens recebidas (uma por envio); o painel pede as mais novas que a sua.
  *
  * GET:  ?token=...&o=painel[&snap=<t do snapshot que você já tem>]
  *       | ao_vivo | serie&limite=1500 | snapshot
  */
 
 /** Sobe a cada mudança deste arquivo: confira na implantação com ?o=versao (ou rodando versao() no editor). */
-const VERSAO = '2026-11-03.1 tres-quadros';
+const VERSAO = '2026-11-04.1 dez-quadros';
 
 const ABA_SERIE = 'serie';
 const ABA_AO_VIVO = 'ao_vivo';
 const ABA_SNAPSHOT = 'snapshot';
 const ABA_GRAFICO = 'grafico';
 const ABA_QUADROS = 'quadros';
-const MAX_QUADROS = 3;            // imagens do pote que a planilha mantém; a mais antiga sai
+const MAX_QUADROS = 10;           // imagens do pote que a planilha mantém; a mais antiga sai
 const CABECALHO_SERIE = ['timestamp', 'volume_fracao', 'temperatura_c', 'fase', 'sessao'];
 const MAX_LINHAS_SERIE = 20000;   // as mais antigas saem quando passa disso
 const MAX_CHARS_CELULA = 49000;   // o limite do Sheets é 50.000 caracteres por célula
