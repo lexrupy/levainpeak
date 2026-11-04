@@ -170,3 +170,12 @@ def test_ratio_is_read_from_text_and_kept_with_the_session(tmp_path):
     again = SessionLog(tmp_path, sample_seconds=0)
     again.resume(log.path)
     assert again.ratio == (1.0, 10.0, 10.0)
+
+
+def test_a_repeated_volume_reading_is_flagged():
+    from types import SimpleNamespace
+    from levainpeak.app import LevainPeakApp
+
+    measurement = SimpleNamespace(volume_fraction=0.5, growth_factor=3.04)
+    assert "repetida" not in LevainPeakApp._volume_text(measurement, 3.02, 1)
+    assert LevainPeakApp._volume_text(measurement, 3.02, 2).endswith("anterior 3.02× (2x) ⚠ repetida")

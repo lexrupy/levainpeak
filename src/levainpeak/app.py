@@ -62,6 +62,7 @@ def _lowercase_rows(scale: float, thickness: int) -> tuple[int, int]:
     return baseline - int(rows.max()), baseline - int(rows.min())
 
 
+REPEAT_WARNING = 2  # the same growth factor logged this many times in a row is flagged
 MAX_ZOOM = 12.0  # the wheel zoom of the video; only the visible part is scaled, so it stays cheap
 
 class _SessionTitle(ttk.Label):
@@ -727,14 +728,14 @@ class LevainPeakApp:
     def _update_measurement_labels(self) -> None:
         if self._measurement is None and self._analyzer is not None and self._analyzer.empty_pot is not None:
             self.metric_values["Pote"].configure(text="Pote vazio")
-            self.metric_values["Volume relativo"].configure(text="—")
+            self.metric_values["Volume relativo"].configure(text="—", foreground="")
             self.metric_values["Estado do levain"].configure(text="Sem levain no pote")
             if not self._marker_mode and not self._roi_mode and not self._outline_mode:
                 self._set_message("O contorno do pote está marcado e não há levain dentro dele.")
             return
         if self._measurement is None:
             self.metric_values["Pote"].configure(text="Procurando recipiente…")
-            self.metric_values["Volume relativo"].configure(text="—")
+            self.metric_values["Volume relativo"].configure(text="—", foreground="")
             self.metric_values["Estado do levain"].configure(text="Aguardando recipiente visível")
             if not (self._roi_mode or self._outline_mode or self._marker_mode):
                 self._set_message("A câmera está ativa; não encontrei um contorno de pote confiável neste frame.")
@@ -742,10 +743,13 @@ class LevainPeakApp:
 
         measurement = self._measurement
         self.metric_values["Pote"].configure(text="Recipiente detectado")
+        # The same reading again and again may be a frozen picture or a stuck measurement: say so, in orange.
+        repeated = measurement.growth_factor is not None and self._session_log.growth_repeats >= REPEAT_WARNING
         self.metric_values["Volume relativo"].configure(
             text=self._volume_text(
                 measurement, self._session_log.last_growth_factor, self._session_log.growth_repeats
-            )
+            ),
+            foreground="#b45a1a" if repeated else "",
         )
         self.metric_values["Estado do levain"].configure(text=self._phase)
         marker_text = "marca ajustada manualmente" if measurement.marker_manual else "faixa inicial detectada"
@@ -775,6 +779,8 @@ class LevainPeakApp:
             text = f"{capacity}\n≈ {measurement.growth_factor:.2f}× do nível inicial"
             if previous is not None:  # the last row written: "3.02 (5x)" when it came up several times
                 text += f"\nanterior {previous:.2f}×" + (f" ({repeats}x)" if repeats > 1 else "")
+                if repeats >= REPEAT_WARNING:
+                    text += " ⚠ repetida"
             return text
         return capacity
 
@@ -2656,7 +2662,7 @@ class LevainPeakApp:
         self._phase = "Aguardando sessão"
         self.metric_values["Sessão"].configure(text="Nenhuma sessão iniciada")
         self.metric_values["Pote"].configure(text="Aguardando calibração")
-        self.metric_values["Volume relativo"].configure(text="—")
+        self.metric_values["Volume relativo"].configure(text="—", foreground="")
         self.metric_values["Estado do levain"].configure(text="Aguardando análise")
         self._update_temperature_label()
         self._update_double_forecast(time.monotonic())
