@@ -8,7 +8,7 @@ const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 60 * 1000;
 const AGES_MS = 30 * 1000;
 const QUADROS_MAX = 20; // imagens recebidas que o aparelho guarda para a animação
-const QUADRO_MS = 1000; // 1 quadro por segundo
+const FPS_OPCOES = [1, 2, 3]; // quadros por segundo; o botão passa de um para o outro e o aparelho lembra
 
 const store = {
   get(key) {
@@ -246,6 +246,7 @@ function renderAges() {
 let quadros = [];
 let quadroAtual = 0;
 let relogio = null;
+let fps = FPS_OPCOES.includes(store.get('fps')) ? store.get('fps') : 1;
 let pausado = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function guardarQuadro(snapshot, sessao) {
@@ -278,10 +279,11 @@ function prepararQuadros() {
   $('quadros-ctrl').hidden = !varios;
   $('quadros-slider').max = Math.max(0, quadros.length - 1);
   $('quadros-play').textContent = pausado ? 'Reproduzir' : 'Pausar';
+  $('quadros-fps').textContent = `${fps} fps`;
   clearInterval(relogio);
   relogio = null;
   if (varios && !pausado) {
-    relogio = setInterval(() => mostrarQuadro((quadroAtual + 1) % quadros.length), QUADRO_MS);
+    relogio = setInterval(() => mostrarQuadro((quadroAtual + 1) % quadros.length), 1000 / fps);
     mostrarQuadro(Math.min(quadroAtual, quadros.length - 1));
   } else {
     mostrarQuadro(varios && pausado ? quadroAtual : quadros.length - 1);
@@ -290,6 +292,11 @@ function prepararQuadros() {
 
 function ligarQuadros() {
   $('quadros-play').addEventListener('click', () => { pausado = !pausado; prepararQuadros(); });
+  $('quadros-fps').addEventListener('click', () => {
+    fps = FPS_OPCOES[(FPS_OPCOES.indexOf(fps) + 1) % FPS_OPCOES.length];
+    store.set('fps', fps);
+    prepararQuadros();
+  });
   $('quadros-slider').addEventListener('input', (evento) => {
     pausado = true;
     prepararQuadros();
