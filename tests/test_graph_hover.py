@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -87,8 +88,9 @@ def _graph_app(prediction, path="sessao.csv"):
         _graph_data=lambda _path: {"session_name": "S", "too_few": False, "samples": samples, "phases": [], "baseline": 0.20},
         _draw_phase_markers=lambda *a, **k: None, _cycle_graph_scale=lambda *_: None,
         _forecast_prediction=None if prediction is None else samples[-1][0] + timedelta(hours=prediction),
-        _session_log=SimpleNamespace(path=path),
+        _session_log=SimpleNamespace(path=path), _toggle_graph_option=lambda *_: None,
     )
+    app._graph_forecast_time = lambda _path: app._forecast_prediction
     return app, canvas
 
 
@@ -98,17 +100,24 @@ def test_the_graph_draws_the_forecast_as_a_pale_dotted_curve_up_to_the_doubling(
     dotted = [(coords, options) for coords, options in canvas.lines if options.get("dash") == (2, 5) and len(coords) > 10]
     assert len(dotted) == 1
     coords, options = dotted[0]
-    assert len(coords) == 82 and options["fill"] == "#a9c6d6"
+    assert len(coords) == 122 and options["fill"] == "#a9c6d6"
     assert coords[-2] > coords[0] and coords[-1] < coords[1]  # it goes right, and up toward the doubling
     assert any(text.startswith("dobro ") for text in canvas.texts)
 
 
-def test_the_graph_has_no_forecast_curve_without_a_forecast_or_for_another_session():
-    for app, canvas in (_graph_app(prediction=None), _graph_app(prediction=3)):
-        if app._forecast_prediction is not None:
-            app._session_log = SimpleNamespace(path="outra.csv")  # the graph shows a different session
+def test_the_graph_has_no_forecast_curve_without_a_forecast_or_when_it_is_switched_off():
+    off, off_canvas = _graph_app(prediction=3)
+    off._settings = replace(off._settings, graph_show_forecast=False)
+    for app, canvas in (_graph_app(prediction=None), (off, off_canvas)):
         LevainPeakApp._draw_session_graph(app)
-        assert not [1 for _c, options in canvas.lines if options.get("dash") == (2, 5)]
+        assert not [1 for _c, options in canvas.lines if options.get("dash") == (2, 5) and len(_c) > 10]
+
+
+def test_the_forecast_curve_stays_over_the_measured_one_after_the_doubling_time():
+    app, canvas = _graph_app(prediction=-0.1)  # the forecast time is already past
+    LevainPeakApp._draw_session_graph(app)
+    dotted = [coords for coords, options in canvas.lines if options.get("dash") == (2, 5) and len(coords) > 10]
+    assert len(dotted) == 1
 
 
 def test_the_graph_starts_at_the_mix_and_marks_where_the_monitoring_began():
@@ -121,3 +130,14 @@ def test_the_graph_starts_at_the_mix_and_marks_where_the_monitoring_began():
     assert mix.strftime("%d/%m\n%H:%M") in canvas.texts  # the first time on the axis is the mix, not the first reading
     pale = [coords for coords, options in canvas.lines if options.get("fill") == "#a9c6d6" and len(coords) == 4]
     assert pale and pale[0][0] < pale[0][2]  # joined from the zero of the mix to the first reading
+
+
+def test_the_stretch_before_the_monitoring_can_be_switched_off():
+    app, canvas = _graph_app(prediction=None)
+    data = app._graph_data("x")
+    mix = data["samples"][0][0] - timedelta(hours=2)
+    app._graph_data = lambda _path: {**data, "mix_time": mix}
+    app._settings = replace(app._settings, graph_show_start=False)
+    LevainPeakApp._draw_session_graph(app)
+    assert "início do monitoramento" not in canvas.texts
+    assert data["samples"][0][0].strftime("%d/%m\n%H:%M") in canvas.texts  # the axis starts at the first reading

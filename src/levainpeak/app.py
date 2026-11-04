@@ -1838,6 +1838,27 @@ class LevainPeakApp:
         self._refresh_session_graph()
         return "break"
 
+    def _toggle_graph_option(self, field: str) -> str:
+        """Turn the stretch before the monitoring, or the forecast curve, on or off; saved and redrawn."""
+        self._settings = replace(self._settings, **{field: not getattr(self._settings, field)}).clamped()
+        try:
+            save_settings(self._settings)
+        except OSError:
+            logging.exception("Falha ao salvar a opção do gráfico")
+        self._refresh_session_graph()
+        return "break"
+
+    def _graph_forecast_time(self, path: Path) -> datetime | None:
+        """When the doubling was forecast for the session of this graph: the live forecast of the session being
+        watched, else the last one kept in its JSON (so the curve stays after the doubling, to compare)."""
+        if path == self._session_log.path and self._forecast_prediction is not None:
+            return self._forecast_prediction
+        try:
+            known = json.loads(path.with_suffix(".json").read_text(encoding="utf-8")).get("last_forecast")
+            return datetime.fromisoformat(known["at"]) if known else None
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
     def _refresh_session_graph(self) -> None:
         if getattr(self, "_graph_canvas", None) is None:
             return
@@ -2244,14 +2265,16 @@ class LevainPeakApp:
         mix_time = data.get("mix_time")
         if mix_time is not None and monitoring_start.tzinfo is not None and mix_time.tzinfo is None:
             mix_time = mix_time.astimezone()
-        first_time = mix_time if mix_time is not None and mix_time < monitoring_start else monitoring_start
-        # What is still to come is drawn too: the doubling forecast of the session being watched.
-        predicted = self._forecast_prediction if path == self._session_log.path else None
+        show_start = self._settings.graph_show_start
+        first_time = mix_time if show_start and mix_time is not None and mix_time < monitoring_start else monitoring_start
+        # The doubling forecast is drawn from the start, over the measured curve, to compare; the axis
+        # goes on to its time while that is still to come.
+        predicted = self._graph_forecast_time(path) if self._settings.graph_show_forecast else None
         if predicted is not None:
             predicted = predicted.astimezone(first_time.tzinfo) if first_time.tzinfo else predicted.replace(tzinfo=None)
-            if predicted <= samples[-1][0]:
+            if predicted <= first_time:
                 predicted = None
-        end_time = predicted if predicted is not None else samples[-1][0]
+        end_time = max(predicted, samples[-1][0]) if predicted is not None else samples[-1][0]
         duration = max(1.0, (end_time - first_time).total_seconds())
         x_of = lambda stamp: left + (stamp - first_time).total_seconds() / duration * plot_width
         initial_volume = baseline  # the growth factor in the hover text counts from here
@@ -2314,7 +2337,7 @@ class LevainPeakApp:
 
         self._draw_phase_markers(canvas, samples, phases, x_of, top, bottom, plot_width, duration)
 
-        if first_time < monitoring_start and (monitoring_start - first_time).total_seconds() > 0.02 * duration:
+        if show_start and first_time < monitoring_start and (monitoring_start - first_time).total_seconds() > 0.02 * duration:
             # No readings between the mix and the start of the monitoring: join the zero to the first reading
             # with a pale line, and mark where the monitoring began.
             canvas.create_line(
@@ -2337,22 +2360,18 @@ class LevainPeakApp:
             canvas.create_line(*volume_points, fill="#397a9b", width=3, smooth=True)
 
         if predicted is not None and initial_volume:
-            # An exponential from the last reading to twice the initial volume at the forecast time:
-            # dotted and pale, so it reads as what is expected and not as what was measured.
-            last_time, last_volume = samples[-1][0], max(1e-6, samples[-1][1])
-            target = 2 * initial_volume
-            if target > last_volume:
-                points = []
-                for step in range(41):
-                    fraction = step / 40
-                    stamp = last_time + (predicted - last_time) * fraction
-                    value = last_volume * (target / last_volume) ** fraction
-                    points.extend((x_of(stamp), y_volume(value)))
-                canvas.create_line(*points, fill="#a9c6d6", width=2, dash=(2, 5))
-                canvas.create_text(
-                    points[-2], points[-1] - 10, text=f"dobro {predicted:%H:%M}",
-                    anchor="s", fill="#7fa6bb", font=("TkDefaultFont", 9),
-                )
+            # An exponential from the initial volume at the start to twice that at the forecast time:
+            # dotted and pale, so it reads as what was expected and not as what was measured.
+            points = []
+            for step in range(61):
+                fraction = step / 60
+                stamp = first_time + (predicted - first_time) * fraction
+                points.extend((x_of(stamp), y_volume(initial_volume * 2 ** fraction)))
+            canvas.create_line(*points, fill="#a9c6d6", width=2, dash=(2, 5))
+            canvas.create_text(
+                points[-2], points[-1] - 10, text=f"dobro {predicted:%H:%M}",
+                anchor="s", fill="#7fa6bb", font=("TkDefaultFont", 9),
+            )
 
         previous = None
         for stamp, _, temperature in samples:
@@ -2375,9 +2394,17 @@ class LevainPeakApp:
             left + 38, legend_y, text="Volume estabilizado",
             anchor="w", fill="#202723",
         )
-        if predicted is not None:
-            canvas.create_line(left + 190, legend_y, left + 214, legend_y, fill="#a9c6d6", width=2, dash=(2, 5))
-            canvas.create_text(left + 220, legend_y, text="Previsão", anchor="w", fill="#202723")
+        # Two switches in the legend: the forecast curve and the stretch before the monitoring.
+        for x, field, label in (
+            (left + 190, "graph_show_forecast", "Previsão"), (left + 290, "graph_show_start", "Faixa inicial"),
+        ):
+            on = getattr(self._settings, field)
+            item = canvas.create_text(
+                x, legend_y, text=f"{'☑' if on else '☐'} {label}", anchor="w", fill="#202723" if on else "#8a948e",
+            )
+            canvas.tag_bind(item, "<Button-1>", lambda _e, field=field: self._toggle_graph_option(field))
+            canvas.tag_bind(item, "<Enter>", lambda _e: canvas.configure(cursor="hand2"))
+            canvas.tag_bind(item, "<Leave>", lambda _e: canvas.configure(cursor="fleur"))
         canvas.create_line(right - 190, legend_y, right - 166, legend_y, fill="#c46b35", width=3)
         canvas.create_text(
             right - 160, legend_y,

@@ -41,6 +41,8 @@ class Settings:
     overlay_brightness: int = 50
     graph_temperature_scale: str = "ampla"
     graph_volume_scale: str = "auto"
+    graph_show_start: bool = True  # the graph starts at the mix, with the stretch before the monitoring
+    graph_show_forecast: bool = True  # the graph draws the doubling forecast over the measured curve
     ink_cut_infrared: float = DEFAULT_INK_CUT_INFRARED
     ink_cut_day: int = DEFAULT_INK_CUT_DAY
     mark_shape: str = "círculo"  # drawn around the followed mark: "círculo" or "quadrado"
@@ -69,6 +71,8 @@ class Settings:
                 self.graph_temperature_scale if self.graph_temperature_scale in TEMPERATURE_SCALES else "ampla"
             ),
             graph_volume_scale=self.graph_volume_scale if self.graph_volume_scale in VOLUME_SCALES else "auto",
+            graph_show_start=bool(self.graph_show_start),
+            graph_show_forecast=bool(self.graph_show_forecast),
             ink_cut_infrared=round(min(INK_CUT_INFRARED[1], max(INK_CUT_INFRARED[0], float(self.ink_cut_infrared))), 2),
             ink_cut_day=min(INK_CUT_DAY[1], max(INK_CUT_DAY[0], int(self.ink_cut_day))),
             peak_minutes=min(PEAK_MINUTES[1], max(PEAK_MINUTES[0], int(self.peak_minutes))),
@@ -97,6 +101,8 @@ def load_settings(path: Path = SETTINGS_PATH) -> Settings:
             overlay_brightness=int(data.get("overlay_brightness", defaults.overlay_brightness)),
             graph_temperature_scale=str(data.get("graph_temperature_scale", defaults.graph_temperature_scale)),
             graph_volume_scale=str(data.get("graph_volume_scale", defaults.graph_volume_scale)),
+            graph_show_start=bool(data.get("graph_show_start", defaults.graph_show_start)),
+            graph_show_forecast=bool(data.get("graph_show_forecast", defaults.graph_show_forecast)),
             ink_cut_infrared=float(data.get("ink_cut_infrared", defaults.ink_cut_infrared)),
             ink_cut_day=int(data.get("ink_cut_day", defaults.ink_cut_day)),
             peak_minutes=int(data.get("peak_minutes", defaults.peak_minutes)),
