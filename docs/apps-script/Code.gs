@@ -13,19 +13,23 @@
  *
  * Se "session" for diferente da última guardada na aba serie, o script zera tudo e começa a nova.
  *
- * POST de limpeza: { "token": "...", "acao": "limpar" } zera as quatro abas (mantém os cabeçalhos).
+ * POST de limpeza: { "token": "...", "acao": "limpar" } zera as abas (mantém os cabeçalhos).
+ *
+ * A aba quadros guarda as últimas 3 imagens recebidas (uma por envio); o painel pede as mais novas que a sua.
  *
  * GET:  ?token=...&o=painel[&snap=<t do snapshot que você já tem>]
  *       | ao_vivo | serie&limite=1500 | snapshot
  */
 
 /** Sobe a cada mudança deste arquivo: confira na implantação com ?o=versao (ou rodando versao() no editor). */
-const VERSAO = '2026-11-01.1 limpeza-automatica';
+const VERSAO = '2026-11-03.1 tres-quadros';
 
 const ABA_SERIE = 'serie';
 const ABA_AO_VIVO = 'ao_vivo';
 const ABA_SNAPSHOT = 'snapshot';
 const ABA_GRAFICO = 'grafico';
+const ABA_QUADROS = 'quadros';
+const MAX_QUADROS = 3;            // imagens do pote que a planilha mantém; a mais antiga sai
 const CABECALHO_SERIE = ['timestamp', 'volume_fracao', 'temperatura_c', 'fase', 'sessao'];
 const MAX_LINHAS_SERIE = 20000;   // as mais antigas saem quando passa disso
 const MAX_CHARS_CELULA = 49000;   // o limite do Sheets é 50.000 caracteres por célula
@@ -157,7 +161,29 @@ function gravarSnapshot_(snapshot) {
     ['atualizado_em', String(snapshot.t || new Date().toISOString())],
     ['jpeg_base64', imagem],
   ]);
+  guardarQuadro_(String(snapshot.t || new Date().toISOString()), imagem);
   return 'ok';
+}
+
+/** Acrescenta a imagem à aba quadros e mantém só as MAX_QUADROS mais novas. */
+function guardarQuadro_(t, imagem) {
+  const aba = aba_(ABA_QUADROS, ['t', 'jpeg_base64']);
+  const ultima = aba.getLastRow();
+  if (ultima >= 2 && String(aba.getRange(ultima, 1).getValue()) === t) return;
+  aba.appendRow([t, imagem]);
+  const dados = aba.getLastRow() - 1;
+  if (dados > MAX_QUADROS) aba.deleteRows(2, dados - MAX_QUADROS);
+}
+
+/** As imagens guardadas mais novas que "desde" (todas, se vazio), da mais antiga para a mais nova. */
+function lerQuadros_(desde) {
+  const aba = aba_(ABA_QUADROS, ['t', 'jpeg_base64']);
+  const ultima = aba.getLastRow();
+  if (ultima < 2) return [];
+  const corte = desde ? Date.parse(desde) : -Infinity;
+  return aba.getRange(2, 1, ultima - 1, 2).getValues()
+    .map(function (l) { return { t: String(l[0]), jpeg_b64: String(l[1]) }; })
+    .filter(function (q) { return q.jpeg_b64 && !(Date.parse(q.t) <= corte); });
 }
 
 /** True quando a série guardada é de uma sessão diferente da que chegou. */
@@ -173,7 +199,7 @@ function sessaoMudou_(sessao) {
 /** Zera as abas e devolve quantas linhas de dados cada uma tinha. */
 function limpar_() {
   const abas = [[ABA_SERIE, CABECALHO_SERIE], [ABA_AO_VIVO, ['campo', 'valor']],
-    [ABA_GRAFICO, ['campo', 'valor']], [ABA_SNAPSHOT, ['campo', 'valor']]];
+    [ABA_GRAFICO, ['campo', 'valor']], [ABA_SNAPSHOT, ['campo', 'valor']], [ABA_QUADROS, ['t', 'jpeg_base64']]];
   const limpou = {};
   abas.forEach(function (par) {
     const aba = aba_(par[0], par[1]);
@@ -218,7 +244,7 @@ function lerPainel_(snapDoCliente) {
     snapshot.jpeg_b64 = null;
     snapshot.igual = true;
   }
-  return { ok: true, ao_vivo: lerAoVivo_(), grafico: lerGrafico_(), snapshot: snapshot };
+  return { ok: true, ao_vivo: lerAoVivo_(), grafico: lerGrafico_(), snapshot: snapshot, quadros: lerQuadros_(snapDoCliente) };
 }
 
 function lerSerie_(limite) {
@@ -253,7 +279,7 @@ function aba_(nome, cabecalho) {
   if (!aba) {
     aba = planilha.insertSheet(nome);
     // Texto puro: o Sheets não converte "2026-10-31T00:00:00-03:00" em data nem trata "=..." como fórmula.
-    aba.getRange(nome === ABA_SERIE ? 'A:A' : 'B:B').setNumberFormat('@');
+    aba.getRange(nome === ABA_SERIE || nome === ABA_QUADROS ? 'A:A' : 'B:B').setNumberFormat('@');
   }
   if (aba.getLastRow() === 0 && cabecalho) aba.appendRow(cabecalho);
   return aba;

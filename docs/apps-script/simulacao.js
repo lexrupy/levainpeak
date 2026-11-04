@@ -69,7 +69,18 @@ ok('painel não repete o snapshot que o cliente já tem', () => {
   assert.strictEqual(get({ token: T, o: 'painel', snap: 'outro' }).snapshot.jpeg_b64, 'QUJD');
 });
 ok('ao vivo substitui o anterior, sem sobras', () => { post({ token: T, live: { so: 1 } }); assert.deepStrictEqual(Object.keys(get({ token: T, o: 'ao_vivo' }).live), ['so']); });
-ok('snapshot grande demais é recusado e o antigo fica', () => { assert.match(post({ token: T, snapshot: { jpeg_b64: 'A'.repeat(50000) } }).recebido.snapshot, /grande demais/); assert.strictEqual(get({ token: T, o: 'snapshot' }).jpeg_b64, 'QUJD'); });
+ok('a planilha mantém as 3 últimas imagens, uma por envio, e o painel pede só as mais novas', () => {
+  const quadro = (min, b64) => post({ token: T, snapshot: { t: `2026-10-31T00:${String(min).padStart(2, '0')}:00-03:00`, jpeg_b64: b64 } });
+  quadro(7, 'Q2'); quadro(9, 'Q3'); quadro(11, 'Q4');
+  quadro(11, 'Q4'); // o mesmo envio repetido não duplica
+  const todas = get({ token: T, o: 'painel' }).quadros;
+  assert.deepStrictEqual(todas.map(q => q.jpeg_b64), ['Q2', 'Q3', 'Q4']); // a mais antiga (QUJD, 00:05) saiu
+  const novas = get({ token: T, o: 'painel', snap: '2026-10-31T00:07:00-03:00' }).quadros;
+  assert.deepStrictEqual(novas.map(q => q.jpeg_b64), ['Q3', 'Q4']);
+  assert.deepStrictEqual(get({ token: T, o: 'painel', snap: '2026-10-31T00:11:00-03:00' }).quadros, []);
+  assert.strictEqual(get({ token: T, o: 'painel' }).snapshot.jpeg_b64, 'Q4'); // o campo antigo segue valendo
+});
+ok('snapshot grande demais é recusado e o antigo fica', () => { assert.match(post({ token: T, snapshot: { jpeg_b64: 'A'.repeat(50000) } }).recebido.snapshot, /grande demais/); assert.strictEqual(get({ token: T, o: 'snapshot' }).jpeg_b64, 'Q4'); });
 ok('gráfico grande demais é recusado e o antigo fica', () => { assert.match(post({ token: T, chart: { lixo: 'A'.repeat(50000) } }).recebido.grafico, /grande demais/); assert.deepStrictEqual(get({ token: T, o: 'painel' }).grafico.chart, chart); });
 ok('a série é aparada em 20000 linhas', () => {
   const muitos = Array.from({ length: 20050 }, (_, i) => ({ t: `2026-11-01T${String(Math.floor(i / 3600)).padStart(2, '0')}:${String(Math.floor(i / 60) % 60).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}-03:00`, v: 0.4, c: 21, p: 'p' }));

@@ -327,6 +327,10 @@ async function load() {
     }
     // O servidor não repete a imagem que já temos: reaproveita a guardada.
     if (dados.snapshot && dados.snapshot.igual && guardado && guardado.snapshot) dados.snapshot = guardado.snapshot;
+    // As imagens que a planilha guarda (as 3 últimas) e que este aparelho ainda não tem, para não deixar buracos.
+    const sessao = (dados.ao_vivo && dados.ao_vivo.live && dados.ao_vivo.live.sessao) || '';
+    (dados.quadros || []).forEach((quadro) => guardarQuadro(quadro, sessao));
+    delete dados.quadros;
     store.set('ultimo', dados);
     showWarning('');
     render(dados, false);
