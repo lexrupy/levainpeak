@@ -167,3 +167,5 @@ dialog#conexao::backdrop { background: rgba(0, 0, 0, 0.45); }
   padding: 10px;
   min-height: 44px;
 }
+
+#volume-nota.repetida { color: var(--alerta); font-weight: 600; }

@@ -249,3 +249,19 @@ def test_the_snapshot_is_the_area_the_user_drew_with_pote():
     picture = cv2.imdecode(np.frombuffer(base64.b64decode(snapshot["jpeg_b64"]), np.uint8), cv2.IMREAD_COLOR)
     assert picture.shape[1] == 300 and picture[picture.shape[0] // 2, 250, 2] > 150  # red, not blue: that box, not the vessel's
     assert picture[picture.shape[0] // 2, 250, 0] < 100
+
+
+def test_the_same_reading_in_two_updates_in_a_row_is_flagged_for_the_panel(receiver, tmp_path):
+    path = tmp_path / "s.csv"
+    append_rows(path, 0, 5)
+    live = {"fase": "Crescendo", "volume_pct": 42.0, "crescimento": 1.5}
+    sender = PhonePusher(
+        PhoneConfig(receiver.url, TOKEN), lambda: dict(live), lambda: path,
+        interval_seconds=0.05, first_delay=0.0, retry_delays=(0.01,),
+    )
+    for _ in range(3):
+        assert sender.push_once()
+    assert [p["live"].get("leituras_iguais") for p in receiver.packets] == [None, 2, 3]
+    live["volume_pct"] = 43.0  # the reading moved: the count starts over
+    assert sender.push_once()
+    assert receiver.packets[-1]["live"].get("leituras_iguais") is None

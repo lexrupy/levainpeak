@@ -183,6 +183,13 @@ function render(dados, doCache) {
   const volume = aoVivo.volume_pct;
   $('volume').textContent = volume === undefined || volume === null ? '—' : `${Number(volume).toFixed(0)}%`;
   $('volume-nota').textContent = aoVivo.crescimento ? `${Number(aoVivo.crescimento).toFixed(2).replace('.', ',')}× o nível inicial` : 'da capacidade do pote';
+  // A leitura idêntica em atualizações seguidas pode ser imagem congelada ou medição travada.
+  const iguais = Number(aoVivo.leituras_iguais) || 0;
+  if (iguais >= 2) {
+    const minutos = Math.round(((aoVivo.intervalo_s || 120) * (iguais - 1)) / 60);
+    $('volume-nota').textContent += ` · ⚠ igual há ${iguais} atualizações (${minutos} min)`;
+  }
+  $('volume-nota').classList.toggle('repetida', iguais >= 2);
   $('fase').textContent = aoVivo.fase || '—';
   $('fase-nota').textContent = '';
   const temperatura = aoVivo.temperatura_c;

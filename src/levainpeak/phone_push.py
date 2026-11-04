@@ -25,6 +25,9 @@ MAX_POINTS_PER_PACKET = 1000
 MAX_SNAPSHOT_CHARS = 25_000  # the receiver refuses a cell above 49,000; stay well under it
 
 
+REPEAT_UPDATES = 2  # the same reading in this many updates in a row is flagged on the phone
+
+
 def read_new_points(
     path: Path, after: str | None, limit: int = MAX_POINTS_PER_PACKET
 ) -> tuple[list[dict], str]:
@@ -161,6 +164,8 @@ class PhonePusher:
         self._retry_delays = retry_delays
         self._csv_sent: Path | None = None  # session file the last bundles came from
         self._after: str | None = None  # newest point the receiver has accepted
+        self._last_reading: tuple | None = None  # volume and growth sent in the last update
+        self._equal_updates = 0  # updates in a row that carried that same reading
         self._status = PusherStatus()
         self._lock = threading.Lock()
         self._send_lock = threading.Lock()  # a cycle and a clear never overlap
@@ -223,13 +228,28 @@ class PhonePusher:
             rows = sum(int(n) for n in (answer.get("limpou") or {}).values() if isinstance(n, (int, float)))
             return True, f"{rows} linhas apagadas"
 
+    def _with_repeats(self, live: dict) -> dict:
+        """Tell the panel when the same volume reading went out in several updates in a row (a frozen
+        picture or a stuck measurement looks like this). ``leituras_iguais`` appears from the second."""
+        reading = (live.get("volume_pct"), live.get("crescimento"))
+        if reading[0] is None:
+            self._last_reading, self._equal_updates = None, 0
+            return live
+        self._equal_updates = self._equal_updates + 1 if reading == self._last_reading else 1
+        self._last_reading = reading
+        if self._equal_updates >= REPEAT_UPDATES:
+            live["leituras_iguais"] = self._equal_updates
+        return live
+
     def _push_once(self) -> bool:
         snapshot = self._get_snapshot() if self._get_snapshot is not None else None
         session_csv = self._get_session_csv()
         if session_csv != self._csv_sent:  # a new session: send it whole, the receiver drops the old one
             self._csv_sent, self._after = session_csv, None
+            self._last_reading, self._equal_updates = None, 0
+        live = self._with_repeats(dict(self._get_live() or {}))
         packet, newest = build_packet(
-            self._config, self._get_live() or {}, session_csv,
+            self._config, live, session_csv,
             after=self._after, snapshot=snapshot,
             chart_options=None if self._get_chart_options is None else self._get_chart_options(),
         )
