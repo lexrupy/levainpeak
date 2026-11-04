@@ -327,6 +327,7 @@ class SessionLog:
         self.path = path
         self.directory = path.parent
         self.metadata_path = path.with_suffix(".json")
+        self._mark_ended(None)  # it runs again
         self.session_id = last.get("session_id") or path.stem
         self.session_name = last.get("session_name", "")
         self.mix_time = datetime.fromisoformat(last["mix_time"]) if last.get("mix_time") else None
@@ -506,9 +507,27 @@ class SessionLog:
     def set_mix_time(self, mix_time: datetime) -> None:
         self.mix_time = mix_time
 
+    def _mark_ended(self, ended: datetime | None) -> None:
+        """Write (or, with None, clear) the end of the session in its file."""
+        if self.metadata_path is None or (ended is None and not self.metadata_path.exists()):
+            return
+        try:
+            payload = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+        if ended is None:
+            payload.pop("ended", None)
+        else:
+            payload["ended"] = ended.isoformat(timespec="seconds")
+        try:
+            self.metadata_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+
     def stop(self) -> Path | None:
         if self._file is not None:
             self._file.close()
+            self._mark_ended(datetime.now().astimezone())
         self._file = None
         self._writer = None
         return self.path

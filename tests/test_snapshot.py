@@ -217,3 +217,25 @@ def test_a_doubling_seen_at_the_first_reading_is_said_to_have_happened_before_th
     moment = datetime(2026, 11, 3, 21, 32).astimezone()
     assert "quando o monitoramento começou" in LevainPeakApp._reached_text(moment, True)
     assert LevainPeakApp._reached_text(moment, False).startswith("O dobro do volume inicial já foi alcançado às 21:32")
+
+
+def test_the_session_file_records_when_it_ended_and_forgets_it_when_resumed(tmp_path):
+    import json
+    from datetime import datetime
+
+    from levainpeak.sessions import SessionLog
+    from levainpeak.vision import ContainerMeasurement
+
+    log = SessionLog(tmp_path)
+    log.start(datetime.now().astimezone(), "t")
+    log.record(0.0, ContainerMeasurement(
+        left=0, right=1, top=0, bottom=1, surface_y=0, volume_fraction=0.37, confidence=1.0
+    ), "Aquecendo")
+    log.save_regions((1, 2, 300, 400), None)
+    meta = log.metadata_path
+    assert "ended" not in json.loads(meta.read_text(encoding="utf-8"))
+    path = log.path
+    log.stop()
+    assert datetime.fromisoformat(json.loads(meta.read_text(encoding="utf-8"))["ended"])
+    SessionLog(tmp_path).resume(path)
+    assert "ended" not in json.loads(meta.read_text(encoding="utf-8"))
