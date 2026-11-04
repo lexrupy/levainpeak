@@ -190,3 +190,13 @@ capacidade ~120 mL; a metade da altura guarda só ~37% do volume.
 
 Ideias guardadas: rede pequena, silhueta da massa (área^1,5), leitura junto às paredes, fundo preto fosco, pote de
 plástico fosco, marca física no pote, fotos a cada 2 min.
+
+## Painel do celular: sessões, comparação e quadros (plano combinado em 03/11/2026)
+
+Nada disto está implementado. A ordem é a das etapas; cada uma com testes e push próprios.
+
+1. **Três sessões na planilha.** Uma aba de série, de quadros e de "ao vivo" por sessão; a 4ª apaga a mais antiga. Resolve duas instâncias ao mesmo tempo (hoje uma apaga a outra). O `Code.gs` muda: o usuário cola a versão nova e reimplanta (URL e token iguais). Seletor de sessão no painel, lembrando a última escolha.
+2. **Comparar no painel.** O painel lê as 3 sessões (rota nova, carga compacta do gráfico de cada uma) e sobrepõe as curvas de crescimento alinhadas pelo tempo desde a mistura, com cada sessão ligada ou desligada. Depois, se fizer sentido, os potes lado a lado.
+3. **Quadros rasterizados.** Um quadro por atualização (2 min), ~0,55 KB: grade 32 × 22, 16 cores por quadro, só as células abaixo da superfície, média de 3 quadros vizinhos contra o ruído. Uma linha por quadro na aba da sessão; o painel pede só os mais novos que o último que tem, guarda no celular e começa pelos ~120 últimos. O snapshot real continua como está, para conferir medidas erradas. Opção a avaliar: topo com a curva lida da foto (16 números por quadro, média igual ao nível medido).
+
+Protótipo visual (A chapada, B rasterizada, C formato do topo): artefato privado; os dados vieram das 15 últimas fotos da sessão `Levain 03/11 21:32`. Medidas: B ≈ 8 KB para 15 quadros; C ≈ 1,4 KB para 15 quadros.
