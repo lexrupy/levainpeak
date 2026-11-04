@@ -38,3 +38,14 @@ def test_the_menu_lists_the_newest_sessions_with_frames(tmp_path):
     assert len(found) == 10
     assert found[0][0] == "Bradok 2L · 12/11 10:00 · 1 foto"
     assert found[-1][0].startswith("03/11")
+
+
+def test_the_view_keeps_zoom_and_position_inside_the_picture():
+    from levainpeak.timelapse import view_box
+
+    scale, left, top = view_box((1000, 500), (500, 500), 1.0, (0.5, 0.5))
+    assert scale == 0.5 and left == 0 and top == -250  # fitted: centered vertically
+    scale, left, top = view_box((1000, 500), (500, 500), 4.0, (0.5, 0.5))
+    assert scale == 2.0 and (left, top) == (375, 125)  # the middle of the picture
+    assert view_box((1000, 500), (500, 500), 4.0, (0.0, 0.0))[1:] == (0, 0)  # never past the edge
+    assert view_box((1000, 500), (500, 500), 4.0, (1.0, 1.0))[1:] == (750, 250)

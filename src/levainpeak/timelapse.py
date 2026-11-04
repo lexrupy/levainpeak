@@ -9,6 +9,7 @@ from pathlib import Path
 from tkinter import ttk
 
 import cv2
+import numpy as np
 from PIL import Image, ImageTk
 
 from levainpeak.stream import rotate_frame
@@ -56,6 +57,28 @@ def photo_time(path: Path) -> datetime | None:
         return None
 
 
+MAX_ZOOM = 12.0
+BACKGROUND = "#202723"
+
+
+def view_box(
+    image_size: tuple[int, int], canvas_size: tuple[int, int], zoom: float, center: tuple[float, float]
+) -> tuple[float, float, float]:
+    """Scale and top-left corner (picture pixels) of what the canvas shows.
+
+    ``center`` is the middle of the view as a fraction of the picture. A picture smaller than the
+    canvas along an axis stays centered there (the corner goes negative); a larger one never leaves a gap."""
+    scale = min(canvas_size[0] / image_size[0], canvas_size[1] / image_size[1]) * zoom
+    corner = []
+    for axis in (0, 1):
+        span = canvas_size[axis] / scale
+        if span >= image_size[axis]:
+            corner.append((image_size[axis] - span) / 2)
+        else:
+            corner.append(min(image_size[axis] - span, max(0.0, center[axis] * image_size[axis] - span / 2)))
+    return scale, corner[0], corner[1]
+
+
 def step_index(index: int, step: int, count: int) -> int:
     return min(count - 1, max(0, index + step))
 
@@ -73,6 +96,9 @@ class TimelapseWindow:
         self._after_id: str | None = None
         self._cache: dict[Path, Image.Image] = {}
         self._tk_image: ImageTk.PhotoImage | None = None
+        self._zoom = 1.0  # kept from one frame to the next, and between sessions
+        self._center = (0.5, 0.5)
+        self._drag: tuple[int, int] | None = None
         self.open = True
 
         self.window = tk.Toplevel(parent)
@@ -92,7 +118,11 @@ class TimelapseWindow:
         self.canvas = tk.Canvas(self.window, background="#202723", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", lambda _e: self._show())
-        self.canvas.bind("<Button-1>", lambda _e: self.window.focus_set())
+        self.canvas.bind("<Button-1>", self._pressed)
+        self.canvas.bind("<B1-Motion>", self._dragged)
+        self.canvas.bind("<Double-Button-1>", self._reset_view)
+        for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.canvas.bind(sequence, self._wheel)
 
         bar = ttk.Frame(self.window)
         bar.pack(fill="x", padx=8, pady=(6, 8))
@@ -236,7 +266,64 @@ class TimelapseWindow:
         width, height = self.canvas.winfo_width(), self.canvas.winfo_height()
         if image is None or width < 4 or height < 4:
             return
-        scale = min(width / image.width, height / image.height)
-        shown = image.resize((max(1, int(image.width * scale)), max(1, int(image.height * scale))), Image.BILINEAR)
+        scale, left, top = view_box((image.width, image.height), (width, height), self._zoom, self._center)
+        x0, y0 = max(0, int(left)), max(0, int(top))
+        x1 = min(image.width, int(np.ceil(left + width / scale)))
+        y1 = min(image.height, int(np.ceil(top + height / scale)))
+        part = image.crop((x0, y0, x1, y1))
+        part = part.resize((max(1, round(part.width * scale)), max(1, round(part.height * scale))), Image.BILINEAR)
+        shown = Image.new("RGB", (width, height), BACKGROUND)
+        shown.paste(part, (round((x0 - left) * scale), round((y0 - top) * scale)))
         self._tk_image = ImageTk.PhotoImage(shown)
-        self.canvas.create_image(width // 2, height // 2, image=self._tk_image)
+        self.canvas.create_image(0, 0, anchor="nw", image=self._tk_image)
+
+    def _current_view(self) -> tuple[Image.Image, float, float, float] | None:
+        if not self._photos:
+            return None
+        image = self._load(self._photos[self._index])
+        width, height = self.canvas.winfo_width(), self.canvas.winfo_height()
+        if image is None or width < 4 or height < 4:
+            return None
+        return (image, *view_box((image.width, image.height), (width, height), self._zoom, self._center))
+
+    def _set_center(self, image: Image.Image, scale: float, left: float, top: float) -> None:
+        width, height = self.canvas.winfo_width(), self.canvas.winfo_height()
+        self._center = ((left + width / scale / 2) / image.width, (top + height / scale / 2) / image.height)
+
+    def _wheel(self, event: tk.Event) -> None:
+        """Zoom so that the point under the mouse stays under the mouse."""
+        view = self._current_view()
+        if view is None:
+            return
+        image, scale, left, top = view
+        direction = 1 if getattr(event, "delta", 0) > 0 or getattr(event, "num", None) == 4 else -1
+        new_zoom = min(MAX_ZOOM, max(1.0, self._zoom * (1.25 if direction > 0 else 0.8)))
+        if new_zoom == self._zoom:
+            return
+        if new_zoom == 1.0:
+            self._zoom, self._center = 1.0, (0.5, 0.5)
+        else:
+            new_scale = scale * new_zoom / self._zoom
+            self._zoom = new_zoom
+            self._set_center(image, new_scale, left + event.x / scale - event.x / new_scale,
+                             top + event.y / scale - event.y / new_scale)
+        self._show()
+
+    def _pressed(self, event: tk.Event) -> None:
+        self.window.focus_set()
+        self._drag = (event.x, event.y)
+
+    def _dragged(self, event: tk.Event) -> None:
+        if self._drag is None or self._zoom <= 1.0:
+            return
+        view = self._current_view()
+        if view is None:
+            return
+        image, scale, left, top = view
+        self._set_center(image, scale, left - (event.x - self._drag[0]) / scale, top - (event.y - self._drag[1]) / scale)
+        self._drag = (event.x, event.y)
+        self._show()
+
+    def _reset_view(self, _event=None) -> None:
+        self._zoom, self._center = 1.0, (0.5, 0.5)
+        self._show()
