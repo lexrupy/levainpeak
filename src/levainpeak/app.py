@@ -2194,7 +2194,7 @@ class LevainPeakApp:
 
     def _phone_snapshot(self) -> dict | None:
         stream, measurement = self._stream, self._measurement
-        if stream is None or measurement is None:
+        if stream is None or measurement is None or self._paused:  # paused: no new frames for the sheet's ring
             return None
         return make_snapshot(stream.snapshot()[1], measurement, crop=self._manual_pot_roi)
 

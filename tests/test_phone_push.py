@@ -265,3 +265,11 @@ def test_the_same_reading_in_two_updates_in_a_row_is_flagged_for_the_panel(recei
     live["volume_pct"] = 43.0  # the reading moved: the count starts over
     assert sender.push_once()
     assert receiver.packets[-1]["live"].get("leituras_iguais") is None
+
+
+def test_a_paused_session_sends_no_picture_to_the_sheet():
+    from types import SimpleNamespace
+    from levainpeak.app import LevainPeakApp
+
+    app = SimpleNamespace(_stream=SimpleNamespace(snapshot=lambda: (0, None)), _measurement=object(), _paused=True)
+    assert LevainPeakApp._phone_snapshot(app) is None
