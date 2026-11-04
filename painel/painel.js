@@ -7,6 +7,7 @@
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 60 * 1000;
 const AGES_MS = 30 * 1000;
+const VERSAO_PAINEL = '2026-11-03.2'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
 const QUADROS_MAX = 20; // imagens recebidas que o aparelho guarda para a animação
 const FPS_OPCOES = [1, 2, 3]; // quadros por segundo; o botão passa de um para o outro e o aparelho lembra
 
@@ -386,7 +387,24 @@ function openConnection() {
   $('con-token').type = 'password';
   $('con-mostrar').textContent = 'Mostrar';
   $('con-aviso').textContent = '';
+  showVersions(cfg);
   $('conexao').showModal();
+}
+
+// Que versão do painel está rodando neste aparelho e que versão do script a planilha tem: se diferirem
+// do esperado, o painel ou o script não foi atualizado.
+async function showVersions(cfg) {
+  const linha = $('con-versao');
+  const painel = `Painel ${VERSAO_PAINEL}`;
+  linha.textContent = `${painel} · script da planilha: consultando…`;
+  if (!cfg.u || !cfg.t) { linha.textContent = `${painel} · script da planilha: sem endereço`; return; }
+  try {
+    const resposta = await fetch(`${cfg.u}?token=${encodeURIComponent(cfg.t)}&o=versao`, { cache: 'no-store' });
+    const dados = await resposta.json();
+    linha.textContent = `${painel} · script da planilha: ${dados.ok && dados.versao ? dados.versao : 'sem versão (desatualizado)'}`;
+  } catch (erro) {
+    linha.textContent = `${painel} · script da planilha: sem conexão`;
+  }
 }
 
 function closeConnection() {
