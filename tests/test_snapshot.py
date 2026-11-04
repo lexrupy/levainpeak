@@ -196,3 +196,24 @@ def test_the_session_keeps_the_recent_readings_for_the_growth_rate(tmp_path):
     again = SessionLog(tmp_path)
     again.resume(path)
     assert len(again.recent) == 3  # a resumed session has them from its file
+
+
+def test_a_doubling_seen_at_the_first_reading_is_said_to_have_happened_before_the_monitoring(tmp_path):
+    from datetime import datetime
+    from types import SimpleNamespace
+    from levainpeak.app import LevainPeakApp
+
+    def run(first):
+        log = SessionLog(tmp_path, sample_seconds=0)
+        log.start()
+        for factor in (first, first + 0.2):
+            log.record(0.0, SimpleNamespace(volume_fraction=0.4, initial_volume_fraction=0.2, growth_factor=factor), "Crescendo", force=True)
+        flag = log.reached_before_monitoring(2.0)
+        log.stop()
+        return flag
+
+    assert run(2.04) is True  # already doubled when the session opened
+    assert run(1.5) is False  # doubled while it was watched
+    moment = datetime(2026, 11, 3, 21, 32).astimezone()
+    assert "quando o monitoramento começou" in LevainPeakApp._reached_text(moment, True)
+    assert LevainPeakApp._reached_text(moment, False).startswith("O dobro do volume inicial já foi alcançado às 21:32")

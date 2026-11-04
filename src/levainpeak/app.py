@@ -2827,7 +2827,7 @@ class LevainPeakApp:
         if current >= target:
             reached = self._session_log.reached_at(2.0) or now
             label.configure(
-                text=f"O dobro do volume inicial já foi alcançado às {reached.astimezone():%H:%M} de {reached.astimezone():%d/%m}"
+                text=self._reached_text(reached, self._session_log.reached_before_monitoring(2.0))
             )
             return
         forecast = self._forecaster.minutes_until(current, target)
@@ -2858,6 +2858,17 @@ class LevainPeakApp:
                 logging.exception("Falha ao salvar a previsão do dobro")
         self._forecast_prediction = predicted_at
         label.configure(text=self._forecast_text(predicted_at, basis))
+
+    @staticmethod
+    def _reached_text(reached: datetime, before_monitoring: bool) -> str:
+        """When the doubling happened; if it was already there at the first reading, only that is known."""
+        local = reached.astimezone()
+        if before_monitoring:
+            return (
+                "O dobro do volume inicial já tinha sido alcançado quando o monitoramento começou "
+                f"({local:%H:%M} de {local:%d/%m})"
+            )
+        return f"O dobro do volume inicial já foi alcançado às {local:%H:%M} de {local:%d/%m}"
 
     def _forecast_text(self, predicted_at: datetime, basis: str, note: str = "") -> str:
         mix_elapsed = predicted_at - (self._mix_time or predicted_at)

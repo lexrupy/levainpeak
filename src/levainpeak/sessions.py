@@ -468,6 +468,22 @@ class SessionLog:
             pass
         return None
 
+    def reached_before_monitoring(self, factor: float) -> bool:
+        """True when the very first reading of the session was already at ``factor`` or more: it got there
+        before the monitoring began, so the time it is first seen at is not when it happened."""
+        if self.path is None:
+            return False
+        try:
+            with self.path.open(newline="", encoding="utf-8") as handle:
+                for row in csv.DictReader(handle):
+                    try:
+                        return float(row.get("growth_factor") or 0) >= factor
+                    except ValueError:
+                        continue
+        except OSError:
+            pass
+        return False
+
     def snapshot(self, monotonic_time: float, frame) -> Path | None:
         """Keep the raw frame beside the session every `snapshot_seconds` (ten minutes), to audit it later."""
         if not self.active or self.path is None or frame is None:
