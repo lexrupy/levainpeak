@@ -1,13 +1,13 @@
-"""Growth rate of the levain: how fast the volume grows per hour, and whether that pace is rising or falling."""
+"""Growth rate of the levain: how fast the volume grows per hour lately, and whether that is faster or slower than the last hour."""
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
 
-WINDOW_SECONDS = 3600.0  # the pace is read over the last hour
-STEP_SECONDS = 1800.0  # and compared with the hour that ended half an hour earlier
-FLAT_PERCENT = 1.0  # a change of the pace smaller than this (points of %/h) is "steady"
+WINDOW_SECONDS = 900.0  # the pace shown is that of the last 15 minutes
+REFERENCE_SECONDS = 3600.0  # the arrow compares it with the pace of the last hour
+FLAT_PERCENT = 3.0  # within this many points of %/h of the hour's pace, the arrow is level (short windows are noisy)
 MIN_POINTS = 6
 MIN_SPAN = 0.6  # the readings must cover this share of the window
 
@@ -18,7 +18,8 @@ class GrowthRate:
     trend: str | None  # "sobe", "desce", "estavel", or None without enough earlier readings
 
     def text(self) -> str:
-        """For the phone: "+9,8%/h ↗" (the arrow shows whether the pace itself is rising or falling)."""
+        """For the phone: "+9,8%/h ↗": the pace of the last minutes, and an arrow saying whether it is above,
+        below or about the pace of the last hour."""
         arrow = {"sobe": " ↗", "desce": " ↘", "estavel": " →"}.get(self.trend, "")
         return f"{self.per_hour:+.1f}".replace(".", ",") + "%/h" + arrow
 
@@ -38,13 +39,14 @@ def _slope(points: list[tuple[float, float]], start: float, end: float) -> float
 
 
 def growth_rate(points: list[tuple[float, float]], now: float) -> GrowthRate | None:
-    """``points`` are (seconds, volume) readings; the pace is that of the last hour up to ``now``."""
+    """``points`` are (seconds, volume) readings. The pace is that of the last 15 minutes up to ``now``;
+    the trend compares it with the last hour."""
     current = _slope(points, now - WINDOW_SECONDS, now)
     if current is None:
         return None
-    before = _slope(points, now - WINDOW_SECONDS - STEP_SECONDS, now - STEP_SECONDS)
-    if before is None:
+    reference = _slope(points, now - REFERENCE_SECONDS, now)
+    if reference is None:
         return GrowthRate(current, None)
-    change = current - before
+    change = current - reference
     trend = "estavel" if abs(change) < FLAT_PERCENT else ("sobe" if change > 0 else "desce")
     return GrowthRate(current, trend)
