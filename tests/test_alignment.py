@@ -140,3 +140,15 @@ def test_references_are_kept_per_session(tmp_path):
     loose = ContainerAnalyzer(stream=None)  # no session: nothing is read from or written to disk
     loose.load_references()
     assert loose._references == {}
+
+
+def test_with_no_session_nothing_is_joined():
+    from levainpeak.analysis import ContainerAnalyzer
+    from levainpeak.profiles import INFRARED
+
+    analyzer = ContainerAnalyzer(stream=None)
+    analyzer.join_enabled = False
+    analyzer.anchor_volume = 0.657  # left over from a session that is closed
+    analyzer.profile = INFRARED
+    assert analyzer._join_volume(0.600) == 0.600
+    assert analyzer.volume_shift == 0.0

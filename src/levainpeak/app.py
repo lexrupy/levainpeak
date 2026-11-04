@@ -655,6 +655,7 @@ class LevainPeakApp:
                     self._measurement = None  # the automatic search is not shown while the pot is drawn
                     self._last_container_box = None
                 self._analyzer.detect_enabled = not drawing_pot
+                self._analyzer.join_enabled = self._session_log.active
                 self._take_alignment()
                 self._take_visor_alignment()
                 self._sync_analyzer_regions()

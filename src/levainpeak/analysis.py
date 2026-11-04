@@ -63,6 +63,7 @@ class ContainerAnalyzer:
         self._last_volume: float | None = None
         self.align_enabled = True
         self.reference_base: Path | None = None  # the session's path without suffix; None: kept in memory only
+        self.join_enabled = True  # off with no session: there is no earlier series to join, nothing is shifted
         self.detect_enabled = True  # off while the pot is being drawn: nothing is measured or published
         self.mark_seen: tuple[float, float, int] | None = None  # the last "+"/"X" found: x, y, size
         self._mark_slide = 0.0  # px the label has slid sideways on the pot, from the edges' view
@@ -170,6 +171,11 @@ class ContainerAnalyzer:
 
     def _join_volume(self, raw: float) -> float:
         name = self.profile.name
+        if not self.join_enabled:
+            self._join_offset = 0.0
+            self._joined_profile = None
+            self._last_volume = None
+            return raw + self.volume_offset
         if self._joined_profile != name:
             reference = self._last_volume if self._last_volume is not None else self.anchor_volume
             if reference is not None and abs(reference - (raw + self.volume_offset)) < 0.15:
