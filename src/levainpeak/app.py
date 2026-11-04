@@ -32,6 +32,7 @@ from levainpeak.graph_phases import (DECLINE, EXPONENTIAL, LATENCY, STATIONARY,
                                      graph_phase_segments)
 from levainpeak.phone_config import load_phone_config, local_link, online_link
 from levainpeak.phone_push import PhonePusher, make_snapshot
+from levainpeak.rate import growth_rate
 from levainpeak.sessions import (GEOMETRY_VERSION, PhaseTracker, SessionLog, parse_ratio,
                                  find_session_csv, latest_session_csv)
 from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, INK_CUT_DAY,
@@ -151,6 +152,8 @@ class LevainPeakApp:
         )
         self._forecaster = DoublingForecaster()
         self._forecast_saved_at = 0.0
+        self._rate_text: str | None = None
+        self._rate_text_at: float | None = None
         self._forecast_prediction: datetime | None = None  # when the doubling is expected: the graph draws it
         self._phase = "Aguardando sessão"
         self._paused = False  # the session is open but nothing is logged (the fermenter is being handled)
@@ -2156,11 +2159,20 @@ class LevainPeakApp:
             "fase": self._phase,
             "temperatura_c": self._temperature_c,
             "temperatura_nota": note,
+            "taxa": self._growth_rate_text(),
             "previsao": self.metric_values["Previsão do dobro"].cget("text"),
             "perfil": None if self._analyzer is None else self._analyzer.profile.name,
             "status": None if self._stream is None else self._stream.status,
             "intervalo_s": self._settings.phone_interval_seconds,
         }
+
+    def _growth_rate_text(self) -> str | None:
+        """The growth per hour and the arrow of its trend, worked out at most every 30 s."""
+        now = time.time()
+        if self._rate_text_at is None or now - self._rate_text_at >= 30.0 or not self._session_log.active:
+            rate = growth_rate(self._session_log.recent, now) if self._session_log.active else None
+            self._rate_text, self._rate_text_at = (None if rate is None else rate.text()), now
+        return self._rate_text
 
     def _phone_live(self) -> dict:
         return dict(self._live_state)

@@ -179,3 +179,20 @@ def test_a_repeated_volume_reading_is_flagged():
     measurement = SimpleNamespace(volume_fraction=0.5, growth_factor=3.04)
     assert "repetida" not in LevainPeakApp._volume_text(measurement, 3.02, 1)
     assert LevainPeakApp._volume_text(measurement, 3.02, 2).endswith("anterior 3.02× (2x) ⚠ repetida")
+
+
+def test_the_session_keeps_the_recent_readings_for_the_growth_rate(tmp_path):
+    from types import SimpleNamespace
+    from levainpeak.sessions import SessionLog
+
+    log = SessionLog(tmp_path)
+    log.start(None, "Taxa")
+    measurement = SimpleNamespace(volume_fraction=0.4, initial_volume_fraction=0.2, growth_factor=2.0)
+    for step in range(3):
+        assert log.record(100.0 + step * 100, measurement, "Crescendo", temperature_c=24.0)
+    assert [volume for _t, volume in log.recent] == [0.4, 0.4, 0.4]
+    path = log.path
+    log.stop()
+    again = SessionLog(tmp_path)
+    again.resume(path)
+    assert len(again.recent) == 3  # a resumed session has them from its file

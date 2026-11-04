@@ -7,7 +7,7 @@
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 60 * 1000;
 const AGES_MS = 30 * 1000;
-const VERSAO_PAINEL = '2026-11-03.2'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
+const VERSAO_PAINEL = '2026-11-04.1'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
 const QUADROS_MAX = 20; // imagens recebidas que o aparelho guarda para a animação
 const FPS_OPCOES = [1, 2, 3]; // quadros por segundo; o botão passa de um para o outro e o aparelho lembra
 
@@ -192,6 +192,7 @@ function render(dados, doCache) {
     const minutos = Math.round(((aoVivo.intervalo_s || 120) * (iguais - 1)) / 60);
     $('volume-nota').textContent += ` · ⚠ igual há ${iguais} atualizações (${minutos} min)`;
   }
+  if (aoVivo.taxa) $('volume-nota').textContent += ` · ${aoVivo.taxa}`;
   $('volume-nota').classList.toggle('repetida', iguais >= 2);
   $('fase').textContent = aoVivo.fase || '—';
   $('fase-nota').textContent = '';

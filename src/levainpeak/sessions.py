@@ -12,6 +12,8 @@ from pathlib import Path
 from statistics import median
 from typing import TextIO
 
+RECENT_SECONDS = 4 * 3600.0  # readings kept in memory for the growth rate
+
 from levainpeak.filters import valid_after_recovery
 
 
@@ -95,6 +97,7 @@ class SessionLog:
         self.last_volume: float | None = None  # the volume of the last row written this run
         self.last_growth_factor: float | None = None  # and its growth factor
         self.growth_repeats = 0  # how many rows in a row carry that factor to two decimals
+        self.recent: list[tuple[float, float]] = []  # (epoch seconds, volume) of the last hours, for the growth rate
         # Version of the volume measurement the saved initial level came from.
         self.geometry: int = GEOMETRY_VERSION
 
@@ -109,6 +112,7 @@ class SessionLog:
         self.session_id = now.strftime("%Y%m%d_%H%M%S_%f")
         self.mix_time = mix_time or now
         self.session_name = name.strip()
+        self.recent = []
         self.directory.mkdir(parents=True, exist_ok=True)
         self.path = self.directory / f"{self.session_id}.csv"
         self.metadata_path = self.path.with_suffix(".json")
@@ -390,7 +394,19 @@ class SessionLog:
         self._writer = csv.writer(self._file)
         self._last_write_time = None
         self._last_phase = last.get("phase")
+        self.recent = []
+        for row in rows[-2000:]:
+            try:
+                self._remember(datetime.fromisoformat(row["timestamp"]).timestamp(), float(row["volume_fraction"]))
+            except (KeyError, ValueError):
+                continue
         return self.session_id, self.regions
+
+    def _remember(self, stamp: float, volume: float) -> None:
+        self.recent.append((stamp, volume))
+        cut = stamp - RECENT_SECONDS
+        if self.recent[0][0] < cut:
+            self.recent = [item for item in self.recent if item[0] >= cut]
 
     def record(
         self,
@@ -427,6 +443,7 @@ class SessionLog:
         self._last_write_time = monotonic_time
         self._last_phase = phase
         self.last_volume = measurement.volume_fraction
+        self._remember(datetime.fromisoformat(values["timestamp"]).timestamp(), measurement.volume_fraction)
         same = (
             measurement.growth_factor is not None and self.last_growth_factor is not None
             and f"{measurement.growth_factor:.2f}" == f"{self.last_growth_factor:.2f}"
