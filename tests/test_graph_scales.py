@@ -56,3 +56,17 @@ def test_the_graph_scales_are_saved_and_a_bad_value_falls_back(tmp_path):
     path.write_text('{"graph_temperature_scale": "xx", "graph_volume_scale": "yy"}', encoding="utf-8")
     loaded = load_settings(path)
     assert (loaded.graph_temperature_scale, loaded.graph_volume_scale) == ("ampla", "auto")
+
+
+def test_the_chart_for_the_phone_carries_the_growth_rate_series():
+    import math
+
+    start = datetime(2026, 11, 2, 8, 0, tzinfo=timezone.utc)
+    samples = [(start + timedelta(seconds=30 * i), 0.20 * math.exp(0.1 * i * 30 / 3600), 25.0) for i in range(300)]
+    payload = chart_payload(
+        {"too_few": False, "samples": samples, "phases": ["Crescendo"] * len(samples), "baseline": 0.20, "session_name": "S"}
+    )
+    taxa = payload["taxa"]
+    assert 20 < len(taxa) <= 120 and all(abs(value - 10.5) < 0.5 for _t, value in taxa)  # 10 % per hour, compound 10.5
+    few = samples[:4]
+    assert chart_payload({"too_few": False, "samples": few, "phases": ["Crescendo"] * 4, "baseline": 0.2, "session_name": "S"}).get("taxa") is None

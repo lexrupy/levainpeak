@@ -1,7 +1,7 @@
 // Guarda a "casca" do painel para ele abrir mesmo sem conexão. Os dados vêm do
 // Apps Script (outra origem) e não passam por aqui; o painel guarda a última
 // resposta no localStorage.
-const CACHE = 'levainpeak-painel-v8';
+const CACHE = 'levainpeak-painel-v9';
 const CASCA = ['./', 'index.html', 'painel.css', 'painel.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', (evento) => {

@@ -50,3 +50,25 @@ def growth_rate(points: list[tuple[float, float]], now: float) -> GrowthRate | N
     change = current - reference
     trend = "estavel" if abs(change) < FLAT_PERCENT else ("sobe" if change > 0 else "desce")
     return GrowthRate(current, trend)
+
+
+def rate_series(
+    points: list[tuple[float, float]], step: float = 120.0, window: float = WINDOW_SECONDS
+) -> list[tuple[float, float]]:
+    """The 15-minute pace along the session, one value every ``step`` seconds (where the readings allow one).
+
+    ``points`` must be sorted by time. Used by the graphs: the pace falling toward zero is the peak."""
+    from bisect import bisect_left, bisect_right
+
+    if len(points) < MIN_POINTS:
+        return []
+    times = [t for t, _ in points]
+    series: list[tuple[float, float]] = []
+    moment = times[0] + window * MIN_SPAN
+    while moment <= times[-1] + 1e-6:
+        low, high = bisect_left(times, moment - window), bisect_right(times, moment)
+        value = _slope(points[low:high], moment - window, moment)
+        if value is not None:
+            series.append((moment, value))
+        moment += step
+    return series

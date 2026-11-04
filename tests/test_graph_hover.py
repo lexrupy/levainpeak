@@ -141,3 +141,25 @@ def test_the_stretch_before_the_monitoring_can_be_switched_off():
     LevainPeakApp._draw_session_graph(app)
     assert "início do monitoramento" not in canvas.texts
     assert data["samples"][0][0].strftime("%d/%m\n%H:%M") in canvas.texts  # the axis starts at the first reading
+
+
+def test_the_growth_rate_gets_a_strip_under_the_plot_that_can_be_switched_off_or_left_out_when_short():
+    app, canvas = _graph_app(prediction=None)
+    start = datetime(2026, 11, 2, 8, 0).astimezone()
+    dense = [(start + timedelta(seconds=30 * i), 0.20 * 1.0001 ** i, 25.0) for i in range(240)]  # two hours
+    app._graph_data = lambda _path: {"session_name": "S", "too_few": False, "samples": dense, "phases": [], "baseline": 0.20}
+    LevainPeakApp._draw_session_graph(app)
+    assert "Taxa de crescimento (%/h, últimos 15 min)" in canvas.texts
+    green = [coords for coords, options in canvas.lines if options.get("fill") == "#2f8a5f" and len(coords) > 10]
+    assert green  # the rate curve itself
+    assert app._graph_hover["rates"]  # and the hover can read it
+
+    off, off_canvas = _graph_app(prediction=None)
+    off._settings = replace(off._settings, graph_show_rate=False)
+    LevainPeakApp._draw_session_graph(off)
+    assert "Taxa de crescimento (%/h, últimos 15 min)" not in off_canvas.texts
+
+    short, short_canvas = _graph_app(prediction=None)
+    short_canvas.winfo_height = lambda: 330  # too low for two plots
+    LevainPeakApp._draw_session_graph(short)
+    assert "Taxa de crescimento (%/h, últimos 15 min)" not in short_canvas.texts

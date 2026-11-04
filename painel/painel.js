@@ -7,7 +7,7 @@
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 60 * 1000;
 const AGES_MS = 30 * 1000;
-const VERSAO_PAINEL = '2026-11-04.1'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
+const VERSAO_PAINEL = '2026-11-04.2'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
 const QUADROS_MAX = 20; // imagens recebidas que o aparelho guarda para a animação
 const FPS_OPCOES = [1, 2, 3]; // quadros por segundo; o botão passa de um para o outro e o aparelho lembra
 
@@ -84,7 +84,10 @@ function smoothPath(pontos) {
 }
 
 function drawChart(chart) {
-  const L = 34, R = 34, T = 24, B = 26, W = 360, H = 250;
+  const L = 34, R = 34, T = 24, B = 26, W = 360, Hp = 250;
+  // A taxa de crescimento ganha uma faixa própria sob o gráfico, no mesmo eixo de tempo.
+  const taxa = Array.isArray(chart.taxa) && chart.taxa.length >= 2 ? chart.taxa : null;
+  const H = Hp + (taxa ? 96 : 0);
   const pts = chart.pts || [];
   if (pts.length < 2) {
     $('grafico').textContent = 'O gráfico aparece depois de algumas medições.';
@@ -93,8 +96,8 @@ function drawChart(chart) {
   const duracao = Math.max(...pts.map((p) => p[0]), 1);
   const x = (dt) => L + (dt / duracao) * (W - L - R);
   // Folga sem rótulo abaixo do 0% e acima do 100%, como no app do PC.
-  const alturaUtil = H - T - B;
-  const chao = H - B - alturaUtil * 0.12;
+  const alturaUtil = Hp - T - B;
+  const chao = Hp - B - alturaUtil * 0.12;
   const teto = T + alturaUtil * 0.09;
   const yVolume = (p) => chao - (Math.min(100, Math.max(0, p)) / 100) * (chao - teto);
 
@@ -124,8 +127,8 @@ function drawChart(chart) {
     const [nome, inicio] = fase;
     const esquerda = i === 0 ? L : x(inicio);
     const direita = i + 1 < fases.length ? x(fases[i + 1][1]) : x(duracao);
-    partes.push(`<rect class="${CLASSE_DA_FASE[nome] || 'faixa-fase-inicial'}" x="${esquerda.toFixed(1)}" y="${T}" width="${Math.max(0, direita - esquerda).toFixed(1)}" height="${H - B - T}"/>`);
-    if (i > 0) partes.push(`<line class="divisor" x1="${esquerda.toFixed(1)}" y1="${T}" x2="${esquerda.toFixed(1)}" y2="${H - B}"/>`);
+    partes.push(`<rect class="${CLASSE_DA_FASE[nome] || 'faixa-fase-inicial'}" x="${esquerda.toFixed(1)}" y="${T}" width="${Math.max(0, direita - esquerda).toFixed(1)}" height="${Hp - B - T}"/>`);
+    if (i > 0) partes.push(`<line class="divisor" x1="${esquerda.toFixed(1)}" y1="${T}" x2="${esquerda.toFixed(1)}" y2="${Hp - B}"/>`);
     if (direita - esquerda >= 46) partes.push(`<text class="fase-nome" x="${((esquerda + direita) / 2).toFixed(1)}" y="${T + 11}" text-anchor="middle">${esc(nome)}</text>`);
   });
   // Grade e eixos: 0 a 100% à esquerda, temperatura à direita nas mesmas linhas.
@@ -145,6 +148,7 @@ function drawChart(chart) {
     const dt = (duracao * i) / 4;
     const ancora = i === 0 ? 'start' : (i === 4 ? 'end' : 'middle');
     const rotulo = Number.isNaN(inicioMs) ? '' : formato.format(new Date(inicioMs + dt * 1000));
+    if (taxa) partes.push(`<line class="grade" x1="${x(dt).toFixed(1)}" y1="${T}" x2="${x(dt).toFixed(1)}" y2="${H - B}"/>`);
     partes.push(`<text class="eixo" x="${x(dt).toFixed(1)}" y="${H - 8}" text-anchor="${ancora}">${esc(rotulo)}</text>`);
   }
   // Temperatura (linha fina, interrompida onde não há leitura) e volume (curva).
@@ -163,6 +167,24 @@ function drawChart(chart) {
   partes.push(`<path class="vol" d="${smoothPath(volume)}"/>`);
   const ultimo = volume[volume.length - 1];
   partes.push(`<circle class="ponta" cx="${ultimo[0].toFixed(1)}" cy="${ultimo[1].toFixed(1)}" r="3.2"/>`);
+
+  if (taxa) {
+    const topoFaixa = Hp - B + 22;
+    const baseFaixa = H - B;
+    const maiorTaxa = Math.max(10, ...taxa.map((p) => p[1]));
+    const menorTaxa = Math.min(0, ...taxa.map((p) => p[1]));
+    const altoTaxa = Math.min(40, Math.ceil((Math.min(maiorTaxa, 40) * 1.1) / 5) * 5);
+    const baixoTaxa = Math.max(-20, Math.min(0, Math.floor(menorTaxa / 5) * 5));
+    const yTaxa = (v) => baseFaixa - ((Math.min(altoTaxa, Math.max(baixoTaxa, v)) - baixoTaxa) / (altoTaxa - baixoTaxa)) * (baseFaixa - topoFaixa);
+    partes.push(`<text class="taxa-titulo" x="${L}" y="${topoFaixa - 7}">Taxa de crescimento (%/h, últimos 15 min)</text>`);
+    [...new Set([baixoTaxa, 0, altoTaxa, (baixoTaxa + altoTaxa) / 2])].sort((a, b) => a - b).forEach((valor) => {
+      const y = yTaxa(valor);
+      partes.push(`<line class="grade" x1="${L}" y1="${y.toFixed(1)}" x2="${W - R}" y2="${y.toFixed(1)}"/>`);
+      partes.push(`<text class="eixo" x="${L - 4}" y="${(y + 3).toFixed(1)}" text-anchor="end">${valor.toFixed(0)}</text>`);
+    });
+    partes.push(`<line class="taxa-zero" x1="${L}" y1="${yTaxa(0).toFixed(1)}" x2="${W - R}" y2="${yTaxa(0).toFixed(1)}"/>`);
+    partes.push(`<polyline class="taxa" points="${taxa.map((p) => `${x(p[0]).toFixed(1)},${yTaxa(p[1]).toFixed(1)}`).join(' ')}"/>`);
+  }
 
   $('grafico').innerHTML = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">${partes.join('')}</svg>`;
   $('grafico-titulo').textContent = `Volume (% do ${chart.escala}; 0% = início) · temperatura em °C`;

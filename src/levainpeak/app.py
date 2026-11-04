@@ -6,6 +6,7 @@ import argparse
 import csv
 import functools
 import json
+import math
 import logging
 import threading
 import time
@@ -32,7 +33,7 @@ from levainpeak.graph_phases import (DECLINE, EXPONENTIAL, LATENCY, STATIONARY,
                                      graph_phase_segments)
 from levainpeak.phone_config import load_phone_config, local_link, online_link
 from levainpeak.phone_push import PhonePusher, make_snapshot
-from levainpeak.rate import growth_rate
+from levainpeak.rate import growth_rate, rate_series
 from levainpeak.sessions import (GEOMETRY_VERSION, PhaseTracker, SessionLog, parse_ratio,
                                  find_session_csv, latest_session_csv)
 from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, INK_CUT_DAY,
@@ -63,6 +64,8 @@ def _lowercase_rows(scale: float, thickness: int) -> tuple[int, int]:
     return baseline - int(rows.max()), baseline - int(rows.min())
 
 
+RATE_STRIP_MIN_HEIGHT = 300  # plot height (px) under which the rate strip is not drawn
+RATE_STRIP_SHARE = 0.30  # share of the plot height the strip takes
 REPEAT_WARNING = 2  # the same growth factor logged this many times in a row is flagged
 MAX_ZOOM = 12.0  # the wheel zoom of the video; only the visible part is scaled, so it stays cheap
 
@@ -2277,6 +2280,12 @@ class LevainPeakApp:
         samples, phases, baseline = data["samples"], data["phases"], data["baseline"]
 
         left, right, top, bottom = 72, width - 76, 82, height - 58
+        # The growth rate gets its own strip under the plot, on the same time axis; the axis labels go under it.
+        axis_bottom = bottom
+        strip = None
+        if self._settings.graph_show_rate and bottom - top >= RATE_STRIP_MIN_HEIGHT:
+            strip = (bottom - (bottom - top) * RATE_STRIP_SHARE + 26, bottom)
+            bottom = strip[0] - 26
         plot_width, plot_height = max(1, right - left), max(1, bottom - top)
         # The graph starts at the mix (the zero of the session), even when the monitoring began later.
         monitoring_start = samples[0][0]
@@ -2347,9 +2356,11 @@ class LevainPeakApp:
             fraction = tick / 4
             stamp = first_time + (end_time - first_time) * fraction
             x = left + fraction * plot_width
-            canvas.create_line(x, bottom, x, bottom + 5, fill="#59645e")
+            canvas.create_line(x, axis_bottom, x, axis_bottom + 5, fill="#59645e")
+            if strip is not None:
+                canvas.create_line(x, top, x, axis_bottom, fill="#eef0ea")
             canvas.create_text(
-                x, bottom + 9, text=stamp.strftime("%d/%m\n%H:%M"),
+                x, axis_bottom + 9, text=stamp.strftime("%d/%m\n%H:%M"),
                 anchor="n", fill="#59645e", font=("TkDefaultFont", 8),
             )
 
@@ -2391,6 +2402,31 @@ class LevainPeakApp:
                 anchor="s", fill="#7fa6bb", font=("TkDefaultFont", 9),
             )
 
+        rates: list[tuple[float, float]] = []
+        if strip is not None and len(samples) >= 6:
+            stamps = [stamp.timestamp() for stamp, _, _ in samples]
+            series = rate_series([(t, volume) for t, (_s, volume, _c) in zip(stamps, samples)])
+            origin = first_time.timestamp()
+            strip_top, strip_bottom = strip
+            top_value = max([10.0] + [value for _t, value in series])
+            high_rate = float(min(40, 5 * math.ceil(min(top_value, 40.0) * 1.1 / 5)))
+            low_rate = float(max(-20, min(0.0, 5 * math.floor(min([0.0] + [value for _t, value in series]) / 5))))
+            y_rate = lambda value: strip_bottom - (min(high_rate, max(low_rate, value)) - low_rate) / (high_rate - low_rate) * (strip_bottom - strip_top)
+            canvas.create_text(
+                left, strip_top - 8, text="Taxa de crescimento (%/h, últimos 15 min)", anchor="sw", fill="#2f8a5f",
+            )
+            for value in sorted({low_rate, 0.0, high_rate, (low_rate + high_rate) / 2}):
+                y = y_rate(value)
+                canvas.create_line(left, y, right, y, fill="#e4e6df")
+                canvas.create_text(left - 10, y, text=f"{value:.0f}", anchor="e", fill="#2f8a5f")
+            canvas.create_line(left, strip_top, left, strip_bottom, fill="#2f8a5f", width=2)
+            canvas.create_line(left, strip_bottom, right, strip_bottom, fill="#59645e", width=2)
+            zero_y = y_rate(0.0)
+            canvas.create_line(left, zero_y, right, zero_y, fill="#59645e", dash=(3, 3))
+            rates = [(left + (t - origin) / duration * plot_width, value) for t, value in series]
+            if len(rates) >= 2:
+                canvas.create_line(*[c for x, value in rates for c in (x, y_rate(value))], fill="#2f8a5f", width=2)
+
         previous = None
         for stamp, _, temperature in samples:
             if temperature is None:
@@ -2403,7 +2439,8 @@ class LevainPeakApp:
 
         self._graph_hover = {
             "samples": samples, "xs": [x_of(stamp) for stamp, _, _ in samples], "initial": initial_volume,
-            "y_volume": y_volume, "y_temperature": y_temperature, "bounds": (left, right, top, bottom),
+            "y_volume": y_volume, "y_temperature": y_temperature, "bounds": (left, right, top, axis_bottom),
+            "rates": rates,
         }
 
         legend_y = 42
@@ -2415,6 +2452,7 @@ class LevainPeakApp:
         # Two switches in the legend: the forecast curve and the stretch before the monitoring.
         for x, field, label in (
             (left + 190, "graph_show_forecast", "Previsão"), (left + 290, "graph_show_start", "Faixa inicial"),
+            (left + 400, "graph_show_rate", "Taxa"),
         ):
             on = getattr(self._settings, field)
             item = canvas.create_text(
@@ -2449,6 +2487,11 @@ class LevainPeakApp:
         y = hover["y_volume"](volume)
         canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill="#397a9b", outline="#ffffff", width=2, tags="hover")
         lines = [stamp.strftime("%d/%m %H:%M"), f"{factor:.2f}x"]
+        rates = hover.get("rates") or []
+        if rates:
+            near = min(rates, key=lambda item: abs(item[0] - x))
+            if abs(near[0] - x) <= 0.05 * (right - left):
+                lines.append(f"{near[1]:+.1f}".replace(".", ",") + "%/h")
         if temperature is not None:
             y = hover["y_temperature"](temperature)
             canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill="#c46b35", outline="#ffffff", width=2, tags="hover")

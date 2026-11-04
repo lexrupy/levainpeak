@@ -9,6 +9,8 @@ from statistics import median
 
 import numpy as np
 
+from levainpeak.rate import rate_series
+
 from levainpeak.filters import despike, valid_after_recovery
 from levainpeak.graph_phases import graph_phase_segments
 from levainpeak.sessions import PhaseTracker
@@ -186,6 +188,10 @@ def chart_payload(
         "pts": points,
         "fases": phases,
     }
+    pace = rate_series([(sample[0].timestamp(), sample[1]) for sample in samples])
+    if len(pace) >= 2:  # the growth rate (%/h, last 15 minutes) for the strip under the panel's chart
+        pace_stride = max(1, -(-len(pace) // 120))
+        payload["taxa"] = [[int(t - first.timestamp()), round(value, 1)] for t, value in pace[::pace_stride]]
     temperatures = [sample[2] for sample in samples if sample[2] is not None]
     if temperatures:
         payload["temp_eixo"] = list(temperature_axis(temperatures, temperature_scale))

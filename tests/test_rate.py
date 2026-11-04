@@ -47,3 +47,15 @@ def test_too_few_readings_give_no_rate_and_no_arrow_without_the_hours_readings()
     points = pieces((14, 10.0))  # 15 minutes of readings but not an hour: the pace, no arrow
     rate = growth_rate(points, points[-1][0])
     assert rate is not None and rate.trend is None and not rate.text().endswith(("↗", "↘", "→"))
+
+
+def test_the_rate_series_follows_a_pace_that_falls():
+    from levainpeak.rate import rate_series
+
+    points = pieces((60, 12.0), (60, 4.0))
+    series = rate_series(points)
+    assert len(series) > 40
+    early = [value for t, value in series if t < 3000]
+    late = [value for t, value in series if t > points[-1][0] - 1800]
+    assert abs(sum(early) / len(early) - 12.0) < 0.5 and abs(sum(late) / len(late) - 4.0) < 0.5
+    assert rate_series(pieces((1, 10.0))) == []

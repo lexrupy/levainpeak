@@ -173,3 +173,7 @@ dialog#conexao::backdrop { background: rgba(0, 0, 0, 0.45); }
 .quadros { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
 .quadros button { font: inherit; padding: 4px 12px; }
 .quadros input { flex: 1; min-width: 0; }
+
+#grafico .taxa { fill: none; stroke: var(--ok); stroke-width: 2; stroke-linejoin: round; }
+#grafico .taxa-zero { stroke: var(--suave); stroke-width: 1; stroke-dasharray: 3 3; }
+#grafico .taxa-titulo { fill: var(--ok); font-size: 10px; }
