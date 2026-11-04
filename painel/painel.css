@@ -169,3 +169,7 @@ dialog#conexao::backdrop { background: rgba(0, 0, 0, 0.45); }
 }
 
 #volume-nota.repetida { color: var(--alerta); font-weight: 600; }
+
+.quadros { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+.quadros button { font: inherit; padding: 4px 12px; }
+.quadros input { flex: 1; min-width: 0; }

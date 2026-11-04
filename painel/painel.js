@@ -7,13 +7,15 @@
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 60 * 1000;
 const AGES_MS = 30 * 1000;
+const QUADROS_MAX = 20; // imagens recebidas que o aparelho guarda para a animação
+const QUADRO_MS = 1000; // 1 quadro por segundo
 
 const store = {
   get(key) {
     try { return JSON.parse(localStorage.getItem(key)); } catch (erro) { return null; }
   },
   set(key, value) {
-    try { localStorage.setItem(key, JSON.stringify(value)); } catch (erro) { /* cheio ou bloqueado */ }
+    try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch (erro) { return false; /* cheio ou bloqueado */ }
   },
 };
 
@@ -202,8 +204,9 @@ function render(dados, doCache) {
 
   const imagem = dados.snapshot;
   if (imagem && imagem.jpeg_b64) {
-    $('imagem').src = `data:image/jpeg;base64,${imagem.jpeg_b64}`;
+    guardarQuadro(imagem, aoVivo.sessao || '');
     $('imagem-area').hidden = false;
+    prepararQuadros();
   } else {
     $('imagem-area').hidden = true;
   }
@@ -228,12 +231,70 @@ function renderAges() {
     subtitulo.className = 'fresco';
   }
   const imagem = ultimo.snapshot;
-  if (imagem && imagem.jpeg_b64) {
+  if (imagem && imagem.jpeg_b64 && quadros.length < 2) {
     const instante = Date.parse(imagem.t);
     $('imagem-legenda').textContent = Number.isNaN(instante)
       ? 'Última imagem recebida'
       : `Última imagem recebida: ${horaCurta.format(new Date(instante))} (${ageText(ageMinutes(imagem.t))})`;
   }
+}
+
+// ---------------------------------------------------------------- animação das imagens
+
+// Cada imagem nova do pote que chega é guardada neste aparelho; a animação passa as últimas a 1 quadro
+// por segundo. Só guarda o que chegou com o painel aberto: nada é pedido a mais à planilha.
+let quadros = [];
+let quadroAtual = 0;
+let relogio = null;
+let pausado = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function guardarQuadro(snapshot, sessao) {
+  if (!snapshot || !snapshot.jpeg_b64 || !snapshot.t) return;
+  let guardado = store.get('quadros');
+  if (!guardado || guardado.sessao !== sessao || !Array.isArray(guardado.itens)) guardado = { sessao, itens: [] };
+  if (!guardado.itens.some((item) => item.t === snapshot.t)) {
+    guardado.itens.push({ t: snapshot.t, b: snapshot.jpeg_b64 });
+    guardado.itens.sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
+    guardado.itens = guardado.itens.slice(-QUADROS_MAX);
+    while (!store.set('quadros', guardado) && guardado.itens.length > 2) guardado.itens = guardado.itens.slice(Math.ceil(guardado.itens.length / 2));
+  }
+  quadros = guardado.itens;
+}
+
+function mostrarQuadro(indice) {
+  if (!quadros.length) return;
+  quadroAtual = Math.min(quadros.length - 1, Math.max(0, indice));
+  const quadro = quadros[quadroAtual];
+  $('imagem').src = `data:image/jpeg;base64,${quadro.b}`;
+  $('quadros-slider').value = quadroAtual;
+  const instante = Date.parse(quadro.t);
+  $('imagem-legenda').textContent = quadros.length < 2
+    ? `Última imagem recebida: ${Number.isNaN(instante) ? '' : horaCurta.format(new Date(instante))} (${ageText(ageMinutes(quadro.t))})`
+    : `Quadro ${quadroAtual + 1}/${quadros.length} · ${Number.isNaN(instante) ? '' : dataHora.format(new Date(instante))}`;
+}
+
+function prepararQuadros() {
+  const varios = quadros.length >= 2;
+  $('quadros-ctrl').hidden = !varios;
+  $('quadros-slider').max = Math.max(0, quadros.length - 1);
+  $('quadros-play').textContent = pausado ? 'Reproduzir' : 'Pausar';
+  clearInterval(relogio);
+  relogio = null;
+  if (varios && !pausado) {
+    relogio = setInterval(() => mostrarQuadro((quadroAtual + 1) % quadros.length), QUADRO_MS);
+    mostrarQuadro(Math.min(quadroAtual, quadros.length - 1));
+  } else {
+    mostrarQuadro(varios && pausado ? quadroAtual : quadros.length - 1);
+  }
+}
+
+function ligarQuadros() {
+  $('quadros-play').addEventListener('click', () => { pausado = !pausado; prepararQuadros(); });
+  $('quadros-slider').addEventListener('input', (evento) => {
+    pausado = true;
+    prepararQuadros();
+    mostrarQuadro(Number(evento.target.value));
+  });
 }
 
 function showWarning(texto) {
@@ -358,6 +419,7 @@ function setupConnection() {
 document.addEventListener('DOMContentLoaded', () => {
   setupConnection();
   $('atualizar').addEventListener('click', load);
+  ligarQuadros();
   $('cfg-salvar').addEventListener('click', saveConfig);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
   setInterval(load, REFRESH_MS);
