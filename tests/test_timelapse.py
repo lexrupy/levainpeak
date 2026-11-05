@@ -49,3 +49,30 @@ def test_the_view_keeps_zoom_and_position_inside_the_picture():
     assert scale == 2.0 and (left, top) == (375, 125)  # the middle of the picture
     assert view_box((1000, 500), (500, 500), 4.0, (0.0, 0.0))[1:] == (0, 0)  # never past the edge
     assert view_box((1000, 500), (500, 500), 4.0, (1.0, 1.0))[1:] == (750, 250)
+
+
+def _player(loop, index, count=3):
+    from types import SimpleNamespace
+
+    calls = []
+    player = SimpleNamespace(
+        _after_id=None, _playing=True, _index=index, _photos=[0] * count,
+        _loop=SimpleNamespace(get=lambda: loop), _fps=SimpleNamespace(get=lambda: 10),
+        go_to=lambda i: calls.append(i), _stop=lambda: calls.append("stop"),
+        window=SimpleNamespace(after=lambda *_a: "job"), _tick=None,
+    )
+    return player, calls
+
+
+def test_the_play_starts_over_at_the_end_only_when_the_loop_is_on():
+    from levainpeak.timelapse import TimelapseWindow
+
+    player, calls = _player(loop=True, index=2)
+    TimelapseWindow._tick(player)
+    assert calls == [0] and player._after_id == "job"
+    player, calls = _player(loop=False, index=2)
+    TimelapseWindow._tick(player)
+    assert calls == ["stop"]
+    player, calls = _player(loop=True, index=0)
+    TimelapseWindow._tick(player)
+    assert calls == [1]

@@ -101,7 +101,7 @@ class TimelapseWindow:
         self._drag: tuple[int, int] | None = None
         self.open = True
 
-        self.window = tk.Toplevel(parent)
+        self.window = tk.Toplevel(parent, class_="Pythontkfloating")  # the i3 rule floats this class
         self.window.title("Time-lapse da sessão")
         self.window.geometry("960x620")
         self.window.protocol("WM_DELETE_WINDOW", self.close)
@@ -146,6 +146,8 @@ class TimelapseWindow:
             row, from_=MIN_FPS, to=MAX_FPS, width=4, textvariable=self._fps, takefocus=0,
             command=self.window.focus_set,
         ).pack(side="left")
+        self._loop = tk.BooleanVar(value=False)
+        ttk.Checkbutton(row, text="Repetir", variable=self._loop, takefocus=0).pack(side="left", padx=(12, 0))
         self._label = tk.StringVar()
         ttk.Label(row, textvariable=self._label, anchor="e").pack(side="right")
 
@@ -220,9 +222,12 @@ class TimelapseWindow:
         if not self._playing:
             return
         if self._index >= len(self._photos) - 1:
-            self._stop()
-            return
-        self.go_to(self._index + 1)
+            if not self._loop.get() or len(self._photos) < 2:
+                self._stop()
+                return
+            self.go_to(0)  # "Repetir": start over by itself
+        else:
+            self.go_to(self._index + 1)
         try:
             fps = min(MAX_FPS, max(MIN_FPS, int(self._fps.get())))
         except (tk.TclError, ValueError):
