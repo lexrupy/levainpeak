@@ -605,9 +605,13 @@ def _classify_digit(glyph: np.ndarray) -> int | None:
     if match is None:
         strong = {name for name, value in zip(names, occupancy) if value >= _STRONG_SEGMENT}
         dark = {name for name, value in zip(names, occupancy) if value <= _DARK_SEGMENT} - _FRAGILE_SEGMENTS
+        # When a lit and a dark segment contradict each other, the dark one wins: a clean absence is
+        # evidence, a stray lit patch (glare, noise) is not. A dark lower-right bar is only a 2's.
         candidates = [
             item for item in _SHAPES if strong <= set(item[1]) and not dark & set(item[1])
-        ] or [item for item in _SHAPES if strong <= set(item[1])] or _SHAPES
+        ] or [item for item in _SHAPES if not dark & set(item[1])] or [
+            item for item in _SHAPES if strong <= set(item[1])
+        ] or _SHAPES
         match = min(candidates, key=lambda item: _distance(occupancy, item[1], names))
     digit, shape = match
     best = _distance(occupancy, shape, names)

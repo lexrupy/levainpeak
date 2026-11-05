@@ -315,3 +315,14 @@ def test_a_five_without_its_bottom_bar_is_still_a_five():
             x0, y0, x1, y1 = _SEGMENTS[name]
             glyph[int(80 * y0):max(int(80 * y0) + 1, int(80 * y1)), int(40 * x0):max(int(40 * x0) + 1, int(40 * x1))] = int(255 * strength)
         assert _classify_digit(glyph) == 5
+
+
+def test_a_dark_lower_right_bar_is_a_two_even_when_noise_lights_the_upper_left():
+    import numpy as np
+    from levainpeak.temperature import _SEGMENTS, _classify_digit
+
+    glyph = np.zeros((80, 40), np.uint8)  # measured on a real frame: c off, f lit by a stray patch
+    for name, strength in {"a": 0.77, "b": 0.9, "c": 0.04, "d": 0.59, "e": 1.0, "f": 0.86, "g": 0.75}.items():
+        x0, y0, x1, y1 = _SEGMENTS[name]
+        glyph[int(80 * y0):max(int(80 * y0) + 1, int(80 * y1)), int(40 * x0):max(int(40 * x0) + 1, int(40 * x1))] = int(255 * strength)
+    assert _classify_digit(glyph) in (2, None)  # never an 8: it needs the bar that is off
