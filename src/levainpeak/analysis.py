@@ -415,6 +415,10 @@ class ContainerAnalyzer:
                 self._missing_measurements = 0
                 self._filtered_surface_y = None
                 self._volume_gate.reset()
+                # What was measured on the old drawing (held by the lamp, or kept for it) is not about this pot.
+                self._recent.clear()
+                self._frozen = None
+                self.empty_pot = None
             previous_profile = self.profile.name
             self.profile = self._profile_selector.update(frame)
             if self.profile.name != previous_profile:
