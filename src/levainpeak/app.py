@@ -3097,7 +3097,11 @@ class LevainPeakApp:
         else:
             elapsed_text = f"{elapsed_hours}h{elapsed_minutes:02d} após mistura"
         # Three short lines: when, how long after mixing, and what it rests on.
-        return f"{predicted_at.strftime('%d/%m às %H:%M')}\n{elapsed_text}\n{basis}" + (f" ({note})" if note else "")
+        # The third line is kept short so it does not wrap and change the tile's height.
+        for long, short in (("início marcado", "marca"), ("1ª leitura", "1ª leit."), (" + temp. ", " +temp ")):
+            basis = basis.replace(long, short)
+        note = {"última conhecida": "salva", "antes do crescimento": "pré-subida"}.get(note, note)
+        return f"{predicted_at.strftime('%d/%m às %H:%M')}\n{elapsed_text}\n{basis}" + (f" · {note}" if note else "")
 
     def _set_mix_time(self) -> None:
         default_time = self._mix_time or datetime.now().astimezone()
