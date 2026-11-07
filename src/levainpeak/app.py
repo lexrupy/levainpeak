@@ -888,8 +888,8 @@ class LevainPeakApp:
             return
         width = span[1] - span[0]
         start, end = (left - span[0]) / width, (right - span[0]) / width
-        if min(end, 1.0) - max(start, 0.0) < 0.02:
-            self._set_message("A faixa ficou fora do pote ou estreita demais; arraste dentro do vidro.")
+        if min(end, 1.0) - max(start, 0.0) < 0.012:
+            self._set_message("A faixa ficou fora do pote ou estreita demais (menos de 4 px); arraste dentro do vidro.")
             return
         self._set_bands((*bands, (start, end)))
         count = len(self._settings.surface_bands)
@@ -1355,7 +1355,11 @@ class LevainPeakApp:
         left, right = sorted((start[0], point[0]))
         top, bottom = sorted((start[1], point[1]))
         if self._roi_target == "bands":
+            if self._roi_preview_item is not None:
+                self.video.itemconfigure(self._roi_preview_item, state="hidden")  # the drag's dashed box is done
             self._add_band(left, right)
+            if len(self._settings.surface_bands) >= MAX_SURFACE_BANDS:
+                self._cancel_roi_mode()  # all of them are drawn
             return
         minimum_size = (80, 120) if self._roi_target == "pot" else (40, 20)
         if right - left < minimum_size[0] or bottom - top < minimum_size[1]:

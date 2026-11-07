@@ -95,3 +95,14 @@ def test_switching_the_bands_joins_the_series_at_the_level_it_had():
     analyzer._last_volume = 0.31
     analyzer.set_surface_bands(((0.4, 0.5), (0.6, 0.7)))  # nothing changed: nothing to join
     assert analyzer._last_volume == 0.31
+
+
+def test_a_thin_band_of_a_few_pixels_is_taken_and_a_sliver_is_not():
+    from levainpeak.app import LevainPeakApp
+
+    thin = _app()
+    LevainPeakApp._add_band(thin, 300, 307)  # 7 px of a 360 px glass: about 2%
+    assert len(thin.saved) == 1
+    sliver = _app()
+    LevainPeakApp._add_band(sliver, 300, 302)
+    assert not sliver.saved and "estreita" in sliver.messages[-1]
