@@ -2628,7 +2628,7 @@ class LevainPeakApp:
         self._graph_hover = {
             "samples": samples, "xs": [x_of(stamp) for stamp, _, _ in samples], "initial": initial_volume,
             "y_volume": y_volume, "y_temperature": y_temperature, "bounds": (left, right, top, axis_bottom),
-            "rates": rates,
+            "rates": rates, "mix_time": mix_time,
         }
 
         legend_y = 42
@@ -2675,6 +2675,14 @@ class LevainPeakApp:
         y = hover["y_volume"](volume)
         canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill="#397a9b", outline="#ffffff", width=2, tags="hover")
         lines = [stamp.strftime("%d/%m %H:%M"), f"{factor:.2f}x"]
+        mix = hover.get("mix_time")
+        if mix is not None:
+            if mix.tzinfo is None and stamp.tzinfo is not None:
+                mix = mix.astimezone()
+            minutes = int((stamp - mix).total_seconds() // 60)
+            if minutes >= 0:
+                days, rest = divmod(minutes, 24 * 60)
+                lines.insert(1, (f"{days}d " if days else "") + f"{rest // 60}h{rest % 60:02d} após mistura")
         rates = hover.get("rates") or []
         if rates:
             near = min(rates, key=lambda item: abs(item[0] - x))
