@@ -190,3 +190,28 @@ def test_a_smooth_arch_is_a_dome_and_its_level_is_the_mean_of_the_wall_and_the_t
         gray[surface:, x] = 200
     reading = read_strips(gray, 0, 400, 0, 400)
     assert reading.dome and reading.level is not None and 301 < reading.level < 309
+
+
+def test_the_automatic_strips_give_the_surface_and_stay_out_when_they_do_not_agree():
+    from levainpeak.vision import _find_surface_by_strips
+
+    gray = _jar_with_a_pale_intruder()
+    found = _find_surface_by_strips(gray, 0, 400, 0, 400, False)
+    assert found is not None and abs(found[0] - 300) <= 3
+    noise = np.random.default_rng(3).integers(40, 220, (400, 400), dtype=np.uint8)
+    assert _find_surface_by_strips(noise, 0, 400, 0, 400, False) is None
+
+
+def test_the_drawn_bands_restrict_the_automatic_vote_and_switching_it_joins_the_series():
+    from levainpeak.analysis import ContainerAnalyzer
+    from levainpeak.vision import _find_surface_by_strips
+
+    gray = _jar_with_a_pale_intruder()
+    inside_clean_light = _find_surface_by_strips(gray, 0, 400, 0, 400, False, ((0.5, 0.65), (0.7, 0.9)))
+    assert inside_clean_light is not None and abs(inside_clean_light[0] - 300) <= 3
+    analyzer = ContainerAnalyzer(stream=None)
+    analyzer.join_enabled = True
+    analyzer._last_volume = 0.30
+    analyzer.set_surface_bands((), auto=True)
+    assert analyzer.auto_strips and analyzer.anchor_volume == 0.30 and analyzer._last_volume is None
+    assert analyzer.region_key()[5] is True

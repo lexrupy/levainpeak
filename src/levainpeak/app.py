@@ -176,6 +176,7 @@ class LevainPeakApp:
             self._analyzer.ink_cut_day = self._settings.ink_cut_day
             self._analyzer.use_mark = self._settings.mark_alignment
             self._analyzer.surface_bands = self._active_bands()
+            self._analyzer.auto_strips = self._settings.auto_surface_strips
             self._analyzer.lamp_hold_seconds = self._settings.lamp_minutes * 60.0
             self._analyzer.start()
             self._set_message("Iniciando conexão com a câmera…")
@@ -361,6 +362,10 @@ class LevainPeakApp:
         bands_menu = tk.Menu(self.bands_button, tearoff=False)
         bands_menu.add_command(label="Desenhar faixa", command=lambda: self._toggle_roi_mode("bands"))
         bands_menu.add_command(label="Apagar faixas", command=self._clear_bands)
+        self._auto_strips_var = tk.BooleanVar(value=self._settings.auto_surface_strips)
+        bands_menu.add_checkbutton(
+            label="Faixas automáticas (o pote todo)", variable=self._auto_strips_var, command=self._toggle_auto_strips
+        )
         self._bands_var = tk.BooleanVar(value=self._settings.use_surface_bands)
         bands_menu.add_checkbutton(label="Ler só as faixas", variable=self._bands_var, command=self._toggle_bands)
         self._show_bands_var = tk.BooleanVar(value=self._settings.show_surface_bands)
@@ -656,6 +661,8 @@ class LevainPeakApp:
             "outline": self._pot_outline,
             "face_quad": self._temperature_quad,
             "ink_cut": self._ink_cut_of_profile(),
+            "surface_bands": self._settings.surface_bands,
+            "auto_strips": self._settings.auto_surface_strips,
             "ink_control": self._ink_control(),
             "vertical_bounds": None if self._analyzer is None else self._analyzer.effective_bounds(),
         }
@@ -875,7 +882,7 @@ class LevainPeakApp:
         self._settings = replace(self._settings, surface_bands=bands, use_surface_bands=use).clamped()
         self._bands_var.set(self._settings.use_surface_bands)
         if self._analyzer is not None:
-            self._analyzer.set_surface_bands(self._active_bands())
+            self._analyzer.set_surface_bands(self._active_bands(), auto=self._settings.auto_surface_strips)
         try:
             save_settings(self._settings)
         except OSError:
@@ -949,6 +956,20 @@ class LevainPeakApp:
                 else 'Ative "Ler só as faixas" no menu para usá-las.' if not self._settings.use_surface_bands
                 else "A leitura usa só as faixas."
             )
+        )
+
+    def _toggle_auto_strips(self) -> None:
+        use = bool(self._auto_strips_var.get())
+        self._settings = replace(self._settings, auto_surface_strips=use).clamped()
+        if self._analyzer is not None:
+            self._analyzer.set_surface_bands(self._active_bands(), auto=use)
+        try:
+            save_settings(self._settings)
+        except OSError:
+            logging.exception("Falha ao salvar as faixas automáticas")
+        self._set_message(
+            "Leitura por faixas automáticas: o pote todo vota (as suas faixas, se ligadas, restringem o voto)." if use
+            else "Leitura sem as faixas automáticas."
         )
 
     def _toggle_show_bands(self) -> None:

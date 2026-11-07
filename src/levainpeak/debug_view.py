@@ -17,7 +17,8 @@ from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 from levainpeak.floating import BORDER, FloatingWindowControls
 from levainpeak.temperature import inspect_temperature
-from levainpeak.vision import ContainerMeasurement, column_scan, measure_container
+from levainpeak.surface_strips import read_strips
+from levainpeak.vision import ContainerMeasurement, column_scan, inner_span, measure_container
 
 PANEL_W, PANEL_H, TITLE_H, GAP = 230, 380, 22, 8
 SECOND_ROW_H, INFO_H = 240, 114
@@ -139,6 +140,8 @@ def build_debug_mosaic(
     outline: tuple[tuple[int, int], ...] | None = None,
     face_quad: tuple[tuple[int, int], ...] | None = None,
     ink_cut: float | None = None,
+    surface_bands: tuple[tuple[float, float], ...] = (),
+    auto_strips: bool = False,
 ) -> np.ndarray:
     """One BGR image with the stages of the pot, surface and thermometer reads.
 
@@ -159,7 +162,10 @@ def build_debug_mosaic(
     raw = None
     if frame is not None:
         try:
-            raw = measure_container(frame, roi=pot_roi, vertical_bounds=vertical_bounds, outline=outline)
+            raw = measure_container(
+                frame, roi=pot_roi, vertical_bounds=vertical_bounds, outline=outline,
+                surface_bands=surface_bands, auto_strips=auto_strips,
+            )
         except cv2.error:
             raw = None
     detected = raw
@@ -172,6 +178,16 @@ def build_debug_mosaic(
     scan = None
     if frame is not None and raw is not None and raw.marker_y is not None:
         scan = column_scan(frame, raw.left, raw.right, raw.top, raw.bottom, raw.marker_y)
+
+    strips = None
+    if frame is not None and outline is not None:
+        span = inner_span(tuple(tuple(point) for point in outline), (frame.shape[1], frame.shape[0]))
+        if span is not None:
+            infrared = float(np.abs(frame[..., 0].astype(np.int16) - frame[..., 2]).mean()) < 3
+            strips = read_strips(
+                cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), *span[:2], span[2], span[3], infrared,
+                bands=surface_bands if len(surface_bands) >= 2 else (),
+            )
 
     if frame is None:
         place(_View(None, (0, 0), PANEL_W, PANEL_H).canvas, 0, 0, "Sem imagem da câmera")
@@ -194,12 +210,15 @@ def build_debug_mosaic(
             _draw_detection(detection_view, raw, stable)
             _draw_light(light_view, raw, scan, lab, left, top, stable)
             _draw_edges(edge_view, raw)
-            _draw_columns(column_view, raw, scan, stable, lab, left, top)
+            if strips is not None and scan is None:
+                _draw_strips(column_view, raw, strips, stable, texts)
+            else:
+                _draw_columns(column_view, raw, scan, stable, lab, left, top)
         for view, title in (
             (detection_view, "1 · Detecção"),
             (light_view, "2 · Luminosidade (L)"),
             (edge_view, "3 · Bordas (gradiente X)"),
-            (column_view, "4 · Topo por coluna"),
+            (column_view, "4 · Faixas de 3 px: verde vota" if strips is not None and scan is None else "4 · Topo por coluna"),
         ):
             index = (detection_view, light_view, edge_view, column_view).index(view)
             place(view.canvas, index * (PANEL_W + GAP), 0, title)
@@ -317,6 +336,41 @@ def _draw_edges(view: _View, raw: ContainerMeasurement) -> None:
         view.polyline([view.pt(x, y) for x, y in zip(edges[:, 0], rows)], CYAN, 2)
         view.polyline([view.pt(x, y) for x, y in zip(edges[:, 1], rows)], CYAN, 2)
     view.hline(raw.surface_y, YELLOW, thickness=1, dashed=True)
+
+
+STRIP_WINDOW = 60  # rows shown around the level in the strips panel: the spread is a few rows, not the whole pot
+
+
+def _draw_strips(view: _View, raw, reading, stable, texts: list[Text]) -> None:
+    """The edge each narrow strip found, left to right across the glass, zoomed on the surface: the ones
+    that voted (the stretch that gave the level) in green, the discarded ones in grey, the level in yellow."""
+    canvas = view.canvas
+    height, width = canvas.shape[:2]
+    values = [y for y in reading.ys if y is not None]
+    centre = reading.level if reading.level is not None else (float(np.median(values)) if values else raw.surface_y)
+    scale = height / STRIP_WINDOW
+
+    def row(y: float) -> int:
+        return int(round(height / 2 + (y - centre) * scale))
+
+    for offset in range(-STRIP_WINDOW // 2, STRIP_WINDOW // 2 + 1, 10):  # a faint ruler every 10 rows
+        cv2.line(canvas, (0, row(centre + offset)), (width - 1, row(centre + offset)), GRID, 1)
+    xs = [x for x, y in zip(reading.xs, reading.ys) if y is not None]
+    if xs:
+        low, high = min(xs), max(xs)
+        for x, y, kept in zip(reading.xs, reading.ys, reading.kept):
+            if y is None or not 0 <= row(y) < height:
+                continue
+            px = int(10 + (x - low) / max(1.0, high - low) * (width - 20))
+            cv2.circle(canvas, (px, row(y)), 2, GREEN if kept else MUTED, -1)
+    if reading.level is not None:
+        cv2.line(canvas, (0, row(reading.level)), (width - 1, row(reading.level)), YELLOW, 2)
+    if stable is not None and 0 <= row(stable.surface_y) < height:
+        for x in range(0, width, 10):
+            cv2.line(canvas, (x, row(stable.surface_y)), (min(x + 5, width - 1), row(stable.surface_y)), ORANGE, 1)
+    state = "sem acordo" if reading.level is None else f"nível {reading.level:.1f} · {reading.confidence:.0%} votam" + (" · domo" if reading.dome else "")
+    texts.append((3 * (PANEL_W + GAP) + 4, TITLE_H + 4, state, YELLOW, 10))
+    texts.append((3 * (PANEL_W + GAP) + 4, TITLE_H + 18, f"±{STRIP_WINDOW // 2} linhas · régua a cada 10 · passo {reading.step:.1f}", MUTED, 9))
 
 
 def _draw_columns(view: _View, raw, scan, stable, lab: np.ndarray, left: int, top: int) -> None:
@@ -493,6 +547,7 @@ def _diagnostics_worker(
                 profile=state.get("profile"), vertical_bounds=state.get("vertical_bounds"),
                 outline=state.get("outline"), face_quad=state.get("face_quad"),
                 ink_cut=state.get("ink_cut"),
+                surface_bands=state.get("surface_bands", ()), auto_strips=state.get("auto_strips", False),
             )
         except Exception:  # noqa: BLE001 - a diagnostics glitch must not kill the thread
             logging.exception("Falha ao montar o diagnóstico")

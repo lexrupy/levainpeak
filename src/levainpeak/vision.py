@@ -38,6 +38,7 @@ def measure_container(
     vertical_bounds: tuple[int, int] | None = None,
     outline: tuple[tuple[int, int], ...] | None = None,
     surface_bands: tuple[tuple[float, float], ...] = (),
+    auto_strips: bool = False,
 ) -> ContainerMeasurement | None:
     """Find a prominent vessel and estimate its filled-volume fraction.
 
@@ -47,6 +48,9 @@ def measure_container(
     ``surface_bands`` (at least ``MIN_SURFACE_BANDS`` of them, as fractions of the glass's inner width)
     limit the search for the levain surface to those narrow strips, where the light is steady, instead
     of the middle half of the pot; each strip finds the surface alone and the result is their median.
+
+    ``auto_strips`` reads the surface in many narrow strips across the glass that vote (see
+    ``surface_strips``); with ``surface_bands`` too, only the strips inside those bands vote.
 
     ``outline`` is the vessel's inner contour drawn by the user (polygon, frame
     coordinates). It replaces the search for the walls, top and bottom, so a
@@ -82,7 +86,7 @@ def measure_container(
                 else (vertical_bounds[0] - y0, vertical_bounds[1] - y0)
             ),
             outline=None if outline is None else tuple((x - x0, y - y0) for x, y in outline),
-            surface_bands=surface_bands,
+            surface_bands=surface_bands, auto_strips=auto_strips,
         )
         if local is None:
             return None
@@ -148,9 +152,11 @@ def measure_container(
     surface = None
     if outline_edges is not None:
         infrared = float(np.abs(frame[..., 0].astype(np.int16) - frame[..., 2]).mean()) < 3
-        surface = _find_surface_in_bands(
-            gray, left, right, inner_top, inner_bottom, infrared, surface_bands
-        ) or _find_surface_from_below(gray, left, right, inner_top, inner_bottom, infrared)
+        surface = (
+            (_find_surface_by_strips(gray, left, right, inner_top, inner_bottom, infrared, surface_bands) if auto_strips else None)
+            or _find_surface_in_bands(gray, left, right, inner_top, inner_bottom, infrared, surface_bands)
+            or _find_surface_from_below(gray, left, right, inner_top, inner_bottom, infrared)
+        )
     if surface is None and marker_confidence >= 0.2:
         surface = _find_surface_by_columns(frame, left, right, inner_top, inner_bottom, marker_y)
     if surface is None:
@@ -671,6 +677,19 @@ _INFRARED_CUT = 0.4
 _DAY_CUT = 0.65
 _FRONT_REACH = 0.12  # of the jar's width: how far below the cut the front edge of the surface may lie
 _FRONT_STEP = 0.18  # of the levain-to-glass difference: the rise that marks that front edge
+
+
+def _find_surface_by_strips(
+    gray: np.ndarray, left: int, right: int, top: int, bottom: int, infrared: bool,
+    bands: tuple[tuple[float, float], ...] = (),
+) -> tuple[int, float] | None:
+    """The surface the many narrow strips vote for (None when they do not agree enough)."""
+    from levainpeak.surface_strips import MIN_CONFIDENCE, read_strips
+
+    reading = read_strips(gray, left, right, top, bottom, infrared, bands=bands if len(bands) >= MIN_SURFACE_BANDS else ())
+    if reading.level is None or reading.confidence < MIN_CONFIDENCE:
+        return None
+    return int(round(reading.level)), float(min(1.0, reading.confidence + 0.3))
 
 
 MIN_SURFACE_BANDS = 2

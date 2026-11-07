@@ -59,6 +59,7 @@ class Settings:
     graph_show_forecast: bool = True  # the graph draws the doubling forecast over the measured curve
     surface_bands: tuple = ()  # strips (start, end) as fractions of the glass's width where the surface is read
     use_surface_bands: bool = False  # read the surface only in those strips (needs at least two)
+    auto_surface_strips: bool = False  # read the surface in many narrow strips across the glass that vote
     show_surface_bands: bool = False  # draw the strips on the main picture all the time (else only while drawing)
     ink_cut_infrared: float = DEFAULT_INK_CUT_INFRARED
     ink_cut_day: int = DEFAULT_INK_CUT_DAY
@@ -93,6 +94,7 @@ class Settings:
             graph_show_forecast=bool(self.graph_show_forecast),
             surface_bands=clean_bands(self.surface_bands),
             use_surface_bands=bool(self.use_surface_bands),
+            auto_surface_strips=bool(self.auto_surface_strips),
             show_surface_bands=bool(self.show_surface_bands),
             ink_cut_infrared=round(min(INK_CUT_INFRARED[1], max(INK_CUT_INFRARED[0], float(self.ink_cut_infrared))), 2),
             ink_cut_day=min(INK_CUT_DAY[1], max(INK_CUT_DAY[0], int(self.ink_cut_day))),
@@ -127,6 +129,7 @@ def load_settings(path: Path = SETTINGS_PATH) -> Settings:
             graph_show_forecast=bool(data.get("graph_show_forecast", defaults.graph_show_forecast)),
             surface_bands=clean_bands(data.get("surface_bands", defaults.surface_bands)),
             use_surface_bands=bool(data.get("use_surface_bands", defaults.use_surface_bands)),
+            auto_surface_strips=bool(data.get("auto_surface_strips", defaults.auto_surface_strips)),
             show_surface_bands=bool(data.get("show_surface_bands", defaults.show_surface_bands)),
             ink_cut_infrared=float(data.get("ink_cut_infrared", defaults.ink_cut_infrared)),
             ink_cut_day=int(data.get("ink_cut_day", defaults.ink_cut_day)),

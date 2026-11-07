@@ -103,3 +103,14 @@ def test_dragging_the_picture_moves_the_diagnostics_window():
         window.close()
     finally:
         root.destroy()
+
+
+def test_the_fourth_panel_shows_the_strips_when_the_contour_is_drawn():
+    from levainpeak.debug_view import GREEN, PANEL_W
+
+    frame = np.full((1080, 1920, 3), 60, np.uint8)
+    frame[640:800, 700:1300] = 200  # levain, its surface at row 640
+    outline = ((700, 300), (1300, 300), (1280, 800), (720, 800))
+    mosaic = build_debug_mosaic(frame, (650, 250, 1350, 850), None, outline=outline, auto_strips=True)
+    panel = mosaic[22:22 + 380, 3 * (PANEL_W + 8):3 * (PANEL_W + 8) + PANEL_W]  # panel 4, under its title bar
+    assert (np.all(panel == GREEN, axis=2)).sum() > 20  # the voting strips' dots

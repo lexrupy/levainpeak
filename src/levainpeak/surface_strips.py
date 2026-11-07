@@ -18,6 +18,7 @@ STRIP_WIDTH = 3  # px
 STEP_FRACTION = 0.008  # of the glass's height: a jump between neighbours bigger than this is a step
 MIN_SUPPORT = 0.25  # of the strips: a stretch needs this share of them to be the reference
 WALL_MARGIN = 0.05  # of the width, left out on each side: the wall refracts and the foam climbs it
+MIN_CONFIDENCE = 0.25  # below this share of agreeing strips the reading is not used
 DOME_RISE = 2.0  # px the middle must stand above the sides for the arch to count as a dome
 
 
@@ -36,11 +37,15 @@ def read_strips(
     gray: np.ndarray, left: int, right: int, top: int, bottom: int, infrared: bool = False,
     *, strip_width: int = STRIP_WIDTH, step_fraction: float = STEP_FRACTION,
     min_support: float = MIN_SUPPORT, wall_margin: float = WALL_MARGIN,
+    bands: tuple[tuple[float, float], ...] = (),
 ) -> StripReading:
     width = right - left
     start, end = left + int(round(wall_margin * width)), right - int(round(wall_margin * width))
     xs, ys = [], []
     for x0 in range(start, end - strip_width + 1, strip_width):
+        fraction = (x0 + strip_width / 2 - left) / width
+        if bands and not any(a <= fraction <= b for a, b in bands):
+            continue  # outside the strips the user drew: left out of the vote
         found = _surface_in_columns(gray, x0, x0 + strip_width, top, bottom, infrared, width, fine=True)
         xs.append(x0 + strip_width / 2)
         ys.append(None if found is None else found[0])
@@ -49,7 +54,7 @@ def read_strips(
     valid = [i for i, y in enumerate(ys) if y is not None]
     if len(valid) < 8:
         return empty
-    # Stretches of neighbours with no step between them.
+    # Stretches of neighbours with no step between them (a run of strips that found nothing ends one).
     stretches, current = [], [valid[0]]
     for before, index in zip(valid, valid[1:]):
         if abs(ys[index] - ys[before]) > step or index - before > 3:
