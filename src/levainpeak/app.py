@@ -109,6 +109,8 @@ class LevainPeakApp:
         self._roi_target = "pot"
         self._roi_drag_start: tuple[int, int] | None = None
         self._roi_preview_item: int | None = None
+        self._band_drag: tuple[int, int, tuple[float, float]] | None = None  # (band, start x, its fractions) while one is moved
+        self._band_override: tuple | None = None  # the bands as shown while one is being moved
         self._manual_pot_roi: tuple[int, int, int, int] | None = None
         self._pot_outline: tuple[tuple[int, int], ...] | None = None  # pot contour drawn by the user
         self._temperature_quad: tuple[tuple[int, int], ...] | None = None  # LCD face corners drawn by the user
@@ -438,7 +440,7 @@ class LevainPeakApp:
 
     def _draw_bands(self, shown):
         """The surface strips over the picture: solid when the reading uses them, faint while they only wait."""
-        bands = self._settings.surface_bands
+        bands = self._band_override or self._settings.surface_bands
         if not bands or not self._pot_outline:
             return shown
         span = inner_span(tuple(tuple(point) for point in self._pot_outline), (shown.shape[1], shown.shape[0]))
@@ -875,6 +877,49 @@ class LevainPeakApp:
             logging.exception("Falha ao salvar as faixas")
         self._redraw_current_frame()
 
+    def _band_span(self) -> tuple[int, int, int, int] | None:
+        if not self._pot_outline or self._source_frame_size is None:
+            return None
+        return inner_span(tuple(tuple(point) for point in self._pot_outline), self._source_frame_size)
+
+    def _band_at(self, x: int) -> int | None:
+        """The drawn band under picture column ``x`` (a few pixels of reach), or None."""
+        span = self._band_span()
+        if span is None:
+            return None
+        width = span[1] - span[0]
+        reach = max(3, round(8 / self._zoom))
+        for index, (start, end) in enumerate(self._settings.surface_bands):
+            if span[0] + start * width - reach <= x <= span[0] + end * width + reach:
+                return index
+        return None
+
+    def _moved_bands(self, x: int) -> tuple:
+        """The bands with the dragged one shifted by the mouse's travel, kept inside the glass."""
+        index, start_x, (start, end) = self._band_drag
+        span = self._band_span()
+        shift = 0.0 if span is None else (x - start_x) / (span[1] - span[0])
+        shift = min(1.0 - end, max(-start, shift))
+        bands = list(self._settings.surface_bands)
+        bands[index] = (start + shift, end + shift)
+        return tuple(bands)
+
+    def _finish_band_move(self, x: int) -> None:
+        """Released after dragging a band: a short click removes it, a real drag leaves it where it is."""
+        index, start_x, _ = self._band_drag
+        moved = self._moved_bands(x)
+        self._band_drag = self._band_override = None
+        if abs(x - start_x) < max(3, round(4 / self._zoom)):
+            bands = tuple(b for i, b in enumerate(self._settings.surface_bands) if i != index)
+            self._set_bands(bands)
+            self._set_message(
+                f"Faixa apagada ({len(bands)} restante(s))."
+                + (f" Com menos de {MIN_SURFACE_BANDS} a leitura volta a olhar o pote todo." if len(bands) < MIN_SURFACE_BANDS else "")
+            )
+            return
+        self._set_bands(moved)
+        self._set_message("Faixa movida.")
+
     def _add_band(self, left: int, right: int) -> None:
         span = None if not self._pot_outline or self._source_frame_size is None else inner_span(
             tuple(tuple(point) for point in self._pot_outline), self._source_frame_size
@@ -934,7 +979,8 @@ class LevainPeakApp:
         if target == "bands":
             self._set_message(
                 f"Arraste na horizontal, sobre o pote, uma faixa estreita onde a luz é estável "
-                f"({MIN_SURFACE_BANDS} a {MAX_SURFACE_BANDS} faixas). Esc cancela."
+                f"({MIN_SURFACE_BANDS} a {MAX_SURFACE_BANDS}). Clique numa faixa para apagá-la, "
+                f"arraste uma faixa para movê-la. Esc sai."
             )
             return
         target_text = "pote" if target == "pot" else "visor do termômetro"
@@ -1188,6 +1234,7 @@ class LevainPeakApp:
         self._cancel_outline_mode()
         self._roi_mode = False
         self._roi_drag_start = None
+        self._band_drag = self._band_override = None
         if hasattr(self, "draw_pot_button"):
             self.draw_pot_button.configure(text="Pote")
         if hasattr(self, "draw_thermometer_button"):
@@ -1212,6 +1259,11 @@ class LevainPeakApp:
         if point is None:
             return
         self._roi_drag_start = point
+        self._band_drag = None
+        if self._roi_target == "bands":
+            hit = self._band_at(point[0])
+            if hit is not None:
+                self._band_drag = (hit, point[0], self._settings.surface_bands[hit])
 
     def _toggle_reposition(self, event: tk.Event | None = None) -> None:
         """"r": the drawn pot follows the mouse and the wheel resizes it; click to place it, Esc to give up."""
@@ -1324,6 +1376,10 @@ class LevainPeakApp:
         point = self._source_point(event, clamp=True)
         if point is None:
             return
+        if self._band_drag is not None:  # a band is being moved: it follows the mouse, no new box
+            self._band_override = self._moved_bands(point[0])
+            self._redraw_current_frame()
+            return
         start_x, start_y = self._roi_drag_start
         end_x, end_y = point
         coords = (*self._canvas_point(min(start_x, end_x), min(start_y, end_y)),
@@ -1357,6 +1413,9 @@ class LevainPeakApp:
         if self._roi_target == "bands":
             if self._roi_preview_item is not None:
                 self.video.itemconfigure(self._roi_preview_item, state="hidden")  # the drag's dashed box is done
+            if self._band_drag is not None:
+                self._finish_band_move(point[0])
+                return
             self._add_band(left, right)
             if len(self._settings.surface_bands) >= MAX_SURFACE_BANDS:
                 self._cancel_roi_mode()  # all of them are drawn

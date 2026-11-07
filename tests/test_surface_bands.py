@@ -106,3 +106,39 @@ def test_a_thin_band_of_a_few_pixels_is_taken_and_a_sliver_is_not():
     sliver = _app()
     LevainPeakApp._add_band(sliver, 300, 302)
     assert not sliver.saved and "estreita" in sliver.messages[-1]
+
+
+def _app_with_bands(bands, zoom=1.0):
+    app = _app(bands=bands)
+    app._zoom = zoom
+    app._band_drag = None
+    app._band_override = None
+    app._band_span = lambda: (120, 480, 100, 400)  # the glass is 360 px wide
+    app._band_at = lambda x: __import__("levainpeak.app", fromlist=["x"]).LevainPeakApp._band_at(app, x)
+    app._moved_bands = lambda x: __import__("levainpeak.app", fromlist=["x"]).LevainPeakApp._moved_bands(app, x)
+    return app
+
+
+def test_the_band_under_the_mouse_is_found_and_a_miss_finds_none():
+    from levainpeak.app import LevainPeakApp
+
+    app = _app_with_bands(((0.25, 0.30), (0.70, 0.75)))
+    assert LevainPeakApp._band_at(app, 120 + int(0.27 * 360)) == 0
+    assert LevainPeakApp._band_at(app, 120 + int(0.72 * 360)) == 1
+    assert LevainPeakApp._band_at(app, 120 + int(0.50 * 360)) is None
+
+
+def test_a_dragged_band_moves_inside_the_glass_and_a_click_removes_it():
+    from levainpeak.app import LevainPeakApp
+
+    app = _app_with_bands(((0.25, 0.30), (0.70, 0.75)))
+    app._band_drag = (0, 200, (0.25, 0.30))
+    (start, end), _other = LevainPeakApp._moved_bands(app, 200 + 36)  # 36 px = 10% of the glass
+    assert abs(start - 0.35) < 1e-9 and abs(end - 0.40) < 1e-9
+    (start, end), _ = LevainPeakApp._moved_bands(app, 200 - 1000)  # far past the left wall
+    assert start == 0.0 and abs(end - 0.05) < 1e-9
+    LevainPeakApp._finish_band_move(app, 201)  # a click, hardly any travel
+    assert app.saved[-1] == ((0.70, 0.75),)
+    app._band_drag = (0, 200, (0.25, 0.30))
+    LevainPeakApp._finish_band_move(app, 236)
+    assert abs(app.saved[-1][0][0] - 0.35) < 1e-9
