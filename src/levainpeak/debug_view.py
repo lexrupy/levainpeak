@@ -180,12 +180,17 @@ def build_debug_mosaic(
         scan = column_scan(frame, raw.left, raw.right, raw.top, raw.bottom, raw.marker_y)
 
     strips = strip_context = None
-    if frame is not None and outline is not None:
+    if frame is not None and outline is not None and (raw is None or getattr(raw, "method", "") in ("automático", "faixas")):
         span = inner_span(tuple(tuple(point) for point in outline), (frame.shape[1], frame.shape[0]))
         if span is not None:
             infrared = float(np.abs(frame[..., 0].astype(np.int16) - frame[..., 2]).mean()) < 3
             gray_full = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            drawn = surface_bands if len(surface_bands) >= 2 else ()
+            # Panel 4 shows the way the level was really read: strips for "automático" and "faixas"
+            # (only inside the drawn bands for the latter), the old row profile for "central".
+            used = getattr(raw, "method", "") if raw is not None else ""
+            drawn = surface_bands if len(surface_bands) >= 2 and used != "central" else ()
+            if used == "faixas" and len(surface_bands) >= 2:
+                drawn = surface_bands
             skyline = read_strips(gray_full, *span[:2], span[2], span[3], infrared)  # every strip, for the chart
             strips = read_strips(gray_full, *span[:2], span[2], span[3], infrared, bands=drawn) if drawn else skyline
             strip_context = (skyline, drawn, span[:2])
@@ -219,7 +224,7 @@ def build_debug_mosaic(
             (detection_view, "1 · Detecção"),
             (light_view, "2 · Luminosidade (L)"),
             (edge_view, "3 · Bordas (gradiente X)"),
-            (column_view, "4 · Faixas de 3 px: verde vota" if strips is not None and scan is None else "4 · Topo por coluna"),
+            (column_view, _panel4_title(raw, strips is not None and scan is None)),
         ):
             index = (detection_view, light_view, edge_view, column_view).index(view)
             place(view.canvas, index * (PANEL_W + GAP), 0, title)
@@ -340,6 +345,14 @@ def _draw_edges(view: _View, raw: ContainerMeasurement) -> None:
 
 
 STRIP_WINDOW = 60  # rows shown around the level in the strips panel: the spread is a few rows, not the whole pot
+
+
+def _panel4_title(raw, strips_shown: bool) -> str:
+    if not strips_shown:
+        return "4 · Topo por coluna (leitura central)" if getattr(raw, "method", "") == "central" else "4 · Topo por coluna"
+    if getattr(raw, "method", "") == "faixas":
+        return "4 · Faixas desenhadas (mediana)"
+    return "4 · Faixas de 3 px: verde vota"
 
 
 def _draw_strips(view: _View, raw, voting, context, stable, texts: list[Text]) -> None:

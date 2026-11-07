@@ -22,6 +22,9 @@ class ContainerMeasurement:
     growth_factor: float | None = None
     marker_manual: bool = False
     empty: bool = False  # the outline is known but no levain was found in it
+    # What gave the surface: "automático" (3 px strips), "faixas" (the drawn bands), "central" (middle of the
+    # glass, the original way), or "" when it was read some other way (no outline).
+    method: str = ""
     volume_below_profile: tuple[float, ...] = field(default=(), repr=False, compare=False)
     # (left_x, right_x) of the inner wall for each row from top to bottom.
     edge_profile: tuple[tuple[int, int], ...] = field(default=(), repr=False, compare=False)
@@ -150,13 +153,21 @@ def measure_container(
             frame, left, right, inner_top, inner_bottom
         )
     surface = None
+    method = ""
     if outline_edges is not None:
         infrared = float(np.abs(frame[..., 0].astype(np.int16) - frame[..., 2]).mean()) < 3
         surface = (
-            (_find_surface_by_strips(gray, left, right, inner_top, inner_bottom, infrared, surface_bands) if auto_strips else None)
-            or _find_surface_in_bands(gray, left, right, inner_top, inner_bottom, infrared, surface_bands)
-            or _find_surface_from_below(gray, left, right, inner_top, inner_bottom, infrared)
+            _find_surface_by_strips(gray, left, right, inner_top, inner_bottom, infrared, surface_bands) if auto_strips else None
         )
+        method = "automático"
+        if surface is None:
+            surface = _find_surface_in_bands(gray, left, right, inner_top, inner_bottom, infrared, surface_bands)
+            method = "faixas"
+        if surface is None:
+            surface = _find_surface_from_below(gray, left, right, inner_top, inner_bottom, infrared)
+            method = "central"
+        if surface is None:
+            method = ""
     if surface is None and marker_confidence >= 0.2:
         surface = _find_surface_by_columns(frame, left, right, inner_top, inner_bottom, marker_y)
     if surface is None:
@@ -231,6 +242,7 @@ def measure_container(
         edge_profile=tuple(
             (int(a), int(b)) for a, b in zip(left_edges, right_edges, strict=True)
         ),
+        method=method,
     )
     return set_initial_marker(measurement, marker_y, manual=False) if marker_y is not None else measurement
 

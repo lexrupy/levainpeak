@@ -114,3 +114,19 @@ def test_the_fourth_panel_shows_the_strips_when_the_contour_is_drawn():
     mosaic = build_debug_mosaic(frame, (650, 250, 1350, 850), None, outline=outline, auto_strips=True)
     panel = mosaic[22:22 + 380, 3 * (PANEL_W + 8):3 * (PANEL_W + 8) + PANEL_W]  # panel 4, under its title bar
     assert (np.all(panel == GREEN, axis=2)).sum() > 20  # the voting strips' dots
+
+
+def test_the_fourth_panel_follows_the_method_that_measured():
+    from levainpeak.debug_view import GREEN, PANEL_W
+
+    frame = np.full((1080, 1920, 3), 60, np.uint8)
+    frame[640:800, 700:1300] = 200
+    outline = ((700, 300), (1300, 300), (1280, 800), (720, 800))
+    def green(**options):
+        mosaic = build_debug_mosaic(frame, (650, 250, 1350, 850), None, outline=outline, **options)
+        panel = mosaic[22:22 + 380, 3 * (PANEL_W + 8):3 * (PANEL_W + 8) + PANEL_W]
+        return (np.all(panel == GREEN, axis=2)).sum()
+
+    assert green(auto_strips=True) > 20  # automatic strips measured: they are shown
+    assert green(auto_strips=False) == 0  # the old central reading measured: the old panel
+    assert green(auto_strips=False, surface_bands=((0.2, 0.3), (0.45, 0.55))) > 20  # drawn bands measured
