@@ -469,6 +469,24 @@ class SessionLog:
             pass
         return None
 
+    def peak_at(self) -> datetime | None:
+        """When the session's growth factor was highest (first time), or None."""
+        if self.path is None:
+            return None
+        best, when = 0.0, None
+        try:
+            with self.path.open(newline="", encoding="utf-8") as handle:
+                for row in csv.DictReader(handle):
+                    try:
+                        value = float(row.get("growth_factor") or 0)
+                        if value > best + 1e-9:
+                            best, when = value, datetime.fromisoformat(row["timestamp"])
+                    except (ValueError, KeyError):
+                        continue
+        except OSError:
+            pass
+        return when
+
     def reached_before_monitoring(self, factor: float) -> bool:
         """True when the very first reading of the session was already at ``factor`` or more: it got there
         before the monitoring began, so the time it is first seen at is not when it happened."""

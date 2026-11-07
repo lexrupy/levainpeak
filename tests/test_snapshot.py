@@ -215,8 +215,8 @@ def test_a_doubling_seen_at_the_first_reading_is_said_to_have_happened_before_th
     assert run(2.04) is True  # already doubled when the session opened
     assert run(1.5) is False  # doubled while it was watched
     moment = datetime(2026, 11, 3, 21, 32).astimezone()
-    assert "quando o monitoramento começou" in LevainPeakApp._reached_text(moment, True)
-    assert LevainPeakApp._reached_text(moment, False).startswith("O dobro do volume inicial já foi alcançado às 21:32")
+    assert "quando o monitoramento começou" in LevainPeakApp._reached_text(_fake_app(), moment, True)
+    assert LevainPeakApp._reached_text(_fake_app(), moment, False).startswith("O dobro do volume inicial já foi alcançado às 21:32")
 
 
 def test_the_session_file_records_when_it_ended_and_forgets_it_when_resumed(tmp_path):
@@ -239,3 +239,23 @@ def test_the_session_file_records_when_it_ended_and_forgets_it_when_resumed(tmp_
     assert datetime.fromisoformat(json.loads(meta.read_text(encoding="utf-8"))["ended"])
     SessionLog(tmp_path).resume(path)
     assert "ended" not in json.loads(meta.read_text(encoding="utf-8"))
+
+
+def _fake_app(mix=None, phase="Crescendo", peak=None):
+    from types import SimpleNamespace
+    from levainpeak.app import LevainPeakApp
+    app = SimpleNamespace(_mix_time=mix, _phase=phase, _session_log=SimpleNamespace(peak_at=lambda: peak))
+    app._since_mix_text = lambda m: LevainPeakApp._since_mix_text(app, m)
+    app._peak_line = lambda: LevainPeakApp._peak_line(app)
+    return app
+
+
+def test_reached_text_shows_time_since_mix_and_peak():
+    from datetime import datetime, timedelta
+    from levainpeak.app import LevainPeakApp
+    mix = datetime(2026, 11, 6, 22, 53).astimezone()
+    reached = mix + timedelta(hours=2, minutes=47)
+    peak = mix + timedelta(hours=4, minutes=5)
+    text = LevainPeakApp._reached_text(_fake_app(mix, "Em pico", peak), reached, False)
+    assert "2h47 após mistura" in text and "Pico às" in text and "4h05 após mistura" in text
+    assert "Pico" not in LevainPeakApp._reached_text(_fake_app(mix, "Crescendo", peak), reached, False)

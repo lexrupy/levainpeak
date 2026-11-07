@@ -3047,8 +3047,27 @@ class LevainPeakApp:
         self._forecast_prediction = predicted_at
         label.configure(text=self._forecast_text(predicted_at, basis))
 
-    @staticmethod
-    def _reached_text(reached: datetime, before_monitoring: bool) -> str:
+    def _since_mix_text(self, moment: datetime) -> str:
+        """'2h47 após mistura' for a moment, or '' when the mix time is unknown."""
+        if self._mix_time is None:
+            return ""
+        minutes = max(0, int((moment - self._mix_time).total_seconds() // 60))
+        days, rest = divmod(minutes, 24 * 60)
+        hours, mins = divmod(rest, 60)
+        return f"{days}d {hours}h após mistura" if days else f"{hours}h{mins:02d} após mistura"
+
+    def _peak_line(self) -> str:
+        """The peak's time and how long after the mix, once the levain is at or past it."""
+        if self._phase not in (PhaseTracker.PEAK, PhaseTracker.FALL_CHECK, PhaseTracker.FALLING):
+            return ""
+        peak = self._session_log.peak_at()
+        if peak is None:
+            return ""
+        local = peak.astimezone()
+        since = self._since_mix_text(peak)
+        return f"\nPico às {local:%H:%M}" + (f" · {since}" if since else "")
+
+    def _reached_text(self, reached: datetime, before_monitoring: bool) -> str:
         """When the doubling happened; if it was already there at the first reading, only that is known."""
         local = reached.astimezone()
         if before_monitoring:
@@ -3056,7 +3075,9 @@ class LevainPeakApp:
                 "O dobro do volume inicial já tinha sido alcançado quando o monitoramento começou "
                 f"({local:%H:%M} de {local:%d/%m})"
             )
-        return f"O dobro do volume inicial já foi alcançado às {local:%H:%M} de {local:%d/%m}"
+        since = self._since_mix_text(reached)
+        return (f"O dobro do volume inicial já foi alcançado às {local:%H:%M} de {local:%d/%m}"
+                + (f"\n{since}" if since else "") + self._peak_line())
 
     def _forecast_text(self, predicted_at: datetime, basis: str, note: str = "") -> str:
         mix_elapsed = predicted_at - (self._mix_time or predicted_at)
