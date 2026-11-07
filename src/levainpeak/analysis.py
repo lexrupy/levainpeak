@@ -81,6 +81,7 @@ class ContainerAnalyzer:
         self._lamp = LampWatch()
         self._recent: deque = deque()  # (time, stable measurement) of the last two minutes
         self.lamp_held = False
+        self.surface_bands: tuple[tuple[float, float], ...] = ()  # strips (fractions of the inner width) the surface is read in
         self._frozen: ContainerMeasurement | None = None
         self._reference_generation = 0
         self._last_alignment = 0.0
@@ -163,6 +164,16 @@ class ContainerAnalyzer:
     def volume_shift(self) -> float:
         """How far the series is moved from the raw reading (join across contours and profiles)."""
         return self.volume_offset + self._join_offset
+
+    def set_surface_bands(self, bands: tuple) -> None:
+        """Read the surface in these strips (empty: the whole pot). The new reading sits a little off the
+        old one, so the series is joined at the level it had instead of showing a step."""
+        if tuple(bands) == self.surface_bands:
+            return
+        if self._last_volume is not None:
+            self.anchor_volume = self._last_volume
+            self.rejoin()
+        self.surface_bands = tuple(bands)
 
     def rejoin(self) -> None:
         """Join the series again at the next reading, to ``anchor_volume`` (after a pause)."""
@@ -354,7 +365,7 @@ class ContainerAnalyzer:
 
     def region_key(self) -> tuple:
         """The regions as they are set now (pot area, contour, thermometer area, face corners)."""
-        return (self.roi, self.outline, self.temperature_roi, self.temperature_quad)
+        return (self.roi, self.outline, self.temperature_roi, self.temperature_quad, self.surface_bands)
 
     def latest_result(
         self,
@@ -427,7 +438,7 @@ class ContainerAnalyzer:
             try:
                 measurement = measure_container(
                     frame, roi=roi, vertical_bounds=self.effective_bounds(),
-                    outline=outline,
+                    outline=outline, surface_bands=key[4],
                 )
             except cv2.error:
                 measurement = None

@@ -45,8 +45,8 @@ from levainpeak.stream import RtspStream
 from levainpeak.timelapse import TimelapseWindow, recent_sessions
 
 FINE_TURN_DEGREES = 15.0  # the slider's reach either way; whole quarter turns come from the menu
-from levainpeak.vision import (ContainerMeasurement, draw_measurement,
-                               set_initial_marker,
+from levainpeak.vision import (MAX_SURFACE_BANDS, MIN_SURFACE_BANDS, ContainerMeasurement,
+                               draw_measurement, inner_span, set_initial_marker,
                                set_initial_volume_reference)
 
 GRAPH_BORDER = 10
@@ -173,6 +173,7 @@ class LevainPeakApp:
             self._analyzer.ink_cut_infrared = self._settings.ink_cut_infrared
             self._analyzer.ink_cut_day = self._settings.ink_cut_day
             self._analyzer.use_mark = self._settings.mark_alignment
+            self._analyzer.surface_bands = self._active_bands()
             self._analyzer.lamp_hold_seconds = self._settings.lamp_minutes * 60.0
             self._analyzer.start()
             self._set_message("Iniciando conexão com a câmera…")
@@ -354,6 +355,14 @@ class LevainPeakApp:
             regions, "Automático", self._use_automatic_detection, width=10,
             state="disabled",
         )
+        self.bands_button = ttk.Menubutton(regions, text="Faixas ▾", width=9, direction="below")
+        bands_menu = tk.Menu(self.bands_button, tearoff=False)
+        bands_menu.add_command(label="Desenhar faixa", command=lambda: self._toggle_roi_mode("bands"))
+        bands_menu.add_command(label="Apagar faixas", command=self._clear_bands)
+        self._bands_var = tk.BooleanVar(value=self._settings.use_surface_bands)
+        bands_menu.add_checkbutton(label="Ler só as faixas", variable=self._bands_var, command=self._toggle_bands)
+        self.bands_button.configure(menu=bands_menu)
+        self.bands_button.pack(side="left", padx=(0, 6))
         self.marker_button = button(
             level, "Marcar início", self._toggle_marker_mode, width=13
         )
@@ -411,6 +420,7 @@ class LevainPeakApp:
             frame, measurement, detail=self._show_detail, faint_box=self._pot_outline is not None,
             outline=tuple(tuple(point) for point in self._pot_outline) if self._pot_outline else None,
         )
+        shown = self._draw_bands(shown)
         seen = self._analyzer.mark_seen if self._analyzer is not None else None
         if seen is not None:  # the "+" or "X" the app is following, in red
             x, y, size = (int(round(v)) for v in seen)
@@ -425,6 +435,22 @@ class LevainPeakApp:
                 cv2.circle(layer, (x, y), arm, red, 3, cv2.LINE_AA)
             shown = cv2.addWeighted(layer, 0.4, shown, 0.6, 0)  # translucent: the mark below shows through
         return shown
+
+    def _draw_bands(self, shown):
+        """The surface strips over the picture: solid when the reading uses them, faint while they only wait."""
+        bands = self._settings.surface_bands
+        if not bands or not self._pot_outline:
+            return shown
+        span = inner_span(tuple(tuple(point) for point in self._pot_outline), (shown.shape[1], shown.shape[0]))
+        if span is None:
+            return shown
+        left, right, top, bottom = span
+        layer = shown.copy()
+        for start, end in bands:
+            x0, x1 = left + round(start * (right - left)), left + round(end * (right - left))
+            cv2.rectangle(layer, (x0, top), (x1, bottom), (230, 200, 40), -1)
+        alpha = 0.28 if self._active_bands() else 0.12
+        return cv2.addWeighted(layer, alpha, shown, 1 - alpha, 0)
 
     def _toggle_detail(self, event: tk.Event | None = None) -> None:
         if event is not None and isinstance(event.widget, (tk.Entry, ttk.Entry, ttk.Spinbox)):
@@ -832,6 +858,62 @@ class LevainPeakApp:
         self._hide_marker_preview()
         self._cancel_roi_mode()
 
+    def _active_bands(self) -> tuple:
+        """The strips the analyzer reads: the drawn ones, when the option is on and there are enough."""
+        settings = self._settings
+        return settings.surface_bands if settings.use_surface_bands and len(settings.surface_bands) >= MIN_SURFACE_BANDS else ()
+
+    def _set_bands(self, bands: tuple, use: bool | None = None) -> None:
+        use = self._settings.use_surface_bands if use is None else use
+        self._settings = replace(self._settings, surface_bands=bands, use_surface_bands=use).clamped()
+        self._bands_var.set(self._settings.use_surface_bands)
+        if self._analyzer is not None:
+            self._analyzer.set_surface_bands(self._active_bands())
+        try:
+            save_settings(self._settings)
+        except OSError:
+            logging.exception("Falha ao salvar as faixas")
+        self._redraw_current_frame()
+
+    def _add_band(self, left: int, right: int) -> None:
+        span = None if not self._pot_outline or self._source_frame_size is None else inner_span(
+            tuple(tuple(point) for point in self._pot_outline), self._source_frame_size
+        )
+        if span is None:
+            self._set_message("Desenhe o contorno do pote antes de marcar as faixas.")
+            return
+        bands = self._settings.surface_bands
+        if len(bands) >= MAX_SURFACE_BANDS:
+            self._set_message(f"No máximo {MAX_SURFACE_BANDS} faixas: apague as faixas para refazer.")
+            return
+        width = span[1] - span[0]
+        start, end = (left - span[0]) / width, (right - span[0]) / width
+        if min(end, 1.0) - max(start, 0.0) < 0.02:
+            self._set_message("A faixa ficou fora do pote ou estreita demais; arraste dentro do vidro.")
+            return
+        self._set_bands((*bands, (start, end)))
+        count = len(self._settings.surface_bands)
+        self._set_message(
+            f"{count} faixa(s). " + (
+                "Marque pelo menos mais uma." if count < MIN_SURFACE_BANDS
+                else 'Ative "Ler só as faixas" no menu para usá-las.' if not self._settings.use_surface_bands
+                else "A leitura usa só as faixas."
+            )
+        )
+
+    def _clear_bands(self) -> None:
+        self._set_bands((), use=False)
+        self._set_message("Faixas apagadas: a leitura volta a olhar o pote todo.")
+
+    def _toggle_bands(self) -> None:
+        use = bool(self._bands_var.get())
+        if use and len(self._settings.surface_bands) < MIN_SURFACE_BANDS:
+            self._set_bands(self._settings.surface_bands, use=False)
+            self._set_message(f"Desenhe pelo menos {MIN_SURFACE_BANDS} faixas antes de ligar a leitura por faixas.")
+            return
+        self._set_bands(self._settings.surface_bands, use=use)
+        self._set_message("A leitura usa só as faixas." if use else "A leitura olha o pote todo.")
+
     def _toggle_roi_mode(self, target: str) -> None:
         self._cancel_outline_mode()
         if self._roi_mode and self._roi_target == target:
@@ -849,6 +931,12 @@ class LevainPeakApp:
             text="Cancelar" if target == "thermometer" else "Termômetro"
         )
         self.video.configure(cursor="crosshair")
+        if target == "bands":
+            self._set_message(
+                f"Arraste na horizontal, sobre o pote, uma faixa estreita onde a luz é estável "
+                f"({MIN_SURFACE_BANDS} a {MAX_SURFACE_BANDS} faixas). Esc cancela."
+            )
+            return
         target_text = "pote" if target == "pot" else "visor do termômetro"
         self._set_message(f"Arraste uma área um pouco maior que o {target_text}.")
 
@@ -1266,6 +1354,9 @@ class LevainPeakApp:
             return
         left, right = sorted((start[0], point[0]))
         top, bottom = sorted((start[1], point[1]))
+        if self._roi_target == "bands":
+            self._add_band(left, right)
+            return
         minimum_size = (80, 120) if self._roi_target == "pot" else (40, 20)
         if right - left < minimum_size[0] or bottom - top < minimum_size[1]:
             self._set_message("A área ficou pequena; desenhe um retângulo maior sobre o visor ou o pote.")

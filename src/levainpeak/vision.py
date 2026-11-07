@@ -37,11 +37,16 @@ def measure_container(
     support_weight: float = 220.0,
     vertical_bounds: tuple[int, int] | None = None,
     outline: tuple[tuple[int, int], ...] | None = None,
+    surface_bands: tuple[tuple[float, float], ...] = (),
 ) -> ContainerMeasurement | None:
     """Find a prominent vessel and estimate its filled-volume fraction.
 
     ``vertical_bounds`` (top, bottom in frame coordinates) replaces the
     detection of the vessel's top and bottom, which relies on daylight shading.
+
+    ``surface_bands`` (at least ``MIN_SURFACE_BANDS`` of them, as fractions of the glass's inner width)
+    limit the search for the levain surface to those narrow strips, where the light is steady, instead
+    of the middle half of the pot; each strip finds the surface alone and the result is their median.
 
     ``outline`` is the vessel's inner contour drawn by the user (polygon, frame
     coordinates). It replaces the search for the walls, top and bottom, so a
@@ -77,6 +82,7 @@ def measure_container(
                 else (vertical_bounds[0] - y0, vertical_bounds[1] - y0)
             ),
             outline=None if outline is None else tuple((x - x0, y - y0) for x, y in outline),
+            surface_bands=surface_bands,
         )
         if local is None:
             return None
@@ -142,7 +148,9 @@ def measure_container(
     surface = None
     if outline_edges is not None:
         infrared = float(np.abs(frame[..., 0].astype(np.int16) - frame[..., 2]).mean()) < 3
-        surface = _find_surface_from_below(gray, left, right, inner_top, inner_bottom, infrared)
+        surface = _find_surface_in_bands(
+            gray, left, right, inner_top, inner_bottom, infrared, surface_bands
+        ) or _find_surface_from_below(gray, left, right, inner_top, inner_bottom, infrared)
     if surface is None and marker_confidence >= 0.2:
         surface = _find_surface_by_columns(frame, left, right, inner_top, inner_bottom, marker_y)
     if surface is None:
@@ -342,6 +350,19 @@ def _edges_at(measurement: ContainerMeasurement, y: int) -> tuple[int, int]:
 
 
 MAX_WALL_SLOPE = 0.05
+
+
+def inner_span(
+    outline: tuple[tuple[int, int], ...], frame_size: tuple[int, int]
+) -> tuple[int, int, int, int] | None:
+    """(left, right, top, bottom) of the glass the surface strips are fractions of: the columns every row
+    of the drawn contour has inside it, and the rows the contour spans."""
+    edges = _outline_edges(outline, frame_size[0], frame_size[1])
+    if edges is None:
+        return None
+    top, outer_left, outer_right = edges
+    left, right = int(np.ceil(outer_left.max())), int(np.floor(outer_right.min()))
+    return (left, right, top, top + len(outer_left)) if right - left >= 30 else None
 
 
 def _outline_edges(
@@ -652,6 +673,37 @@ _FRONT_REACH = 0.12  # of the jar's width: how far below the cut the front edge 
 _FRONT_STEP = 0.18  # of the levain-to-glass difference: the rise that marks that front edge
 
 
+MIN_SURFACE_BANDS = 2
+MAX_SURFACE_BANDS = 4
+_BAND_AGREEMENT = 6  # rows: bands this close to the median count as agreeing
+
+
+def _find_surface_in_bands(
+    gray: np.ndarray, left: int, right: int, top: int, bottom: int, infrared: bool,
+    bands: tuple[tuple[float, float], ...],
+) -> tuple[int, float] | None:
+    """The surface read only inside the user's narrow strips: the median of what each strip finds.
+
+    The confidence is the share of strips that agree with that median. None when fewer than
+    ``MIN_SURFACE_BANDS`` strips find a surface, so the caller reads the whole width instead.
+    """
+    if len(bands) < MIN_SURFACE_BANDS:
+        return None
+    width = right - left
+    found = []
+    for start, end in bands[:MAX_SURFACE_BANDS]:
+        x0, x1 = left + int(round(start * width)), left + int(round(end * width))
+        if x1 - x0 < 3:
+            continue
+        surface = _surface_in_columns(gray, x0, x1, top, bottom, infrared, width)
+        if surface is not None:
+            found.append(surface[0])
+    if len(found) < MIN_SURFACE_BANDS:
+        return None
+    level = float(np.median(found))
+    return int(round(level)), float(np.mean([abs(y - level) <= _BAND_AGREEMENT for y in found]))
+
+
 def _find_surface_from_below(
     gray: np.ndarray, left: int, right: int, top: int, bottom: int, infrared: bool = False
 ) -> tuple[int, float] | None:
@@ -663,11 +715,18 @@ def _find_surface_from_below(
     the levain, so what lies above that stretch is ignored. A bright label on the glass
     does not stop the climb (only a dim stretch does).
     """
+    width = right - left
+    return _surface_in_columns(gray, left + width // 4, right - width // 4, top, bottom, infrared, width)
+
+
+def _surface_in_columns(
+    gray: np.ndarray, x0: int, x1: int, top: int, bottom: int, infrared: bool, width: int
+) -> tuple[int, float] | None:
+    """The climb from the bottom of the jar, over the columns x0..x1 (``width``: the jar's)."""
     height = bottom - top
     if height < 100:
         return None
-    width = right - left
-    columns = gray[top:bottom, left + width // 4:right - width // 4]
+    columns = gray[top:bottom, x0:x1]
     profile = cv2.GaussianBlur(np.median(columns, axis=1).astype(np.float32).reshape(-1, 1), (1, 9), 0).ravel()
     levain = float(np.median(profile[int(height * 0.75):int(height * 0.92)]))
     glass = float(np.percentile(profile[: int(height * 0.6)], 10))

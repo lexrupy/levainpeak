@@ -32,6 +32,19 @@ ROTATION_DEGREES = (-195.0, 195.0)  # degrees clockwise the camera picture is tu
 MARK_SHAPES = ("círculo", "quadrado")
 
 
+def clean_bands(bands, limit: int = 4) -> tuple[tuple[float, float], ...]:
+    """The surface strips as sorted (start, end) fractions inside 0..1, at most ``limit`` of them."""
+    clean = []
+    try:
+        for start, end in bands:
+            start, end = sorted((min(1.0, max(0.0, float(start))), min(1.0, max(0.0, float(end)))))
+            if end - start >= 0.01:
+                clean.append((round(start, 4), round(end, 4)))
+    except (TypeError, ValueError):
+        return ()
+    return tuple(sorted(clean)[:limit])
+
+
 @dataclass
 class Settings:
     record_interval_seconds: int = 10
@@ -44,6 +57,8 @@ class Settings:
     graph_show_start: bool = True  # the graph starts at the mix, with the stretch before the monitoring
     graph_show_rate: bool = True  # a strip under the graph with the growth rate
     graph_show_forecast: bool = True  # the graph draws the doubling forecast over the measured curve
+    surface_bands: tuple = ()  # strips (start, end) as fractions of the glass's width where the surface is read
+    use_surface_bands: bool = False  # read the surface only in those strips (needs at least two)
     ink_cut_infrared: float = DEFAULT_INK_CUT_INFRARED
     ink_cut_day: int = DEFAULT_INK_CUT_DAY
     mark_shape: str = "círculo"  # drawn around the followed mark: "círculo" or "quadrado"
@@ -75,6 +90,8 @@ class Settings:
             graph_show_start=bool(self.graph_show_start),
             graph_show_rate=bool(self.graph_show_rate),
             graph_show_forecast=bool(self.graph_show_forecast),
+            surface_bands=clean_bands(self.surface_bands),
+            use_surface_bands=bool(self.use_surface_bands),
             ink_cut_infrared=round(min(INK_CUT_INFRARED[1], max(INK_CUT_INFRARED[0], float(self.ink_cut_infrared))), 2),
             ink_cut_day=min(INK_CUT_DAY[1], max(INK_CUT_DAY[0], int(self.ink_cut_day))),
             peak_minutes=min(PEAK_MINUTES[1], max(PEAK_MINUTES[0], int(self.peak_minutes))),
@@ -106,6 +123,8 @@ def load_settings(path: Path = SETTINGS_PATH) -> Settings:
             graph_show_start=bool(data.get("graph_show_start", defaults.graph_show_start)),
             graph_show_rate=bool(data.get("graph_show_rate", defaults.graph_show_rate)),
             graph_show_forecast=bool(data.get("graph_show_forecast", defaults.graph_show_forecast)),
+            surface_bands=clean_bands(data.get("surface_bands", defaults.surface_bands)),
+            use_surface_bands=bool(data.get("use_surface_bands", defaults.use_surface_bands)),
             ink_cut_infrared=float(data.get("ink_cut_infrared", defaults.ink_cut_infrared)),
             ink_cut_day=int(data.get("ink_cut_day", defaults.ink_cut_day)),
             peak_minutes=int(data.get("peak_minutes", defaults.peak_minutes)),
