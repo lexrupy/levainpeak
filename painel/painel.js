@@ -7,7 +7,7 @@
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 60 * 1000;
 const AGES_MS = 30 * 1000;
-const VERSAO_PAINEL = '2026-11-04.2'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
+const VERSAO_PAINEL = '2026-11-07.1'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
 const QUADROS_MAX = 20; // imagens recebidas que o aparelho guarda para a animação
 const FPS_OPCOES = [1, 2, 3]; // quadros por segundo; o botão passa de um para o outro e o aparelho lembra
 
@@ -209,7 +209,9 @@ function render(dados, doCache) {
   $('volume').textContent = volume === undefined || volume === null ? '—' : `${Number(volume).toFixed(0)}%`;
   $('volume-nota').textContent = aoVivo.crescimento ? `${Number(aoVivo.crescimento).toFixed(2).replace('.', ',')}× o nível inicial` : 'da capacidade do pote';
   // A leitura idêntica em atualizações seguidas pode ser imagem congelada ou medição travada.
-  const iguais = Number(aoVivo.leituras_iguais) || 0;
+  // No aquecimento o volume parado é o normal: sem aviso.
+  const aquecendo = /aquecimento|fase inicial/i.test(aoVivo.fase || '');
+  const iguais = aquecendo ? 0 : Number(aoVivo.leituras_iguais) || 0;
   if (iguais >= 2) {
     const minutos = Math.round(((aoVivo.intervalo_s || 120) * (iguais - 1)) / 60);
     $('volume-nota').textContent += ` · ⚠ igual há ${iguais} atualizações (${minutos} min)`;
