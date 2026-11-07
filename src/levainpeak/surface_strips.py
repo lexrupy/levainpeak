@@ -54,6 +54,21 @@ def read_strips(
     valid = [i for i, y in enumerate(ys) if y is not None]
     if len(valid) < 8:
         return empty
+    if bands:
+        # Drawn bands are far apart, so neighbours mean nothing: the strips are grouped by height, and the
+        # lowest group enough of them agree on is the surface.
+        need = max(3, int(np.ceil(len(valid) * min_support)))
+        chosen = None
+        for candidate in sorted(valid, key=lambda i: ys[i], reverse=True):
+            group = [i for i in valid if ys[candidate] - step <= ys[i] <= ys[candidate] + step / 2]
+            if len(group) >= need:
+                chosen = group
+                break
+        if chosen is None:
+            return empty
+        level = float(np.mean([ys[i] for i in chosen]))
+        kept = tuple(i in set(chosen) for i in range(len(ys)))
+        return StripReading(tuple(xs), tuple(ys), kept, level, len(chosen) / len(valid), False, step)
     # Stretches of neighbours with no step between them (a run of strips that found nothing ends one).
     stretches, current = [], [valid[0]]
     for before, index in zip(valid, valid[1:]):

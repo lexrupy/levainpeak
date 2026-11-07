@@ -215,3 +215,13 @@ def test_the_drawn_bands_restrict_the_automatic_vote_and_switching_it_joins_the_
     analyzer.set_surface_bands((), auto=True)
     assert analyzer.auto_strips and analyzer.anchor_volume == 0.30 and analyzer._last_volume is None
     assert analyzer.region_key()[5] is True
+
+
+def test_narrow_drawn_bands_can_vote_together_even_when_they_sit_far_apart():
+    from levainpeak.surface_strips import read_strips
+
+    gray = _jar_with_a_pale_intruder()
+    narrow = ((0.55, 0.58), (0.68, 0.71), (0.82, 0.85), (0.3, 0.33))  # 1 to 2 strips of 3 px each; the last is over the intruder
+    reading = read_strips(gray, 0, 400, 0, 400, bands=narrow)
+    assert reading.level is not None and abs(reading.level - 300) < 3
+    assert 0.5 < reading.confidence < 1.0 and not reading.dome

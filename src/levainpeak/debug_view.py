@@ -179,15 +179,16 @@ def build_debug_mosaic(
     if frame is not None and raw is not None and raw.marker_y is not None:
         scan = column_scan(frame, raw.left, raw.right, raw.top, raw.bottom, raw.marker_y)
 
-    strips = None
+    strips = strip_context = None
     if frame is not None and outline is not None:
         span = inner_span(tuple(tuple(point) for point in outline), (frame.shape[1], frame.shape[0]))
         if span is not None:
             infrared = float(np.abs(frame[..., 0].astype(np.int16) - frame[..., 2]).mean()) < 3
-            strips = read_strips(
-                cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), *span[:2], span[2], span[3], infrared,
-                bands=surface_bands if len(surface_bands) >= 2 else (),
-            )
+            gray_full = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            drawn = surface_bands if len(surface_bands) >= 2 else ()
+            skyline = read_strips(gray_full, *span[:2], span[2], span[3], infrared)  # every strip, for the chart
+            strips = read_strips(gray_full, *span[:2], span[2], span[3], infrared, bands=drawn) if drawn else skyline
+            strip_context = (skyline, drawn, span[:2])
 
     if frame is None:
         place(_View(None, (0, 0), PANEL_W, PANEL_H).canvas, 0, 0, "Sem imagem da câmera")
@@ -211,7 +212,7 @@ def build_debug_mosaic(
             _draw_light(light_view, raw, scan, lab, left, top, stable)
             _draw_edges(edge_view, raw)
             if strips is not None and scan is None:
-                _draw_strips(column_view, raw, strips, stable, texts)
+                _draw_strips(column_view, raw, strips, strip_context, stable, texts)
             else:
                 _draw_columns(column_view, raw, scan, stable, lab, left, top)
         for view, title in (
@@ -341,36 +342,52 @@ def _draw_edges(view: _View, raw: ContainerMeasurement) -> None:
 STRIP_WINDOW = 60  # rows shown around the level in the strips panel: the spread is a few rows, not the whole pot
 
 
-def _draw_strips(view: _View, raw, reading, stable, texts: list[Text]) -> None:
-    """The edge each narrow strip found, left to right across the glass, zoomed on the surface: the ones
-    that voted (the stretch that gave the level) in green, the discarded ones in grey, the level in yellow."""
+def _draw_strips(view: _View, raw, voting, context, stable, texts: list[Text]) -> None:
+    """One bar per narrow strip across the whole glass, rising from the bottom to the edge that strip
+    found, zoomed on the surface. Green: the strips that voted (the stretch that gave the level); grey: the
+    rest; the drawn bands show as lighter columns behind; the level is the yellow line."""
+    skyline, bands, (left, right) = context
     canvas = view.canvas
     height, width = canvas.shape[:2]
-    values = [y for y in reading.ys if y is not None]
-    centre = reading.level if reading.level is not None else (float(np.median(values)) if values else raw.surface_y)
+    values = [y for y in skyline.ys if y is not None]
+    centre = voting.level if voting.level is not None else (float(np.median(values)) if values else raw.surface_y)
     scale = height / STRIP_WINDOW
 
     def row(y: float) -> int:
         return int(round(height / 2 + (y - centre) * scale))
 
+    xs = [x for x, y in zip(skyline.xs, skyline.ys) if y is not None]
+    low, high = (min(xs), max(xs)) if xs else (left, right)
+    across = (width - 20) / max(1.0, high - low)  # panel pixels per frame pixel along the glass
+
+    def column(x: float) -> int:
+        return int(round(10 + (x - low) * across))
+
+    for start, end in bands:  # where the user asked the surface to be read
+        x0, x1 = column(left + start * (right - left)), column(left + end * (right - left))
+        canvas[:, max(0, x0):max(0, x1) + 1] = np.clip(canvas[:, max(0, x0):max(0, x1) + 1].astype(np.int16) + 14, 0, 255).astype(np.uint8)
     for offset in range(-STRIP_WINDOW // 2, STRIP_WINDOW // 2 + 1, 10):  # a faint ruler every 10 rows
         cv2.line(canvas, (0, row(centre + offset)), (width - 1, row(centre + offset)), GRID, 1)
-    xs = [x for x, y in zip(reading.xs, reading.ys) if y is not None]
-    if xs:
-        low, high = min(xs), max(xs)
-        for x, y, kept in zip(reading.xs, reading.ys, reading.kept):
-            if y is None or not 0 <= row(y) < height:
-                continue
-            px = int(10 + (x - low) / max(1.0, high - low) * (width - 20))
-            cv2.circle(canvas, (px, row(y)), 2, GREEN if kept else MUTED, -1)
-    if reading.level is not None:
-        cv2.line(canvas, (0, row(reading.level)), (width - 1, row(reading.level)), YELLOW, 2)
+    voted = {round(x, 1) for x, k in zip(voting.xs, voting.kept) if k}
+    half = max(1, int(round(1.5 * across)))  # half a bar: a strip is 3 px wide
+    for x, y in zip(skyline.xs, skyline.ys):
+        if y is None:
+            continue
+        px = column(x)
+        top_row = int(np.clip(row(y), 0, height - 1))
+        colour = GREEN if round(x, 1) in voted else (95, 100, 98)
+        cv2.rectangle(canvas, (px - half, top_row), (px + half, height - 1), colour, -1)
+    if voting.level is not None:
+        cv2.line(canvas, (0, row(voting.level)), (width - 1, row(voting.level)), YELLOW, 2)
     if stable is not None and 0 <= row(stable.surface_y) < height:
         for x in range(0, width, 10):
             cv2.line(canvas, (x, row(stable.surface_y)), (min(x + 5, width - 1), row(stable.surface_y)), ORANGE, 1)
-    state = "sem acordo" if reading.level is None else f"nível {reading.level:.1f} · {reading.confidence:.0%} votam" + (" · domo" if reading.dome else "")
+    state = (
+        "sem acordo" if voting.level is None
+        else f"nível {voting.level:.1f} · {voting.confidence:.0%} votam" + (" · domo" if voting.dome else "")
+    )
     texts.append((3 * (PANEL_W + GAP) + 4, TITLE_H + 4, state, YELLOW, 10))
-    texts.append((3 * (PANEL_W + GAP) + 4, TITLE_H + 18, f"±{STRIP_WINDOW // 2} linhas · régua a cada 10 · passo {reading.step:.1f}", MUTED, 9))
+    texts.append((3 * (PANEL_W + GAP) + 4, TITLE_H + 18, f"±{STRIP_WINDOW // 2} linhas · régua a cada 10 · passo {voting.step:.1f}", MUTED, 9))
 
 
 def _draw_columns(view: _View, raw, scan, stable, lab: np.ndarray, left: int, top: int) -> None:
