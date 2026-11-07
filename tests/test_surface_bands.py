@@ -142,3 +142,51 @@ def test_a_dragged_band_moves_inside_the_glass_and_a_click_removes_it():
     app._band_drag = (0, 200, (0.25, 0.30))
     LevainPeakApp._finish_band_move(app, 236)
     assert abs(app.saved[-1][0][0] - 0.35) < 1e-9
+
+
+def test_the_bands_show_on_the_picture_only_while_drawing_or_when_always_shown():
+    import numpy as np
+    from types import SimpleNamespace
+
+    from levainpeak.app import LevainPeakApp
+    from levainpeak.settings import Settings
+
+    frame = np.full((1080, 1920, 3), 90, np.uint8)
+    outline = ((700, 300), (1300, 300), (1250, 800), (750, 800))
+
+    def shown(show, roi_mode, target="bands"):
+        app = SimpleNamespace(
+            _settings=Settings(surface_bands=((0.2, 0.3), (0.6, 0.7)), show_surface_bands=show),
+            _pot_outline=outline, _band_override=None, _roi_mode=roi_mode, _roi_target=target,
+            _active_bands=lambda: (),
+        )
+        return LevainPeakApp._draw_bands(app, frame)
+
+    assert (shown(False, False) == frame).all()  # idle: nothing over the picture
+    assert (shown(False, True, "pot") == frame).all()  # drawing something else
+    assert not (shown(False, True) == frame).all()  # the band draw mode shows them
+    assert not (shown(True, False) == frame).all()  # or the option does
+
+
+def test_the_strips_vote_for_the_lowest_supported_surface_and_drop_a_label_corner():
+    from levainpeak.surface_strips import read_strips
+
+    gray = np.full((400, 400), 60, np.uint8)
+    gray[300:, :] = 200  # the levain, surface at row 300
+    gray[200:300, 40:120] = 210  # a label corner standing up on the left
+    reading = read_strips(gray, 0, 400, 0, 400)
+    assert reading.level is not None and abs(reading.level - 300) < 3 and not reading.dome
+    corner = [kept for x, kept in zip(reading.xs, reading.kept) if 40 <= x < 120]
+    assert corner and not any(corner)
+    assert reading.confidence > 0.6
+
+
+def test_a_smooth_arch_is_a_dome_and_its_level_is_the_mean_of_the_wall_and_the_top():
+    from levainpeak.surface_strips import read_strips
+
+    gray = np.full((400, 400), 60, np.uint8)
+    for x in range(400):
+        surface = 310 - int(round(12 * (1 - ((x - 200) / 200) ** 2)))  # 12 px higher in the middle
+        gray[surface:, x] = 200
+    reading = read_strips(gray, 0, 400, 0, 400)
+    assert reading.dome and reading.level is not None and 301 < reading.level < 309

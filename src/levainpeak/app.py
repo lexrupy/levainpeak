@@ -363,6 +363,10 @@ class LevainPeakApp:
         bands_menu.add_command(label="Apagar faixas", command=self._clear_bands)
         self._bands_var = tk.BooleanVar(value=self._settings.use_surface_bands)
         bands_menu.add_checkbutton(label="Ler só as faixas", variable=self._bands_var, command=self._toggle_bands)
+        self._show_bands_var = tk.BooleanVar(value=self._settings.show_surface_bands)
+        bands_menu.add_checkbutton(
+            label="Sempre exibir as faixas", variable=self._show_bands_var, command=self._toggle_show_bands
+        )
         self.bands_button.configure(menu=bands_menu)
         self.bands_button.pack(side="left", padx=(0, 6))
         self.marker_button = button(
@@ -440,8 +444,9 @@ class LevainPeakApp:
 
     def _draw_bands(self, shown):
         """The surface strips over the picture: solid when the reading uses them, faint while they only wait."""
+        drawing = self._roi_mode and self._roi_target == "bands"
         bands = self._band_override or self._settings.surface_bands
-        if not bands or not self._pot_outline:
+        if not bands or not self._pot_outline or not (drawing or self._settings.show_surface_bands):
             return shown
         span = inner_span(tuple(tuple(point) for point in self._pot_outline), (shown.shape[1], shown.shape[0]))
         if span is None:
@@ -945,6 +950,14 @@ class LevainPeakApp:
                 else "A leitura usa só as faixas."
             )
         )
+
+    def _toggle_show_bands(self) -> None:
+        self._settings = replace(self._settings, show_surface_bands=bool(self._show_bands_var.get())).clamped()
+        try:
+            save_settings(self._settings)
+        except OSError:
+            logging.exception("Falha ao salvar a exibição das faixas")
+        self._redraw_current_frame()
 
     def _clear_bands(self) -> None:
         self._set_bands((), use=False)

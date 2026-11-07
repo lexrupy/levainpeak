@@ -720,14 +720,19 @@ def _find_surface_from_below(
 
 
 def _surface_in_columns(
-    gray: np.ndarray, x0: int, x1: int, top: int, bottom: int, infrared: bool, width: int
-) -> tuple[int, float] | None:
-    """The climb from the bottom of the jar, over the columns x0..x1 (``width``: the jar's)."""
+    gray: np.ndarray, x0: int, x1: int, top: int, bottom: int, infrared: bool, width: int,
+    fine: bool = False,
+) -> tuple[float, float] | None:
+    """The climb from the bottom of the jar, over the columns x0..x1 (``width``: the jar's).
+
+    ``fine`` is for very narrow strips: the columns are averaged (not the median) and the surface is
+    placed between rows, where the brightness crosses the cut, instead of on a whole row."""
     height = bottom - top
     if height < 100:
         return None
     columns = gray[top:bottom, x0:x1]
-    profile = cv2.GaussianBlur(np.median(columns, axis=1).astype(np.float32).reshape(-1, 1), (1, 9), 0).ravel()
+    reduced = columns.mean(axis=1) if fine else np.median(columns, axis=1)
+    profile = cv2.GaussianBlur(reduced.astype(np.float32).reshape(-1, 1), (1, 9), 0).ravel()
     levain = float(np.median(profile[int(height * 0.75):int(height * 0.92)]))
     glass = float(np.percentile(profile[: int(height * 0.6)], 10))
     if levain <= 0 or levain - glass < 0.2 * levain:
@@ -743,8 +748,19 @@ def _surface_in_columns(
         if dim[y - run:y].all() and float(np.median(profile[y - run:y])) >= 0.6 * glass:
             if not infrared:
                 y = _front_edge(profile, y, int(_FRONT_REACH * width), _FRONT_STEP * (levain - glass))
+            if fine:
+                y = _crossing(profile, y, limit)
             return top + y, 0.9
     return None
+
+
+def _crossing(profile: np.ndarray, y: int, limit: float) -> float:
+    """Where, between rows, the profile climbs through ``limit`` going down from row ``y``."""
+    for row in range(max(0, y - 2), min(len(profile) - 1, y + 14)):
+        low, high = float(profile[row]), float(profile[row + 1])
+        if low < limit <= high:
+            return row + (limit - low) / (high - low)
+    return float(y)
 
 
 def _front_edge(profile: np.ndarray, y: int, reach: int, step: float) -> int:
