@@ -1,3 +1,4 @@
+from dataclasses import replace
 import numpy as np
 
 from levainpeak.vision import _find_surface_from_below, _find_surface_in_bands
@@ -227,21 +228,28 @@ def test_narrow_drawn_bands_can_vote_together_even_when_they_sit_far_apart():
     assert 0.5 < reading.confidence < 1.0 and not reading.dome
 
 
-def test_while_the_lamp_holds_the_strips_keep_reading_unless_they_jump():
+def test_while_the_lamp_holds_the_held_level_moves_with_the_strips_change_only():
     from levainpeak.analysis import ContainerAnalyzer
+    from levainpeak.vision import measure_container
 
     outline = ((700, 300), (1300, 300), (1280, 800), (720, 800))
-    analyzer = ContainerAnalyzer(stream=object())
+    roi = (650, 250, 1350, 850)
 
     def frame_with(surface):
         frame = np.full((1080, 1920, 3), 60, np.uint8)
         frame[surface:800, 700:1300] = 200
         return frame
 
-    analyzer._hold_follow_y = 640.0
-    followed = analyzer._follow_during_hold(frame_with(634), (650, 250, 1350, 850), outline)
-    assert followed is not None and abs(followed.surface_y - 634) <= 2  # a smooth rise is followed
-    assert abs(analyzer._hold_follow_y - followed.surface_y) < 1e-6
-    assert analyzer._follow_during_hold(frame_with(520), (650, 250, 1350, 850), outline) is None  # a jump is the light
-    analyzer._hold_follow_y = None
-    assert analyzer._follow_during_hold(frame_with(634), (650, 250, 1350, 850), outline) is None  # nothing held yet
+    analyzer = ContainerAnalyzer(stream=object())
+    held = measure_container(frame_with(640), roi=roi, outline=outline)
+    held = replace(held, surface_y=600)  # the method in use read the level a little off the strips
+    analyzer._frozen = held
+    assert analyzer._follow_during_hold(frame_with(640), roi, outline) is held  # the first reading is the base
+    followed = analyzer._follow_during_hold(frame_with(634), roi, outline)
+    assert followed is not None and abs(followed.surface_y - (600 - 6)) <= 2  # only the 6 rows it rose count
+    assert followed.volume_fraction > held.volume_fraction
+    assert analyzer._follow_during_hold(frame_with(520), roi, outline) is None  # a jump is the light
+    lower = analyzer._follow_during_hold(frame_with(644), roi, outline)  # reads lower than at the start
+    assert lower is not None and lower.surface_y == held.surface_y and lower.volume_fraction >= held.volume_fraction - 1e-9  # never below the held level
+    analyzer._frozen = None
+    assert analyzer._follow_during_hold(frame_with(634), roi, outline) is None  # nothing held

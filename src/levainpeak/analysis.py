@@ -83,6 +83,7 @@ class ContainerAnalyzer:
         self.lamp_held = False
         self.hold_follow_step = 0.03  # of the glass's height: how far a strip reading may move per read while the lamp holds
         self._hold_follow_y: float | None = None  # the surface row the last accepted strip reading had
+        self._hold_base_y: float | None = None  # the strip reading's row when the hold began: only its change counts
         self.auto_strips = False  # read the surface in many narrow strips that vote
         self.surface_bands: tuple[tuple[float, float], ...] = ()  # strips (fractions of the inner width) the surface is read in
         self._frozen: ContainerMeasurement | None = None
@@ -182,9 +183,11 @@ class ContainerAnalyzer:
         self.auto_strips = auto
 
     def _follow_during_hold(self, frame, roi, outline) -> ContainerMeasurement | None:
-        """The whole-glass strip reading while the lamp holds the level, or None when it is not to be trusted:
-        not read by the strips, or moved from the last accepted row by more than ``hold_follow_step``."""
-        if outline is None or self._hold_follow_y is None:
+        """The level while the lamp holds it: the held level moved by how much the whole-glass strips moved
+        since the hold began. The strips read a little off the method in use, so only their change counts
+        (their level would show as a step in and another out). None when the strips are not to be trusted:
+        not read by them, or moved from the last reading by more than ``hold_follow_step``."""
+        if outline is None or self._frozen is None:
             return None
         try:
             reading = measure_container(
@@ -195,10 +198,23 @@ class ContainerAnalyzer:
             return None
         if reading is None or reading.empty or reading.method != "automático":
             return None
-        if abs(reading.surface_y - self._hold_follow_y) > self.hold_follow_step * (reading.bottom - reading.top):
+        row = float(reading.surface_y)
+        if self._hold_base_y is None:
+            self._hold_base_y, self._hold_follow_y = row, row
+            return self._frozen
+        if abs(row - self._hold_follow_y) > self.hold_follow_step * (reading.bottom - reading.top):
             return None
-        self._hold_follow_y = float(reading.surface_y)
-        return reading
+        self._hold_follow_y = row
+        profile = self._frozen.volume_below_profile
+        # A held levain does not fall in minutes: what the strips read below the held level is the light.
+        target = min(int(round(self._frozen.surface_y + (row - self._hold_base_y))), self._frozen.surface_y)
+        index = target - self._frozen.top
+        if not profile or not 0 <= index < len(profile):
+            return None
+        return replace(
+            self._frozen, surface_y=target,
+            volume_fraction=float(np.clip(profile[index] + self.volume_offset + self._join_offset, 0.0, 1.0)),
+        )
 
     def rejoin(self) -> None:
         """Join the series again at the next reading, to ``anchor_volume`` (after a pause)."""
@@ -485,7 +501,8 @@ class ContainerAnalyzer:
             if held and self.lamp_held is False:
                 older = [item for stamp, item in self._recent if now - stamp >= 20.0]
                 self._frozen = older[-1] if older else None
-                self._hold_follow_y = None if self._frozen is None else float(self._frozen.surface_y)
+                self._hold_follow_y = None
+                self._hold_base_y = None
             self.lamp_held = held
             if held and self._frozen is not None:
                 # The level is not left frozen while the light changes: the whole-glass strips keep reading
