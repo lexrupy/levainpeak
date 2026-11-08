@@ -119,6 +119,7 @@ class LevainPeakApp:
         self._last_displayed_frame_number = 0
         self._last_stream_status: str | None = None
         self._manual_marker_y: int | None = None
+        self._marker_automatic = False  # the mark was put at the first reading's surface, not by hand
         self._realigned_at = float("-inf")  # when the contour last followed the pot by itself
         self._marker_mode = False
         self._roi_mode = False
@@ -764,10 +765,22 @@ class LevainPeakApp:
                     self._update_temperature_label()
                     self._sync_vessel_bounds()
                     self._handle_container_change(self._measurement)
+                    if (
+                        self._measurement is not None and self._session_log.active and self._session_baseline is None
+                        and self._manual_marker_y is None and not self._measurement.empty
+                        and self._measurement.volume_below_profile
+                    ):
+                        # The first reading of the session puts the initial mark at the surface it found;
+                        # "Marcar início" is for placing it by hand afterwards.
+                        self._manual_marker_y = int(self._measurement.surface_y)
+                        self._marker_automatic = True
+                        self._persist_marker()
+                        self._capture_pot_reference()
                     if self._measurement is not None and self._manual_marker_y is not None:
                         self._measurement = set_initial_marker(
                             self._measurement, self._manual_marker_y,
                             shift=self._analyzer.volume_shift if self._analyzer else 0.0,
+                            manual=not self._marker_automatic,
                         )
                     if (
                         self._measurement is not None
@@ -1659,10 +1672,11 @@ class LevainPeakApp:
             self._set_message("Clique na linha pré-visualizada, dentro do recipiente.")
             return
         self._manual_marker_y = source_y
+        self._marker_automatic = False
         self._persist_marker()
         self._capture_pot_reference()
         self._measurement = set_initial_marker(
-            measurement, source_y, shift=self._analyzer.volume_shift if self._analyzer else 0.0
+            measurement, source_y, shift=self._analyzer.volume_shift if self._analyzer else 0.0, manual=True
         )
         if self._session_log.active:
             now = time.monotonic()

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import numpy as np
+
 
 class OutlierGate:
     """Discards readings that jump away from the trusted value.
@@ -201,3 +203,75 @@ def bridge_holds(
                 cleaned[index] = values[first] + share * (target - values[first])
         start = end + 1
     return cleaned
+
+
+def bridge_bumps(
+    times: list[float], values: list[float], *, max_seconds: float = 720.0,
+    min_jump: float = 0.012, min_return: float = 0.008,
+) -> list[float]:
+    """Replace a step away from the trend and a step back, close together, by the line between the two ends.
+
+    After the lamp the picture's brightness shifts and the level reads a little up (or down) for some
+    minutes, then goes back: a step of at least ``min_jump`` between two readings, answered within
+    ``max_seconds`` by an opposite step of at least ``min_return`` and half the first. Growth does not do that. The
+    readings between are drawn as the line from the one before the first step to the one after the
+    second. The ends of the series cannot be judged and are left as they are.
+    """
+    cleaned = list(values)
+    count = len(values)
+    index = 1
+    while index < count:
+        jump = values[index] - values[index - 1]
+        if abs(jump) < min_jump:
+            index += 1
+            continue
+        back = None
+        for later in range(index + 1, count):
+            if times[later] - times[index] > max_seconds:
+                break
+            step = values[later] - values[later - 1]
+            if step * jump < 0 and abs(step) >= max(min_return, 0.5 * abs(jump)):
+                back = later
+                break
+            if step * jump > 0 and abs(step) >= min_jump:
+                break  # it went on in the same direction: a real step, not a bump
+        if back is None:
+            index += 1
+            continue
+        first, last = index - 1, back
+        span = times[last] - times[first]
+        for inside in range(index, back):
+            share = (times[inside] - times[first]) / span if span > 0 else 1.0
+            cleaned[inside] = values[first] + share * (values[last] - values[first])
+        index = back + 1
+    return cleaned
+
+
+def enforce_trend(values: list[float], times: list[float] | None = None, *, smooth: int = 15) -> list[float]:
+    """Rise up to the peak, fall after it: nothing in between goes back, and the fix is a straight line.
+
+    A starter does not sink while it is still growing (falling below an earlier level is a misread or a
+    mispositioned frame) and a real fall is never followed by a new rise. So up to the highest point a
+    reading is good only if it reaches a new high, and after that point only if it reaches a new low. The
+    others are drawn on the line between the good readings around them (the behaviour is linear), by
+    ``times`` when given, else by position. The peak is found on a median-smoothed copy so one stray
+    reading does not decide it.
+    """
+    from statistics import median
+
+    count = len(values)
+    if count < 3:
+        return list(values)
+    times = list(range(count)) if times is None else times
+    half = max(1, smooth // 2)
+    smoothed = [median(values[max(0, i - half):i + half + 1]) for i in range(count)]
+    peak = max(range(count), key=lambda i: (smoothed[i], -i))
+    good = [0]
+    for index in range(1, peak + 1):
+        if values[index] >= values[good[-1]]:
+            good.append(index)
+    for index in range(peak + 1, count):
+        if values[index] <= values[good[-1]]:
+            good.append(index)
+    good = sorted(set(good))
+    return [float(v) for v in np.interp(times, [times[i] for i in good], [values[i] for i in good])]

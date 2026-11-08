@@ -175,3 +175,26 @@ def test_a_stretch_held_dead_that_ends_in_a_leap_is_drawn_as_a_line():
     # A short repeat, or a long one that ends flat, stays.
     assert bridge_holds([0.0, 10.0, 20.0, 30.0], [0.4, 0.4, 0.4, 0.4]) == [0.4, 0.4, 0.4, 0.4]
     assert bridge_holds(times[:6], [0.40, 0.45, 0.45, 0.45, 0.452, 0.455]) == [0.40, 0.45, 0.45, 0.45, 0.452, 0.455]
+
+
+def test_bridge_bumps_draws_a_step_away_and_back_as_a_line_but_keeps_real_steps():
+    from levainpeak.filters import bridge_bumps
+
+    times = [float(10 * i) for i in range(40)]
+    bump = [0.30 + 0.0005 * i for i in range(10)] + [0.33 + 0.0005 * i for i in range(10, 20)] + [0.31 + 0.0005 * i for i in range(20, 40)]
+    cleaned = bridge_bumps(times, bump)
+    assert max(abs(c - (0.30 + 0.0005 * i)) for i, c in enumerate(cleaned) if i < 40) < 0.025 and cleaned[15] < 0.32
+    step = [0.30] * 20 + [0.34] * 20
+    assert bridge_bumps(times, step) == step
+
+
+def test_enforce_trend_never_sinks_before_the_peak_nor_rises_after_it():
+    from levainpeak.filters import enforce_trend
+
+    series = [0.30, 0.31, 0.28, 0.33, 0.34, 0.36, 0.40, 0.39, 0.37, 0.38, 0.35]
+    series = [x for x in series for _ in range(3)]
+    cleaned = enforce_trend(series)
+    peak = max(range(len(cleaned)), key=lambda i: cleaned[i])
+    assert all(b >= a for a, b in zip(cleaned[:peak], cleaned[1:peak + 1]))
+    assert all(b <= a for a, b in zip(cleaned[peak:], cleaned[peak + 1:]))
+    assert cleaned[6] >= 0.31 and cleaned[-1] == 0.35

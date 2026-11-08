@@ -11,7 +11,7 @@ import numpy as np
 
 from levainpeak.rate import rate_series
 
-from levainpeak.filters import bridge_holds, despike, valid_after_recovery
+from levainpeak.filters import bridge_bumps, bridge_holds, despike, enforce_trend, valid_after_recovery
 from levainpeak.graph_phases import graph_phase_segments
 from levainpeak.sessions import PhaseTracker
 
@@ -56,10 +56,14 @@ def prepare_graph_data(path: Path, *, peak_seconds: float = 600, artifact_second
     steps = sorted((b[0] - a[0]).total_seconds() for a, b in zip(samples, samples[1:]) if b[0] > a[0])
     step = steps[len(steps) // 2] if steps else 10.0
     window = max(80, int(round(2 * artifact_seconds / max(1.0, step))))
-    cleaned = despike([sample[1] for sample in samples], window=window)
-    # Readings held dead by the lamp, then a leap: drawn as the line between them.
     origin_stamp = samples[0][0]
-    cleaned = bridge_holds([(sample[0] - origin_stamp).total_seconds() for sample in samples], cleaned)
+    seconds = [(sample[0] - origin_stamp).total_seconds() for sample in samples]
+    # A step away from the trend and back (the lamp's brightness shift) is drawn as the line between its
+    # ends. This goes first: the spike filter alone would cut such a bump into pieces.
+    cleaned = bridge_bumps(seconds, [sample[1] for sample in samples], max_seconds=artifact_seconds)
+    cleaned = despike(cleaned, window=window, threshold=0.008)
+    # Readings held dead by the lamp, then a leap: drawn as the line between them.
+    cleaned = bridge_holds(seconds, cleaned)
     # A later reading that rises above an earlier level proves the readings
     # under that level in between were wrong: rebuild them from the valid
     # neighbours.
@@ -70,6 +74,8 @@ def prepare_graph_data(path: Path, *, peak_seconds: float = 600, artifact_second
             value if ok else float(np.interp(index, good, [cleaned[i] for i in good]))
             for index, (value, ok) in enumerate(zip(cleaned, valid, strict=True))
         ]
+    # Up to the peak nothing sinks below what it reached; after it nothing rises again (a rise after a fall is a misread).
+    cleaned = enforce_trend(cleaned, seconds)
     # Phases are recomputed from the cleaned readings, so the shading does
     # not inherit labels that were produced while a wrong reading was live.
     graph_tracker = PhaseTracker(filter_dips=False, plateau_seconds=peak_seconds, artifact_seconds=artifact_seconds)  # the readings are already clean
