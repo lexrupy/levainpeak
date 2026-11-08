@@ -162,3 +162,16 @@ def test_a_lamp_that_moved_for_good_is_told_apart_from_one_that_went_off_and_on(
             now += 10
             watch.update(now, 150.0, 60.0)
         assert watch.stayed_changed(final) is stays
+
+
+def test_a_stretch_held_dead_that_ends_in_a_leap_is_drawn_as_a_line():
+    from levainpeak.filters import bridge_holds
+
+    times = [float(i * 10) for i in range(60)]
+    values = [0.40 + 0.0002 * i for i in range(20)] + [0.45] * 30 + [0.50 + 0.0002 * i for i in range(10)]
+    cleaned = bridge_holds(times, values)
+    held = cleaned[20:50]
+    assert all(b >= a for a, b in zip(held, held[1:])) and held[0] < 0.43 and held[-1] > 0.48  # a ramp now
+    # A short repeat, or a long one that ends flat, stays.
+    assert bridge_holds([0.0, 10.0, 20.0, 30.0], [0.4, 0.4, 0.4, 0.4]) == [0.4, 0.4, 0.4, 0.4]
+    assert bridge_holds(times[:6], [0.40, 0.45, 0.45, 0.45, 0.452, 0.455]) == [0.40, 0.45, 0.45, 0.45, 0.452, 0.455]

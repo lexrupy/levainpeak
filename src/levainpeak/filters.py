@@ -168,3 +168,36 @@ def valid_after_recovery(values: list[float], tolerance: float = 0.02) -> list[b
         )
         for index, value in enumerate(values)
     ]
+
+
+def bridge_holds(
+    times: list[float], values: list[float], *, min_seconds: float = 180.0, min_step: float = 0.01,
+) -> list[float]:
+    """Replace a stretch of identical readings that ends in a step by a straight line to that step.
+
+    The lamp holds the level while it changes the picture: the readings stop dead for minutes and then
+    jump to wherever the levain has got to. A rising levain does not stand still and then leap, so the
+    stretch is drawn as the line from the last reading before it to the first one after it. Short repeats
+    (the same reading twice) and stretches that end flat are left alone.
+    """
+    cleaned = list(values)
+    start = 0
+    count = len(values)
+    while start < count:
+        end = start
+        while end + 1 < count and values[end + 1] == values[start]:
+            end += 1
+        after = end + 1
+        if (
+            start > 0 and after < count and times[end] - times[start] >= min_seconds
+            and abs(values[after] - values[start]) >= min_step
+        ):
+            first, last = start - 1, after
+            span = times[last] - times[first]
+            # The line ends at the median of the next readings, not at one that may be a overshoot.
+            target = sorted(values[after:after + 6])[len(values[after:after + 6]) // 2]
+            for index in range(start, after):
+                share = (times[index] - times[first]) / span if span > 0 else 1.0
+                cleaned[index] = values[first] + share * (target - values[first])
+        start = end + 1
+    return cleaned

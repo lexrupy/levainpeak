@@ -11,7 +11,7 @@ import numpy as np
 
 from levainpeak.rate import rate_series
 
-from levainpeak.filters import despike, valid_after_recovery
+from levainpeak.filters import bridge_holds, despike, valid_after_recovery
 from levainpeak.graph_phases import graph_phase_segments
 from levainpeak.sessions import PhaseTracker
 
@@ -57,6 +57,9 @@ def prepare_graph_data(path: Path, *, peak_seconds: float = 600, artifact_second
     step = steps[len(steps) // 2] if steps else 10.0
     window = max(80, int(round(2 * artifact_seconds / max(1.0, step))))
     cleaned = despike([sample[1] for sample in samples], window=window)
+    # Readings held dead by the lamp, then a leap: drawn as the line between them.
+    origin_stamp = samples[0][0]
+    cleaned = bridge_holds([(sample[0] - origin_stamp).total_seconds() for sample in samples], cleaned)
     # A later reading that rises above an earlier level proves the readings
     # under that level in between were wrong: rebuild them from the valid
     # neighbours.
