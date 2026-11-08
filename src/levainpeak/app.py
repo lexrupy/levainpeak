@@ -119,6 +119,7 @@ class LevainPeakApp:
         self._last_displayed_frame_number = 0
         self._last_stream_status: str | None = None
         self._manual_marker_y: int | None = None
+        self._baseline_locked = False  # a resumed session keeps the initial level it had; only a new mark changes it
         self._marker_automatic = False  # the mark was put at the first reading's surface, not by hand
         self._realigned_at = float("-inf")  # when the contour last followed the pot by itself
         self._marker_mode = False
@@ -776,7 +777,7 @@ class LevainPeakApp:
                         self._marker_automatic = True
                         self._persist_marker()
                         self._capture_pot_reference()
-                    if self._measurement is not None and self._manual_marker_y is not None:
+                    if self._measurement is not None and self._manual_marker_y is not None and not self._baseline_locked:
                         self._measurement = set_initial_marker(
                             self._measurement, self._manual_marker_y,
                             shift=self._analyzer.volume_shift if self._analyzer else 0.0,
@@ -787,6 +788,7 @@ class LevainPeakApp:
                         and self._session_log.active
                     ):
                         if self._session_baseline is None:
+                            self._baseline_locked = False
                             self._session_baseline = (
                                 self._measurement.initial_volume_fraction
                                 if self._measurement.initial_volume_fraction is not None
@@ -794,7 +796,7 @@ class LevainPeakApp:
                             )
                             self._reset_tracking(self._session_baseline)
                         live = self._measurement.initial_volume_fraction
-                        if self._manual_marker_y is not None and live is not None:
+                        if self._manual_marker_y is not None and live is not None and not self._baseline_locked:
                             # The mark is read in the same frame as the volume. A level stored
                             # earlier (or read back from the CSV) was made with another shift.
                             if abs(live - self._session_baseline) > 1e-6:
@@ -1673,6 +1675,7 @@ class LevainPeakApp:
             return
         self._manual_marker_y = source_y
         self._marker_automatic = False
+        self._baseline_locked = False
         self._persist_marker()
         self._capture_pot_reference()
         self._measurement = set_initial_marker(
@@ -2970,6 +2973,15 @@ class LevainPeakApp:
                 if temperature:
                     last_temperature = float(temperature)
                 self._forecaster.add(elapsed, volume, last_temperature)
+            first_levels = [float(row["initial_volume_fraction"]) for row in rows if row.get("initial_volume_fraction")]
+            volumes = [float(row["volume_fraction"]) for row in rows[:90]]
+            if first_levels and len(volumes) >= 9:
+                # The level the session began at, as the graph takes it: the first stored one or the level the
+                # readings settled at, whichever is lower. Recomputing it from the mark at each resume drifted.
+                settled = min(float(np.median(volumes[i:i + 9])) for i in range(len(volumes) - 8))
+                self._session_baseline = min(first_levels[0], settled)
+                self._phase_tracker.set_baseline(self._session_baseline)
+                self._baseline_locked = True
             if last_temperature is not None:
                 self._last_known_temperature = last_temperature
                 if self._analyzer is not None:
