@@ -200,3 +200,28 @@ Nada disto está implementado. A ordem é a das etapas; cada uma com testes e pu
 3. **Quadros rasterizados.** Um quadro por atualização (2 min), ~0,55 KB: grade 32 × 22, 16 cores por quadro, só as células abaixo da superfície, média de 3 quadros vizinhos contra o ruído. Uma linha por quadro na aba da sessão; o painel pede só os mais novos que o último que tem, guarda no celular e começa pelos ~120 últimos. A animação roda a 1 quadro por segundo. O snapshot real continua como está, para conferir medidas erradas. Opção a avaliar: topo com a curva lida da foto (16 números por quadro, média igual ao nível medido).
 
 Protótipo visual (A chapada, B rasterizada, C formato do topo): artefato privado; os dados vieram das 15 últimas fotos da sessão `Levain 03/11 21:32`. Medidas: B ≈ 8 KB para 15 quadros; C ≈ 1,4 KB para 15 quadros.
+
+## Estado em 08/11/2026 (leitura da superfície, lâmpada, menus)
+
+**Métodos de leitura** (`vision.measure_container`, campo `method` da medição): "automático" (faixas de 3 px do vidro todo,
+`surface_strips.py`), "faixas" (as 2 a 4 desenhadas, mediana) e "central" (50% do meio, o antigo). Cascata com queda:
+automático → faixas → central. O painel 4 do Diagnóstico mostra o método que de fato mediu. As faixas automáticas leem
+~0,03 de volume abaixo do central/faixas: trocar de método cria um degrau (a série é emendada por `rejoin`).
+
+**Lâmpada** (acende a cada ~40 min por 4–6 min, +16 de brilho): `analysis.py` segura o último volume (`lamp_hold_seconds`).
+Durante a retenção o nível anda só pela *variação* das faixas automáticas desde o início da retenção, nunca abaixo do
+valor retido (`_follow_during_hold`, `hold_follow_step` = 3% da altura). Usar o nível absoluto das faixas criou picos e
+quedas na sessão `Levain 08/11 10:00` (corrigido em `da33305`). No gráfico, `filters.bridge_holds` liga com uma reta o
+patamar parado que termina em salto (só gráfico, o CSV não muda).
+
+**App do PC:** menus `Temperatura ▾` (termômetro, visor) e `Recipiente ▾` (pote, contorno, "Detectar automaticamente",
+que guarda o desenho em vez de apagar). `Retomar ▾` lista as sessões e pergunta antes. Confirmam agora: encerrar sessão,
+apagar faixas, retomar. Gráfico: ponto verde "✓ dobro · XhYY" onde alcançou o dobro; passar o mouse mostra o tempo desde
+a mistura; a previsão e o painel do celular mostram o tempo da mistura até o dobro e até o pico.
+
+**Em aberto:** seletor único de método (Automático / Pote todo / Faixas / Central, sem queda nos fixos); ajuste manual de
+limiar preto/branco da superfície; limiares das faixas em Configurações; o "pote todo" oscila (apoio 25% → 15%);
+temperatura 22,7 aparece como leitura falsa de vez em quando; marcador do dobro no gráfico do celular; confirmar ao
+redesenhar o pote em sessão ativa e ao apagar faixa por clique; pendências antigas acima.
+
+**Cuidado ao reiniciar o app:** conferir qual é a sessão ativa antes de `--resume` (já se gravou numa sessão antiga por engano).
