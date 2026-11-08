@@ -7,6 +7,7 @@ import re
 import json
 import os
 from collections import deque
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from statistics import median
@@ -33,6 +34,62 @@ def latest_session_csv(directory: Path | None = None) -> Path | None:
     """The most recently written session CSV, or None when there is none."""
     files = (directory or Path("data/sessions")).glob("*.csv")
     return max(files, key=lambda path: path.stat().st_mtime, default=None)
+
+
+@dataclass(frozen=True)
+class SessionEntry:
+    path: Path
+    name: str
+    started: datetime | None
+    last: datetime | None  # the last reading's time
+    ended: bool
+    label: str  # for the resume menu
+
+
+def _last_timestamp(path: Path) -> datetime | None:
+    """The time of the CSV's last row, read from the end of the file."""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, handle.tell() - 4096))
+            lines = handle.read().decode("utf-8", errors="ignore").splitlines()
+        for line in reversed(lines):
+            fields = line.split(",")
+            if len(fields) > 1 and fields[1][:2] == "20":
+                return datetime.fromisoformat(fields[1])
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def describe_session(path: Path) -> SessionEntry:
+    """A saved session as the resume menu shows it: its name, when it ran and whether it was ended."""
+    name, ended = "", False
+    try:
+        metadata = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+        name = str(metadata.get("session_name") or "").strip()
+        ended = bool(metadata.get("ended"))
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        started = datetime.strptime(path.stem[:15], "%Y%m%d_%H%M%S").astimezone()
+    except ValueError:
+        started = None
+    last = _last_timestamp(path)
+    name = name or path.stem
+    span = ""
+    if started is not None:
+        span = f"{started:%d/%m %H:%M}"
+        if last is not None:
+            span += f" → {last:%H:%M}" if last.date() == started.date() else f" → {last:%d/%m %H:%M}"
+    label = " · ".join(part for part in (name, span, "encerrada" if ended else "") if part)
+    return SessionEntry(path, name, started, last, ended, label)
+
+
+def list_sessions(directory: Path | None = None, limit: int = 20) -> list[SessionEntry]:
+    """The newest ``limit`` saved sessions, newest first (by the time in the file name)."""
+    files = sorted((directory or Path("data/sessions")).glob("*.csv"), key=lambda path: path.name, reverse=True)
+    return [describe_session(path) for path in files[:limit]]
 
 
 def find_session_csv(name: str, directory: Path | None = None) -> Path | None:

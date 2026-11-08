@@ -34,7 +34,7 @@ from levainpeak.graph_phases import (DECLINE, EXPONENTIAL, LATENCY, STATIONARY,
 from levainpeak.phone_config import load_phone_config, local_link, online_link
 from levainpeak.phone_push import PhonePusher, make_snapshot
 from levainpeak.rate import growth_rate, rate_series
-from levainpeak.sessions import (GEOMETRY_VERSION, PhaseTracker, SessionLog, parse_ratio,
+from levainpeak.sessions import (GEOMETRY_VERSION, PhaseTracker, SessionLog, describe_session, list_sessions, parse_ratio,
                                  find_session_csv, latest_session_csv)
 from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, INK_CUT_DAY,
                                  INK_CUT_INFRARED, MAX_OVERLAY_BRIGHTNESS,
@@ -68,6 +68,22 @@ RATE_STRIP_MIN_HEIGHT = 300  # plot height (px) under which the rate strip is no
 RATE_STRIP_SHARE = 0.30  # share of the plot height the strip takes
 REPEAT_WARNING = 2  # the same growth factor logged this many times in a row is flagged
 MAX_ZOOM = 12.0  # the wheel zoom of the video; only the visible part is scaled, so it stays cheap
+
+class _MenuEntry:
+    """A menu item that answers like the button it replaced: ``configure(text=..., state=...)``.
+
+    The old buttons changed their own text to say what a second click would do ("Cancelar", "Confirmar");
+    ``labels`` maps those short texts to the menu's wording."""
+
+    def __init__(self, menu: tk.Menu, labels: dict[str, str]) -> None:
+        self.menu, self.index, self.labels = menu, menu.index("end"), labels
+
+    def configure(self, text: str | None = None, state: str | None = None) -> None:
+        if text is not None:
+            self.menu.entryconfigure(self.index, label=self.labels.get(text, text))
+        if state is not None:
+            self.menu.entryconfigure(self.index, state=state)
+
 
 class _SessionTitle(ttk.Label):
     """The title of the session group: "Sessão · " and then whatever text it is given."""
@@ -342,22 +358,37 @@ class LevainPeakApp:
         level = group("Nível inicial", 0, 1)
         files = group("Arquivos", 1, 0)
         session = group("Sessão", 1, 1)
-        self.draw_pot_button = button(
-            regions, "Pote", lambda: self._toggle_roi_mode("pot"), width=8
+        self._auto_detect = False  # the pot is found by the automatic search while the drawing is kept aside
+        self._auto_detect_var = tk.BooleanVar(value=False)
+        temperature_button = ttk.Menubutton(regions, text="Temperatura ▾", width=13, direction="below")
+        temperature_menu = tk.Menu(temperature_button, tearoff=False)
+        temperature_menu.add_command(label="Marcar termômetro", command=lambda: self._toggle_roi_mode("thermometer"))
+        self.draw_thermometer_button = _MenuEntry(
+            temperature_menu, {"Termômetro": "Marcar termômetro", "Cancelar": "Cancelar marcação do termômetro"}
         )
-        self.draw_outline_button = button(
-            regions, "Contorno", lambda: self._toggle_outline_mode("pot"), width=9
+        temperature_menu.add_command(label="Marcar visor", command=lambda: self._toggle_outline_mode("thermometer"))
+        self.draw_face_button = _MenuEntry(
+            temperature_menu, {"Visor": "Marcar visor", "Confirmar": "Confirmar visor"}
         )
-        self.draw_thermometer_button = button(
-            regions, "Termômetro", lambda: self._toggle_roi_mode("thermometer"), width=11
+        temperature_button.configure(menu=temperature_menu)
+        temperature_button.pack(side="left", padx=(0, 6))
+        vessel_button = ttk.Menubutton(regions, text="Recipiente ▾", width=13, direction="below")
+        vessel_menu = tk.Menu(vessel_button, tearoff=False)
+        vessel_menu.add_command(label="Marcar pote", command=lambda: self._toggle_roi_mode("pot"))
+        self.draw_pot_button = _MenuEntry(
+            vessel_menu, {"Pote": "Marcar pote", "Cancelar": "Cancelar marcação do pote"}
         )
-        self.draw_face_button = button(
-            regions, "Visor", lambda: self._toggle_outline_mode("thermometer"), width=8
+        vessel_menu.add_command(label="Delimitar contorno", command=lambda: self._toggle_outline_mode("pot"))
+        self.draw_outline_button = _MenuEntry(
+            vessel_menu, {"Contorno": "Delimitar contorno", "Confirmar": "Confirmar contorno"}
         )
-        self.auto_pot_button = button(
-            regions, "Automático", self._use_automatic_detection, width=10,
-            state="disabled",
+        vessel_menu.add_checkbutton(
+            label="Detectar automaticamente (guarda o desenho)", variable=self._auto_detect_var,
+            command=self._toggle_auto_detect, state="disabled",
         )
+        self.auto_pot_button = _MenuEntry(vessel_menu, {})
+        vessel_button.configure(menu=vessel_menu)
+        vessel_button.pack(side="left", padx=(0, 6))
         self.bands_button = ttk.Menubutton(regions, text="Faixas ▾", width=9, direction="below")
         bands_menu = tk.Menu(self.bands_button, tearoff=False)
         bands_menu.add_command(label="Desenhar faixa", command=lambda: self._toggle_roi_mode("bands"))
@@ -387,7 +418,10 @@ class LevainPeakApp:
         )
         self.pause_button = button(session, "Pausar", self._toggle_pause, width=8, state="disabled")
         self.clear_button = button(session, "Limpar", self._clear_session, width=7)
-        self.resume_button = button(files, "Retomar", self._resume_session, width=9)
+        self.resume_button = ttk.Menubutton(files, text="Retomar ▾", width=10, direction="below")
+        self._resume_menu = tk.Menu(self.resume_button, tearoff=False, postcommand=self._fill_resume_menu)
+        self.resume_button.configure(menu=self._resume_menu)
+        self.resume_button.pack(side="left", padx=(0, 6))
         self.open_csv_button = button(files, "CSV", self._open_session_csv, width=6)
         self.graph_button = ttk.Menubutton(files, text="Gráfico ▾", width=9, direction="below")
         graph_menu = tk.Menu(self.graph_button, tearoff=False)
@@ -558,7 +592,7 @@ class LevainPeakApp:
         """The window's pot (box and contour) is the one the reading uses. When they differ the reading is
         measuring something else (the automatic search, another pot) while the screen shows the drawing."""
         analyzer = self._analyzer
-        if analyzer.aligned is not None or self._outline_mode or self._roi_mode or self._reposition_mode:
+        if self._auto_detect or analyzer.aligned is not None or self._outline_mode or self._roi_mode or self._reposition_mode:
             return  # the reading just moved the drawing and the window has not taken it yet
         outline = None if self._pot_outline is None else tuple(tuple(point) for point in self._pot_outline)
         held = None if analyzer.outline is None else tuple(tuple(point) for point in analyzer.outline)
@@ -981,6 +1015,12 @@ class LevainPeakApp:
         self._redraw_current_frame()
 
     def _clear_bands(self) -> None:
+        if self._settings.surface_bands and not messagebox.askyesno(
+            "Apagar faixas",
+            f"Apagar as {len(self._settings.surface_bands)} faixas desenhadas?\nA leitura volta a olhar o pote todo.",
+            parent=self.root,
+        ):
+            return
         self._set_bands((), use=False)
         self._set_message("Faixas apagadas: a leitura volta a olhar o pote todo.")
 
@@ -1213,6 +1253,7 @@ class LevainPeakApp:
         if kept is not None and kept[0] <= roi[0] and kept[1] <= roi[1] and kept[2] >= roi[2] and kept[3] >= roi[3]:
             roi = tuple(kept)  # the box the user drew around the pot still holds the new contour
         self._cancel_outline_mode()
+        self._end_auto_detect()
         self._pot_outline = outline
         self._manual_pot_roi = roi
         if self._analyzer is not None:
@@ -1382,6 +1423,7 @@ class LevainPeakApp:
         scale = self._reposition_scale
         self._reposition_scale = 1.0
         self._reposition_center = None
+        self._end_auto_detect()
         self._pot_outline, self._manual_pot_roi = outline, roi
         self._manual_marker_y = marker
         if self._analyzer is not None:
@@ -1460,6 +1502,7 @@ class LevainPeakApp:
             return
         selected_roi = (left, top, right, bottom)
         if self._roi_target == "pot":
+            self._end_auto_detect()
             self._manual_pot_roi = selected_roi
             # The same pot in a new search area: the drawn contour (and the mark placed
             # for it) still hold when the contour lies inside the area.
@@ -1508,24 +1551,34 @@ class LevainPeakApp:
         self._cancel_roi_mode()
         self._set_message(message)
 
-    def _use_automatic_detection(self) -> None:
-        self._manual_pot_roi = None
-        self._pot_outline = None
+    def _toggle_auto_detect(self) -> None:
+        """Let the automatic search find the pot while the drawn box and contour are kept aside, untouched;
+        unchecking goes back to the drawing. The series is joined at the level it had, not restarted."""
+        on = bool(self._auto_detect_var.get())
+        if on == self._auto_detect:
+            return
+        self._auto_detect = on
         if self._analyzer is not None:
-            self._analyzer.roi = None
-            self._analyzer.outline = None
-            self._analyzer.vessel_bounds.clear()
-        self._manual_marker_y = None
-        self._persist_marker()
+            self._analyzer.join_here()
+            if on:
+                self._auto_bounds_stash = dict(self._analyzer.vessel_bounds)
+                self._analyzer.roi = self._analyzer.outline = None
+                self._analyzer.vessel_bounds.clear()
+            else:
+                self._analyzer.roi, self._analyzer.outline = self._manual_pot_roi, self._pot_outline
+                self._analyzer.vessel_bounds.clear()
+                self._analyzer.vessel_bounds.update(getattr(self, "_auto_bounds_stash", {}))
         self._last_container_box = None
         self._measurement = None
-        self.auto_pot_button.configure(state="disabled")
-        self.draw_pot_button.configure(text="Pote")
-        if self._session_log.active:
-            self._session_baseline = None
-            self._reset_tracking()
-            self._session_log.save_regions(None, self._temperature_roi, outline=None)
-        self._set_message("Detecção automática ativada.")
+        self._set_message(
+            "Detecção automática do pote ligada: o desenho continua guardado; desmarque para voltar a ele."
+            if on else "De volta ao pote desenhado."
+        )
+
+    def _end_auto_detect(self) -> None:
+        """A new drawing (or another session) takes over: the automatic search is over, with nothing to restore."""
+        self._auto_detect = False
+        self._auto_detect_var.set(False)
 
     def _source_point(self, event: tk.Event, clamp: bool = False) -> tuple[int, int] | None:
         """The picture's point under the mouse; with ``clamp`` a mouse outside the picture (a drag
@@ -1883,8 +1936,15 @@ class LevainPeakApp:
             self._stream.stop()
         self.root.destroy()
 
-    def _toggle_session(self) -> None:
+    def _toggle_session(self, confirm: bool = True) -> None:
         if self._session_log.active:
+            if confirm and not messagebox.askyesno(
+                "Encerrar sessão",
+                f"Encerrar a sessão ‘{self._session_name or 'sem nome'}’?\n"
+                "Os registros ficam salvos e ela pode ser retomada depois.",
+                parent=self.root,
+            ):
+                return
             path = self._session_log.stop()
             self._set_paused(False)
             self.pause_button.configure(state="disabled")
@@ -2734,7 +2794,34 @@ class LevainPeakApp:
                     font=("TkDefaultFont", 9, "italic"),
                 )
 
-    def _resume_session(self) -> None:
+    def _fill_resume_menu(self) -> None:
+        """The saved sessions, newest first, each with when it ran; a click asks before resuming it."""
+        menu = self._resume_menu
+        menu.delete(0, "end")
+        entries = list_sessions(self._session_log.directory)
+        for entry in entries:
+            menu.add_command(label=entry.label, command=lambda path=entry.path: self._confirm_resume(path))
+        if not entries:
+            menu.add_command(label="Nenhuma sessão salva", state="disabled")
+        menu.add_separator()
+        menu.add_command(label="Abrir um arquivo…", command=self._resume_from_file)
+
+    def _confirm_resume(self, path: Path) -> None:
+        if self._session_log.active:
+            self._set_message("Encerre a sessão ativa antes de retomar outra.")
+            return
+        entry = describe_session(path)
+        gap = "" if entry.last is None else f"\nÚltima leitura: {entry.last:%d/%m às %H:%M} (há {self._elapsed_text((datetime.now().astimezone() - entry.last).total_seconds())})."
+        if not messagebox.askyesno(
+            "Retomar sessão",
+            f"Retomar ‘{entry.name}’?{gap}\n\n"
+            "As novas leituras serão acrescentadas ao mesmo arquivo (o intervalo parado aparece como uma lacuna).",
+            parent=self.root,
+        ):
+            return
+        self._resume_from(path)
+
+    def _resume_from_file(self) -> None:
         if self._session_log.active:
             self._set_message("Encerre a sessão ativa antes de retomar outra.")
             return
@@ -2743,7 +2830,7 @@ class LevainPeakApp:
             filetypes=(("CSV", "*.csv"),), parent=self.root,
         )
         if selected:
-            self._resume_from(Path(selected))
+            self._confirm_resume(Path(selected))
 
     def _resume_latest_session(self, name: str | None = None) -> None:
         if name:
@@ -2796,6 +2883,7 @@ class LevainPeakApp:
             self._phone_interval_var.set(str(self._settings.phone_interval_seconds))
             self._phone_snapshot_var.set(self._settings.phone_snapshot)
             self._apply_phone_settings()
+        self._end_auto_detect()
         self._manual_pot_roi = regions.get("pot")
         self._temperature_roi = regions.get("thermometer")
         logging.info("Sessão retomada: pote %s, termômetro %s", self._manual_pot_roi, self._temperature_roi)
@@ -2878,8 +2966,9 @@ class LevainPeakApp:
             parent=self.root,
         ):
             return
+        self._end_auto_detect()
         if self._session_log.active:
-            self._toggle_session()
+            self._toggle_session(confirm=False)
         self._session_log = SessionLog(sample_seconds=self._settings.record_interval_seconds)
         self._settings = load_settings()  # the global choices, not what the closed session carried
         self._phone_enabled_var.set(self._settings.phone_enabled)

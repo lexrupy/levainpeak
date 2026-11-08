@@ -216,6 +216,12 @@ class ContainerAnalyzer:
             volume_fraction=float(np.clip(profile[index] + self.volume_offset + self._join_offset, 0.0, 1.0)),
         )
 
+    def join_here(self) -> None:
+        """The region the reading uses is about to change: join the series at the level it has now."""
+        if self._last_volume is not None:
+            self.anchor_volume = self._last_volume
+            self.rejoin()
+
     def rejoin(self) -> None:
         """Join the series again at the next reading, to ``anchor_volume`` (after a pause)."""
         self._last_volume = None
