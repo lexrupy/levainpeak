@@ -27,8 +27,8 @@ from levainpeak.config import load_camera_config
 from levainpeak.debug_view import DebugWindow
 from levainpeak.floating import FloatingWindowControls
 from levainpeak.forecast import DoublingForecaster
-from levainpeak.graph_data import (TEMPERATURE_SCALES, VOLUME_SCALES, prepare_graph_data,
-                                   temperature_axis, volume_scale)
+from levainpeak.graph_data import (TEMPERATURE_SCALES, VOLUME_SCALES, forecast_growth,
+                                   prepare_graph_data, temperature_axis, volume_scale)
 from levainpeak.graph_phases import (DECLINE, EXPONENTIAL, LATENCY, STATIONARY,
                                      graph_phase_segments)
 from levainpeak.phone_config import load_phone_config, local_link, online_link
@@ -2575,6 +2575,8 @@ class LevainPeakApp:
             predicted = predicted.astimezone(first_time.tzinfo) if first_time.tzinfo else predicted.replace(tzinfo=None)
             if predicted <= first_time:
                 predicted = None
+        if predicted is not None and baseline and any(volume >= 2 * baseline for _, volume, _ in samples):
+            predicted = None  # already doubled: a forecast kept from before would only mislead
         end_time = max(predicted, samples[-1][0]) if predicted is not None else samples[-1][0]
         duration = max(1.0, (end_time - first_time).total_seconds())
         x_of = lambda stamp: left + (stamp - first_time).total_seconds() / duration * plot_width
@@ -2680,13 +2682,13 @@ class LevainPeakApp:
                 )
 
         if predicted is not None and initial_volume:
-            # An exponential from the initial volume at the start to twice that at the forecast time:
+            # The expected curve: a lag near the initial volume, then an exponential to twice that at the forecast time:
             # dotted and pale, so it reads as what was expected and not as what was measured.
             points = []
             for step in range(61):
                 fraction = step / 60
                 stamp = first_time + (predicted - first_time) * fraction
-                points.extend((x_of(stamp), y_volume(initial_volume * 2 ** fraction)))
+                points.extend((x_of(stamp), y_volume(initial_volume * forecast_growth(fraction))))
             canvas.create_line(*points, fill="#a9c6d6", width=2, dash=(2, 5))
             canvas.create_text(
                 points[-2], points[-1] - 10, text=f"dobro {predicted:%H:%M}",
@@ -3153,6 +3155,7 @@ class LevainPeakApp:
             label.configure(text="O dobro estimado excede a capacidade do pote")
             return
         if current >= target:
+            self._session_log.clear_forecast()  # it came true: the saved forecast is not shown again
             reached = self._session_log.reached_at(2.0) or now
             label.configure(
                 text=self._reached_text(reached, self._session_log.reached_before_monitoring(2.0))
