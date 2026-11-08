@@ -225,3 +225,23 @@ def test_narrow_drawn_bands_can_vote_together_even_when_they_sit_far_apart():
     reading = read_strips(gray, 0, 400, 0, 400, bands=narrow)
     assert reading.level is not None and abs(reading.level - 300) < 3
     assert 0.5 < reading.confidence < 1.0 and not reading.dome
+
+
+def test_while_the_lamp_holds_the_strips_keep_reading_unless_they_jump():
+    from levainpeak.analysis import ContainerAnalyzer
+
+    outline = ((700, 300), (1300, 300), (1280, 800), (720, 800))
+    analyzer = ContainerAnalyzer(stream=object())
+
+    def frame_with(surface):
+        frame = np.full((1080, 1920, 3), 60, np.uint8)
+        frame[surface:800, 700:1300] = 200
+        return frame
+
+    analyzer._hold_follow_y = 640.0
+    followed = analyzer._follow_during_hold(frame_with(634), (650, 250, 1350, 850), outline)
+    assert followed is not None and abs(followed.surface_y - 634) <= 2  # a smooth rise is followed
+    assert abs(analyzer._hold_follow_y - followed.surface_y) < 1e-6
+    assert analyzer._follow_during_hold(frame_with(520), (650, 250, 1350, 850), outline) is None  # a jump is the light
+    analyzer._hold_follow_y = None
+    assert analyzer._follow_during_hold(frame_with(634), (650, 250, 1350, 850), outline) is None  # nothing held yet

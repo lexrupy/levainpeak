@@ -81,6 +81,8 @@ class ContainerAnalyzer:
         self._lamp = LampWatch()
         self._recent: deque = deque()  # (time, stable measurement) of the last two minutes
         self.lamp_held = False
+        self.hold_follow_step = 0.03  # of the glass's height: how far a strip reading may move per read while the lamp holds
+        self._hold_follow_y: float | None = None  # the surface row the last accepted strip reading had
         self.auto_strips = False  # read the surface in many narrow strips that vote
         self.surface_bands: tuple[tuple[float, float], ...] = ()  # strips (fractions of the inner width) the surface is read in
         self._frozen: ContainerMeasurement | None = None
@@ -178,6 +180,25 @@ class ContainerAnalyzer:
             self.rejoin()
         self.surface_bands = tuple(bands)
         self.auto_strips = auto
+
+    def _follow_during_hold(self, frame, roi, outline) -> ContainerMeasurement | None:
+        """The whole-glass strip reading while the lamp holds the level, or None when it is not to be trusted:
+        not read by the strips, or moved from the last accepted row by more than ``hold_follow_step``."""
+        if outline is None or self._hold_follow_y is None:
+            return None
+        try:
+            reading = measure_container(
+                frame, roi=roi, vertical_bounds=self.effective_bounds(), outline=outline,
+                surface_bands=(), auto_strips=True,
+            )
+        except cv2.error:
+            return None
+        if reading is None or reading.empty or reading.method != "automático":
+            return None
+        if abs(reading.surface_y - self._hold_follow_y) > self.hold_follow_step * (reading.bottom - reading.top):
+            return None
+        self._hold_follow_y = float(reading.surface_y)
+        return reading
 
     def rejoin(self) -> None:
         """Join the series again at the next reading, to ``anchor_volume`` (after a pause)."""
@@ -464,9 +485,13 @@ class ContainerAnalyzer:
             if held and self.lamp_held is False:
                 older = [item for stamp, item in self._recent if now - stamp >= 20.0]
                 self._frozen = older[-1] if older else None
+                self._hold_follow_y = None if self._frozen is None else float(self._frozen.surface_y)
             self.lamp_held = held
             if held and self._frozen is not None:
-                measurement = self._frozen
+                # The level is not left frozen while the light changes: the whole-glass strips keep reading
+                # and are taken while they move smoothly (a jump is the light, not the levain).
+                followed = self._follow_during_hold(frame, roi, outline)
+                measurement = self._stabilize_measurement(followed) if followed is not None else self._frozen
             else:
                 measurement = self._stabilize_measurement(measurement)
                 if measurement is not None and not held:
