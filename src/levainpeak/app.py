@@ -697,7 +697,7 @@ class LevainPeakApp:
             "outline": self._pot_outline,
             "face_quad": self._temperature_quad,
             "ink_cut": self._ink_cut_of_profile(),
-            "surface_bands": self._settings.surface_bands,
+            "surface_bands": self._active_bands(),  # only the bands the reading really uses
             "auto_strips": self._method_flags()[0],
             "only": self._method_flags()[1],
             "ink_control": self._ink_control(),

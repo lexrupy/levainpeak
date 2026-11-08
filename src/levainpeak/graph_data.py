@@ -50,7 +50,8 @@ def prepare_graph_data(path: Path, *, peak_seconds: float = 600, artifact_second
         for row in csv.DictReader(source):
             timestamp = datetime.fromisoformat(row["timestamp"])
             volume = float(row["volume_fraction"])
-            if row.get("initial_volume_fraction"):
+            if row.get("initial_volume_fraction") and baseline is None:
+                # The first one: each resume recomputes the level from the mark and it drifts, row after row.
                 baseline = float(row["initial_volume_fraction"])
             raw_temperature = row.get("temperature_c", "")
             # An unread temperature repeats the last good reading.
@@ -82,6 +83,14 @@ def prepare_graph_data(path: Path, *, peak_seconds: float = 600, artifact_second
     cleaned = despike(cleaned, window=window, threshold=0.008)
     # Readings held dead by the lamp, then a leap: drawn as the line between them.
     cleaned = bridge_holds(seconds, cleaned)
+    # The start is 1.0x: the first minutes can flicker (the picture settling) and a high first reading
+    # would hold the whole beginning up, so they are capped at their own median, and the zero of the
+    # graph is not above that level.
+    head = min(len(cleaned), 90)
+    start_level = min(float(median(cleaned[i:i + 9])) for i in range(max(1, head - 8)))
+    settled = next((i for i in range(head) if cleaned[i] <= start_level * 1.01), 0)
+    cleaned[:settled] = [min(value, start_level) for value in cleaned[:settled]]
+    baseline = start_level if not baseline or baseline <= 0 else min(baseline, start_level)
     # A later reading that rises above an earlier level proves the readings
     # under that level in between were wrong: rebuild them from the valid
     # neighbours.
