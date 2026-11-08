@@ -16,7 +16,7 @@ from levainpeak.stream import rotate_frame
 
 MIN_FPS = 1
 MAX_FPS = 30
-DEFAULT_FPS = 5
+DEFAULT_FPS = 25
 CACHE_FRAMES = 24
 RECENT_SESSIONS = 10
 

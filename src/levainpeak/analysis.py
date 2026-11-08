@@ -85,6 +85,7 @@ class ContainerAnalyzer:
         self._hold_follow_y: float | None = None  # the surface row the last accepted strip reading had
         self._hold_base_y: float | None = None  # the strip reading's row when the hold began: only its change counts
         self.auto_strips = False  # read the surface in many narrow strips that vote
+        self.only_method = ""  # "pote" / "faixas" / "central": that reading alone, no fall; empty: the cascade
         self.surface_bands: tuple[tuple[float, float], ...] = ()  # strips (fractions of the inner width) the surface is read in
         self._frozen: ContainerMeasurement | None = None
         self._reference_generation = 0
@@ -169,18 +170,20 @@ class ContainerAnalyzer:
         """How far the series is moved from the raw reading (join across contours and profiles)."""
         return self.volume_offset + self._join_offset
 
-    def set_surface_bands(self, bands: tuple, auto: bool | None = None) -> None:
+    def set_surface_bands(self, bands: tuple, auto: bool | None = None, only: str | None = None) -> None:
         """Read the surface in these strips (empty: the whole pot), with the automatic strips or without.
         The new reading sits a little off the old one, so the series is joined at the level it had
         instead of showing a step."""
         auto = self.auto_strips if auto is None else bool(auto)
-        if tuple(bands) == self.surface_bands and auto == self.auto_strips:
+        only = self.only_method if only is None else only
+        if tuple(bands) == self.surface_bands and auto == self.auto_strips and only == self.only_method:
             return
         if self._last_volume is not None:
             self.anchor_volume = self._last_volume
             self.rejoin()
         self.surface_bands = tuple(bands)
         self.auto_strips = auto
+        self.only_method = only
 
     def _follow_during_hold(self, frame, roi, outline) -> ContainerMeasurement | None:
         """The level while the lamp holds it: the held level moved by how much the whole-glass strips moved
@@ -412,7 +415,7 @@ class ContainerAnalyzer:
 
     def region_key(self) -> tuple:
         """The regions as they are set now (pot area, contour, thermometer area, face corners)."""
-        return (self.roi, self.outline, self.temperature_roi, self.temperature_quad, self.surface_bands, self.auto_strips)
+        return (self.roi, self.outline, self.temperature_roi, self.temperature_quad, self.surface_bands, self.auto_strips, self.only_method)
 
     def latest_result(
         self,
@@ -485,7 +488,7 @@ class ContainerAnalyzer:
             try:
                 measurement = measure_container(
                     frame, roi=roi, vertical_bounds=self.effective_bounds(),
-                    outline=outline, surface_bands=key[4], auto_strips=key[5],
+                    outline=outline, surface_bands=key[4], auto_strips=key[5], only=key[6],
                 )
             except cv2.error:
                 measurement = None

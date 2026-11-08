@@ -142,6 +142,7 @@ def build_debug_mosaic(
     ink_cut: float | None = None,
     surface_bands: tuple[tuple[float, float], ...] = (),
     auto_strips: bool = False,
+    only: str = "",
 ) -> np.ndarray:
     """One BGR image with the stages of the pot, surface and thermometer reads.
 
@@ -164,7 +165,7 @@ def build_debug_mosaic(
         try:
             raw = measure_container(
                 frame, roi=pot_roi, vertical_bounds=vertical_bounds, outline=outline,
-                surface_bands=surface_bands, auto_strips=auto_strips,
+                surface_bands=surface_bands, auto_strips=auto_strips, only=only,
             )
         except cv2.error:
             raw = None
@@ -578,6 +579,7 @@ def _diagnostics_worker(
                 outline=state.get("outline"), face_quad=state.get("face_quad"),
                 ink_cut=state.get("ink_cut"),
                 surface_bands=state.get("surface_bands", ()), auto_strips=state.get("auto_strips", False),
+                only=state.get("only", ""),
             )
         except Exception:  # noqa: BLE001 - a diagnostics glitch must not kill the thread
             logging.exception("Falha ao montar o diagnóstico")

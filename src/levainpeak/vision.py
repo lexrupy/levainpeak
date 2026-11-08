@@ -42,6 +42,7 @@ def measure_container(
     outline: tuple[tuple[int, int], ...] | None = None,
     surface_bands: tuple[tuple[float, float], ...] = (),
     auto_strips: bool = False,
+    only: str = "",
 ) -> ContainerMeasurement | None:
     """Find a prominent vessel and estimate its filled-volume fraction.
 
@@ -54,6 +55,9 @@ def measure_container(
 
     ``auto_strips`` reads the surface in many narrow strips across the glass that vote (see
     ``surface_strips``); with ``surface_bands`` too, only the strips inside those bands vote.
+
+    ``only`` fixes the reading method with no fall to the next one ("pote": the whole glass's strips,
+    "faixas": the drawn bands, "central": the middle of the pot); empty keeps the cascade.
 
     ``outline`` is the vessel's inner contour drawn by the user (polygon, frame
     coordinates). It replaces the search for the walls, top and bottom, so a
@@ -89,7 +93,7 @@ def measure_container(
                 else (vertical_bounds[0] - y0, vertical_bounds[1] - y0)
             ),
             outline=None if outline is None else tuple((x - x0, y - y0) for x, y in outline),
-            surface_bands=surface_bands, auto_strips=auto_strips,
+            surface_bands=surface_bands, auto_strips=auto_strips, only=only,
         )
         if local is None:
             return None
@@ -156,18 +160,31 @@ def measure_container(
     method = ""
     if outline_edges is not None:
         infrared = float(np.abs(frame[..., 0].astype(np.int16) - frame[..., 2]).mean()) < 3
-        surface = (
-            _find_surface_by_strips(gray, left, right, inner_top, inner_bottom, infrared, surface_bands) if auto_strips else None
-        )
-        method = "automático"
-        if surface is None:
-            surface = _find_surface_in_bands(gray, left, right, inner_top, inner_bottom, infrared, surface_bands)
-            method = "faixas"
-        if surface is None:
-            surface = _find_surface_from_below(gray, left, right, inner_top, inner_bottom, infrared)
-            method = "central"
+        surface = None
+        if only in ("pote", "faixas", "central"):
+            if only == "pote":
+                surface = _find_surface_by_strips(gray, left, right, inner_top, inner_bottom, infrared, ())
+                method = "automático"
+            elif only == "faixas":
+                surface = _find_surface_in_bands(gray, left, right, inner_top, inner_bottom, infrared, surface_bands)
+                method = "faixas"
+            else:
+                surface = _find_surface_from_below(gray, left, right, inner_top, inner_bottom, infrared)
+                method = "central"
+        else:
+            if auto_strips:
+                surface = _find_surface_by_strips(gray, left, right, inner_top, inner_bottom, infrared, surface_bands)
+            method = "automático"
+            if surface is None:
+                surface = _find_surface_in_bands(gray, left, right, inner_top, inner_bottom, infrared, surface_bands)
+                method = "faixas"
+            if surface is None:
+                surface = _find_surface_from_below(gray, left, right, inner_top, inner_bottom, infrared)
+                method = "central"
         if surface is None:
             method = ""
+    if surface is None and only and outline_edges is not None:
+        return _empty_outline_measurement(outline_edges)  # a fixed method does not fall to another
     if surface is None and marker_confidence >= 0.2:
         surface = _find_surface_by_columns(frame, left, right, inner_top, inner_bottom, marker_y)
     if surface is None:

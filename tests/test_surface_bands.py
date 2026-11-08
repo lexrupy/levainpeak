@@ -33,7 +33,7 @@ def _app(bands=(), outline=((100, 100), (500, 100), (480, 400), (120, 400)), use
     from levainpeak.settings import Settings
 
     app = SimpleNamespace(
-        _settings=Settings(surface_bands=bands, use_surface_bands=use), _pot_outline=outline,
+        _settings=Settings(surface_bands=bands, reading_method="faixas" if use else "automático"), _pot_outline=outline,
         _source_frame_size=(1920, 1080), messages=[], saved=[],
     )
     app._set_message = app.messages.append
@@ -253,3 +253,18 @@ def test_while_the_lamp_holds_the_held_level_moves_with_the_strips_change_only()
     assert lower is not None and lower.surface_y == held.surface_y and lower.volume_fraction >= held.volume_fraction - 1e-9  # never below the held level
     analyzer._frozen = None
     assert analyzer._follow_during_hold(frame_with(634), roi, outline) is None  # nothing held
+
+
+def test_a_fixed_reading_method_does_not_fall_to_another_and_old_flags_migrate():
+    from levainpeak.settings import Settings
+    from levainpeak.vision import measure_container
+
+    outline = ((700, 300), (1300, 300), (1280, 800), (720, 800))
+    frame = np.full((1080, 1920, 3), 60, np.uint8)
+    frame[640:800, 700:1300] = 200
+    roi = (650, 250, 1350, 850)
+    assert measure_container(frame, roi=roi, outline=outline, only="pote").method == "automático"
+    assert measure_container(frame, roi=roi, outline=outline, only="central").method == "central"
+    assert measure_container(frame, roi=roi, outline=outline, only="faixas").empty  # no bands: no fall
+    assert Settings(reading_method="", use_surface_bands=True).clamped().reading_method == "faixas"
+    assert Settings(reading_method="", auto_surface_strips=True).clamped().reading_method == "automático"

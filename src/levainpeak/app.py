@@ -191,8 +191,7 @@ class LevainPeakApp:
             self._analyzer.ink_cut_infrared = self._settings.ink_cut_infrared
             self._analyzer.ink_cut_day = self._settings.ink_cut_day
             self._analyzer.use_mark = self._settings.mark_alignment
-            self._analyzer.surface_bands = self._active_bands()
-            self._analyzer.auto_strips = self._settings.auto_surface_strips
+            self._apply_method()
             self._analyzer.lamp_hold_seconds = self._settings.lamp_minutes * 60.0
             self._analyzer.start()
             self._set_message("Iniciando conexão com a câmera…")
@@ -393,12 +392,14 @@ class LevainPeakApp:
         bands_menu = tk.Menu(self.bands_button, tearoff=False)
         bands_menu.add_command(label="Desenhar faixa", command=lambda: self._toggle_roi_mode("bands"))
         bands_menu.add_command(label="Apagar faixas", command=self._clear_bands)
-        self._auto_strips_var = tk.BooleanVar(value=self._settings.auto_surface_strips)
-        bands_menu.add_checkbutton(
-            label="Faixas automáticas (o pote todo)", variable=self._auto_strips_var, command=self._toggle_auto_strips
-        )
-        self._bands_var = tk.BooleanVar(value=self._settings.use_surface_bands)
-        bands_menu.add_checkbutton(label="Ler só as faixas", variable=self._bands_var, command=self._toggle_bands)
+        self._method_var = tk.StringVar(value=self._settings.reading_method)
+        for label, value in (
+            ("Leitura: Automático (pote todo, cai para o central)", "automático"),
+            ("Leitura: Pote todo (fixo)", "pote todo"),
+            ("Leitura: Só as faixas (fixo)", "faixas"),
+            ("Leitura: Central (fixo)", "central"),
+        ):
+            bands_menu.add_radiobutton(label=label, value=value, variable=self._method_var, command=self._choose_method)
         self._show_bands_var = tk.BooleanVar(value=self._settings.show_surface_bands)
         bands_menu.add_checkbutton(
             label="Sempre exibir as faixas", variable=self._show_bands_var, command=self._toggle_show_bands
@@ -696,7 +697,8 @@ class LevainPeakApp:
             "face_quad": self._temperature_quad,
             "ink_cut": self._ink_cut_of_profile(),
             "surface_bands": self._settings.surface_bands,
-            "auto_strips": self._settings.auto_surface_strips,
+            "auto_strips": self._method_flags()[0],
+            "only": self._method_flags()[1],
             "ink_control": self._ink_control(),
             "vertical_bounds": None if self._analyzer is None else self._analyzer.effective_bounds(),
         }
@@ -909,14 +911,31 @@ class LevainPeakApp:
     def _active_bands(self) -> tuple:
         """The strips the analyzer reads: the drawn ones, when the option is on and there are enough."""
         settings = self._settings
-        return settings.surface_bands if settings.use_surface_bands and len(settings.surface_bands) >= MIN_SURFACE_BANDS else ()
+        return settings.surface_bands if settings.reading_method == "faixas" and len(settings.surface_bands) >= MIN_SURFACE_BANDS else ()
+
+    def _method_flags(self) -> tuple[bool, str]:
+        """(automatic strips on, the one fixed method or "") for the chosen reading method."""
+        method = self._settings.reading_method
+        return method in ("automático", "pote todo"), {"pote todo": "pote", "faixas": "faixas", "central": "central"}.get(method, "")
+
+    def _apply_method(self) -> None:
+        auto, only = self._method_flags()
+        self._analyzer.surface_bands = self._active_bands()
+        self._analyzer.auto_strips = auto
+        self._analyzer.only_method = only
 
     def _set_bands(self, bands: tuple, use: bool | None = None) -> None:
-        use = self._settings.use_surface_bands if use is None else use
-        self._settings = replace(self._settings, surface_bands=bands, use_surface_bands=use).clamped()
-        self._bands_var.set(self._settings.use_surface_bands)
+        """Store the drawn bands; ``use`` False takes the reading off "faixas" (to automatic), True puts it on."""
+        method = self._settings.reading_method
+        if use is True:
+            method = "faixas"
+        elif use is False and method == "faixas":
+            method = "automático"
+        self._settings = replace(self._settings, surface_bands=bands, reading_method=method).clamped()
+        self._method_var.set(self._settings.reading_method)
         if self._analyzer is not None:
-            self._analyzer.set_surface_bands(self._active_bands(), auto=self._settings.auto_surface_strips)
+            auto, only = self._method_flags()
+            self._analyzer.set_surface_bands(self._active_bands(), auto=auto, only=only)
         try:
             save_settings(self._settings)
         except OSError:
@@ -987,24 +1006,26 @@ class LevainPeakApp:
         self._set_message(
             f"{count} faixa(s). " + (
                 "Marque pelo menos mais uma." if count < MIN_SURFACE_BANDS
-                else 'Ative "Ler só as faixas" no menu para usá-las.' if not self._settings.use_surface_bands
+                else 'Escolha "Só as faixas" no menu para usá-las.' if self._settings.reading_method != "faixas"
                 else "A leitura usa só as faixas."
             )
         )
 
-    def _toggle_auto_strips(self) -> None:
-        use = bool(self._auto_strips_var.get())
-        self._settings = replace(self._settings, auto_surface_strips=use).clamped()
+    def _choose_method(self) -> None:
+        method = str(self._method_var.get())
+        if method == "faixas" and len(self._settings.surface_bands) < MIN_SURFACE_BANDS:
+            self._method_var.set(self._settings.reading_method)
+            self._set_message(f"Desenhe pelo menos {MIN_SURFACE_BANDS} faixas antes de ler só as faixas.")
+            return
+        self._settings = replace(self._settings, reading_method=method).clamped()
         if self._analyzer is not None:
-            self._analyzer.set_surface_bands(self._active_bands(), auto=use)
+            auto, only = self._method_flags()
+            self._analyzer.set_surface_bands(self._active_bands(), auto=auto, only=only)
         try:
             save_settings(self._settings)
         except OSError:
-            logging.exception("Falha ao salvar as faixas automáticas")
-        self._set_message(
-            "Leitura por faixas automáticas: o pote todo vota (as suas faixas, se ligadas, restringem o voto)." if use
-            else "Leitura sem as faixas automáticas."
-        )
+            logging.exception("Falha ao salvar o método de leitura")
+        self._set_message(f"Método de leitura: {method}.")
 
     def _toggle_show_bands(self) -> None:
         self._settings = replace(self._settings, show_surface_bands=bool(self._show_bands_var.get())).clamped()
@@ -1023,15 +1044,6 @@ class LevainPeakApp:
             return
         self._set_bands((), use=False)
         self._set_message("Faixas apagadas: a leitura volta a olhar o pote todo.")
-
-    def _toggle_bands(self) -> None:
-        use = bool(self._bands_var.get())
-        if use and len(self._settings.surface_bands) < MIN_SURFACE_BANDS:
-            self._set_bands(self._settings.surface_bands, use=False)
-            self._set_message(f"Desenhe pelo menos {MIN_SURFACE_BANDS} faixas antes de ligar a leitura por faixas.")
-            return
-        self._set_bands(self._settings.surface_bands, use=use)
-        self._set_message("A leitura usa só as faixas." if use else "A leitura olha o pote todo.")
 
     def _toggle_roi_mode(self, target: str) -> None:
         self._cancel_outline_mode()
@@ -2812,14 +2824,14 @@ class LevainPeakApp:
                 )
 
     def _fill_resume_menu(self) -> None:
-        """The saved sessions, newest first, each with when it ran; a click asks before resuming it."""
+        """The saved sessions not yet ended, newest first, each with when it ran; a click asks before resuming it."""
         menu = self._resume_menu
         menu.delete(0, "end")
-        entries = list_sessions(self._session_log.directory)
+        entries = [entry for entry in list_sessions(self._session_log.directory) if not entry.ended]
         for entry in entries:
             menu.add_command(label=entry.label, command=lambda path=entry.path: self._confirm_resume(path))
         if not entries:
-            menu.add_command(label="Nenhuma sessão salva", state="disabled")
+            menu.add_command(label="Nenhuma sessão em aberto", state="disabled")
         menu.add_separator()
         menu.add_command(label="Abrir um arquivo…", command=self._resume_from_file)
 
