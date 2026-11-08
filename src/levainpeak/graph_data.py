@@ -16,24 +16,6 @@ from levainpeak.graph_phases import graph_phase_segments
 from levainpeak.sessions import PhaseTracker
 
 
-# Fitted to the five sessions that doubled (6 to 8/11), each laid on a time axis where 1.0 is its doubling:
-# the mean error against the real curves falls from 0.17 (straight 2**f) to 0.05.
-FORECAST_LAG_SHARE = 0.1  # of the time to the doubling spent near the start level
-FORECAST_SHARPNESS = 0.5  # how steeply the exponential climbs once it has started (low: nearly a parabola)
-
-
-def forecast_growth(fraction: float, lag_share: float = FORECAST_LAG_SHARE, sharpness: float = FORECAST_SHARPNESS) -> float:
-    """The growth factor expected at ``fraction`` (0 to 1) of the way from the start to the doubling.
-
-    The levain sits near its start level for a while (the lag), then takes off exponentially and reaches
-    twice the initial volume at 1.0. The take-off begins with no slope, as a real curve does, so the
-    line bends instead of breaking at the end of the lag."""
-    if fraction <= lag_share:
-        return 1.0
-    u = min(1.0, (fraction - lag_share) / (1.0 - lag_share))
-    return 1.0 + (np.exp(sharpness * u) - 1.0 - sharpness * u) / (np.exp(sharpness) - 1.0 - sharpness)
-
-
 def prepare_graph_data(path: Path, *, peak_seconds: float = 600, artifact_seconds: float = 720) -> dict:
     """The graph's series from a session CSV: cleaned, phased and smoothed.
 

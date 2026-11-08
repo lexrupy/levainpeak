@@ -27,8 +27,8 @@ from levainpeak.config import load_camera_config
 from levainpeak.debug_view import DebugWindow
 from levainpeak.floating import FloatingWindowControls
 from levainpeak.forecast import DoublingForecaster
-from levainpeak.graph_data import (TEMPERATURE_SCALES, VOLUME_SCALES, forecast_growth,
-                                   prepare_graph_data, temperature_axis, volume_scale)
+from levainpeak.graph_data import (TEMPERATURE_SCALES, VOLUME_SCALES, prepare_graph_data,
+                                   temperature_axis, volume_scale)
 from levainpeak.graph_phases import (DECLINE, EXPONENTIAL, LATENCY, STATIONARY,
                                      graph_phase_segments)
 from levainpeak.phone_config import load_phone_config, local_link, online_link
@@ -767,16 +767,20 @@ class LevainPeakApp:
                     self._sync_vessel_bounds()
                     self._handle_container_change(self._measurement)
                     if (
-                        self._measurement is not None and self._session_log.active and self._session_baseline is None
-                        and self._manual_marker_y is None and not self._measurement.empty
+                        self._measurement is not None and not self._measurement.empty
                         and self._measurement.volume_below_profile
+                        and (
+                            self._manual_marker_y is None
+                            or (self._marker_automatic and not self._session_log.active)
+                        )
                     ):
-                        # The first reading of the session puts the initial mark at the surface it found;
-                        # "Marcar início" is for placing it by hand afterwards.
+                        # The initial mark sits at the surface the detection found, following it until the
+                        # session starts; "Marcar início" is for placing it by hand.
                         self._manual_marker_y = int(self._measurement.surface_y)
                         self._marker_automatic = True
-                        self._persist_marker()
-                        self._capture_pot_reference()
+                        if self._session_log.active:  # the first reading of the session fixes it
+                            self._persist_marker()
+                            self._capture_pot_reference()
                     if self._measurement is not None and self._manual_marker_y is not None and not self._baseline_locked:
                         self._measurement = set_initial_marker(
                             self._measurement, self._manual_marker_y,
@@ -2683,13 +2687,13 @@ class LevainPeakApp:
                 )
 
         if predicted is not None and initial_volume:
-            # The expected curve: a lag near the initial volume, then an exponential to twice that at the forecast time:
+            # An exponential from the initial volume at the start to twice that at the forecast time:
             # dotted and pale, so it reads as what was expected and not as what was measured.
             points = []
             for step in range(61):
                 fraction = step / 60
                 stamp = first_time + (predicted - first_time) * fraction
-                points.extend((x_of(stamp), y_volume(initial_volume * forecast_growth(fraction))))
+                points.extend((x_of(stamp), y_volume(initial_volume * 2 ** fraction)))
             canvas.create_line(*points, fill="#a9c6d6", width=2, dash=(2, 5))
             canvas.create_text(
                 points[-2], points[-1] - 10, text=f"dobro {predicted:%H:%M}",

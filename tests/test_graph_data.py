@@ -98,15 +98,3 @@ def test_the_artifact_time_decides_how_long_a_departure_may_last(tmp_path):
     assert max(volume for _, volume, _ in kept) > 0.45
     dropped = prepare_graph_data(path, artifact_seconds=720)["samples"]
     assert max(volume for _, volume, _ in dropped) < 0.45
-
-
-def test_the_forecast_curve_lags_then_takes_off_and_reaches_the_double():
-    from levainpeak.graph_data import FORECAST_LAG_SHARE, forecast_growth
-
-    assert forecast_growth(0.0) == 1.0 and forecast_growth(FORECAST_LAG_SHARE) == 1.0
-    assert abs(forecast_growth(1.0) - 2.0) < 1e-9
-    values = [forecast_growth(i / 100) for i in range(101)]
-    assert all(b >= a for a, b in zip(values, values[1:]))
-    assert forecast_growth(0.55) < 1.0 + 0.55 * 1.0 - 0.15  # under the straight line: it bends
-    rises = [b - a for a, b in zip(values, values[1:])]
-    assert rises[-1] > 5 * rises[int(FORECAST_LAG_SHARE * 100) + 1]  # and it speeds up
