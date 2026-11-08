@@ -2575,8 +2575,6 @@ class LevainPeakApp:
             predicted = predicted.astimezone(first_time.tzinfo) if first_time.tzinfo else predicted.replace(tzinfo=None)
             if predicted <= first_time:
                 predicted = None
-        if predicted is not None and baseline and any(volume >= 2 * baseline for _, volume, _ in samples):
-            predicted = None  # already doubled: a forecast kept from before would only mislead
         end_time = max(predicted, samples[-1][0]) if predicted is not None else samples[-1][0]
         duration = max(1.0, (end_time - first_time).total_seconds())
         x_of = lambda stamp: left + (stamp - first_time).total_seconds() / duration * plot_width
@@ -3154,9 +3152,11 @@ class LevainPeakApp:
         if target > 1.0:
             label.configure(text="O dobro estimado excede a capacidade do pote")
             return
-        if current >= target:
-            self._session_log.clear_forecast()  # it came true: the saved forecast is not shown again
-            reached = self._session_log.reached_at(2.0) or now
+        already = self._session_log.reached_at(2.0)
+        if current >= target or already is not None:
+            # It came true (or did once, and the level has since slipped under the target): no new forecast.
+            self._session_log.clear_forecast()
+            reached = already or now
             label.configure(
                 text=self._reached_text(reached, self._session_log.reached_before_monitoring(2.0))
             )
@@ -3180,6 +3180,11 @@ class LevainPeakApp:
             label.configure(text="Projeção muito distante; aguardando mais crescimento")
             return
         predicted_at = now + timedelta(minutes=minutes)
+        if minutes > 600:  # leave a trace of what produced an unusually long forecast
+            logging.warning(
+                "Previsão longa do dobro: %.0f min (%s) · volume %.3f, alvo %.3f, taxa %s por min térmico",
+                minutes, basis, current, target, self._forecaster.rate_per_thermal_minute(),
+            )
         known = self._session_log.last_forecast
         if known is None or monotonic_time - self._forecast_saved_at >= 60:
             try:
