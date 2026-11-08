@@ -508,8 +508,14 @@ class ContainerAnalyzer:
                 self.anchor_volume = self._last_volume
                 self.rejoin()
             if held and self.lamp_held is False:
-                older = [item for stamp, item in self._recent if now - stamp >= 20.0]
-                self._frozen = older[-1] if older else None
+                # Not the last reading: the picture starts to change a few seconds before the hold is
+                # noticed and those readings flicker. The middle one of the readings from the 90 s before
+                # the last 20 s is the level the levain really had.
+                older = [item for stamp, item in self._recent if 20.0 <= now - stamp <= 110.0]
+                if not older:
+                    older = [item for stamp, item in self._recent if now - stamp >= 20.0][-1:]
+                older.sort(key=lambda item: item.volume_fraction)
+                self._frozen = older[len(older) // 2] if older else None
                 self._hold_follow_y = None
                 self._hold_base_y = None
             self.lamp_held = held
