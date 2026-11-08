@@ -2636,6 +2636,23 @@ class LevainPeakApp:
         if len(volume_points) >= 4:
             canvas.create_line(*volume_points, fill="#397a9b", width=3, smooth=True)
 
+        if initial_volume and initial_volume > 0:
+            # Where the levain first reached twice its initial volume: a dot on the curve with the time since the mix.
+            doubled = next((item for item in samples if item[1] >= 2 * initial_volume), None)
+            if doubled is not None:
+                stamp, volume, _ = doubled
+                dot_x, dot_y = x_of(stamp), y_volume(volume)
+                canvas.create_oval(dot_x - 5, dot_y - 5, dot_x + 5, dot_y + 5, fill="#2f7d4f", outline="#ffffff", width=2)
+                try:
+                    since = stamp - (mix_time if mix_time is not None else samples[0][0])
+                except TypeError:  # one with a time zone and one without
+                    since = stamp - samples[0][0]
+                minutes = max(0, int(since.total_seconds() // 60))
+                canvas.create_text(
+                    dot_x - 8, dot_y - 4, text=f"✓ dobro · {minutes // 60}h{minutes % 60:02d}",
+                    anchor="se", fill="#2f7d4f", font=("TkDefaultFont", 9, "bold"),
+                )
+
         if predicted is not None and initial_volume:
             # An exponential from the initial volume at the start to twice that at the forecast time:
             # dotted and pale, so it reads as what was expected and not as what was measured.

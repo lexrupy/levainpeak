@@ -163,3 +163,20 @@ def test_the_growth_rate_gets_a_strip_under_the_plot_that_can_be_switched_off_or
     short_canvas.winfo_height = lambda: 330  # too low for two plots
     LevainPeakApp._draw_session_graph(short)
     assert "Taxa de crescimento (%/h, últimos 15 min)" not in short_canvas.texts
+
+
+def test_the_graph_marks_where_the_doubling_was_reached_with_the_time_since_the_mix():
+    app, canvas = _graph_app(prediction=None)
+    start = datetime(2026, 11, 2, 8, 0).astimezone()
+    samples = [(start + timedelta(minutes=10 * i), 0.20 + 0.02 * i, 25.0) for i in range(14)]  # 0.40 at i=10
+    app._graph_data = lambda _p: {
+        "session_name": "S", "too_few": False, "samples": samples, "phases": [], "baseline": 0.20,
+        "mix_time": start - timedelta(minutes=20),
+    }
+    canvas.create_oval = lambda *a, **k: None
+    LevainPeakApp._draw_session_graph(app)
+    assert any(text == "✓ dobro · 2h00" for text in canvas.texts)  # 100 min after the first reading + 20 before it
+    app2, canvas2 = _graph_app(prediction=None)
+    canvas2.create_oval = lambda *a, **k: None
+    LevainPeakApp._draw_session_graph(app2)
+    assert not any("✓" in text for text in canvas2.texts)  # it never doubled
