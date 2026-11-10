@@ -61,3 +61,28 @@ def load_camera_config(path: Path | None = None) -> CameraConfig:
     )
     config.stream_url()
     return config
+
+
+def save_camera_config(config: CameraConfig, path: Path | None = None) -> None:
+    """Write the camera section, keeping any other section or key already in the file."""
+    config.stream_url()
+    config_path = path or Path.cwd() / "camera.ini"
+    parser = configparser.ConfigParser(interpolation=None)
+    if config_path.is_file():
+        parser.read(config_path, encoding="utf-8")
+    if not parser.has_section("camera"):
+        parser.add_section("camera")
+    camera = parser["camera"]
+    for old in ("usuario", "senha", "transporte"):
+        camera.pop(old, None)
+    camera["url"] = config.url.strip()
+    camera["username"] = config.username.strip()
+    camera["password"] = config.password
+    camera["transport"] = config.transport
+    camera["read_timeout_seconds"] = str(config.read_timeout_seconds)
+    with config_path.open("w", encoding="utf-8") as handle:
+        parser.write(handle)
+    try:
+        config_path.chmod(0o600)  # it may hold the camera password
+    except OSError:
+        pass

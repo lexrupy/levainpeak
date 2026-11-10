@@ -23,7 +23,7 @@ import numpy as np
 from PIL import Image, ImageTk
 
 from levainpeak.analysis import ContainerAnalyzer
-from levainpeak.config import load_camera_config
+from levainpeak.config import CameraConfig, load_camera_config, save_camera_config
 from levainpeak.debug_view import DebugWindow
 from levainpeak.floating import FloatingWindowControls
 from levainpeak.forecast import DoublingForecaster
@@ -97,6 +97,54 @@ class _SessionTitle(ttk.Label):
         return super().configure(cnf, **options)
 
     config = configure
+
+
+class _ScrollFrame(ttk.Frame):
+    """A frame that scrolls vertically when its content is taller than the window."""
+
+    def __init__(self, parent) -> None:
+        super().__init__(parent)
+        self._canvas = tk.Canvas(self, highlightthickness=0, background="#f4f1e8")
+        bar = ttk.Scrollbar(self, orient="vertical", command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        self._canvas.pack(side="left", fill="both", expand=True)
+        self.inner = ttk.Frame(self._canvas)
+        self._window = self._canvas.create_window(0, 0, window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", self._resize, add="+")
+        self._canvas.bind("<Configure>", self._resize, add="+")
+        for widget in (self._canvas, self.inner):
+            widget.bind("<Enter>", self._bind_wheel, add="+")
+            widget.bind("<Leave>", self._unbind_wheel, add="+")
+
+    def _resize(self, _event=None) -> None:
+        # Fill the window when there is room (so expanding children still grow); scroll when there is not.
+        width, height = self._canvas.winfo_width(), self._canvas.winfo_height()
+        self._canvas.itemconfigure(
+            self._window, width=width, height=max(height, self.inner.winfo_reqheight())
+        )
+        self._canvas.configure(scrollregion=(0, 0, width, max(height, self.inner.winfo_reqheight())))
+
+    def _bind_wheel(self, _event=None) -> None:
+        self._canvas.bind_all("<MouseWheel>", self._wheel, add="+")
+        self._canvas.bind_all("<Button-4>", self._wheel, add="+")
+        self._canvas.bind_all("<Button-5>", self._wheel, add="+")
+
+    def _unbind_wheel(self, event=None) -> None:
+        if event is not None:  # moving between the canvas and its content is not leaving
+            inside = self.winfo_containing(event.x_root, event.y_root)
+            if inside is not None and str(inside).startswith(str(self)):
+                return
+        for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self._canvas.unbind_all(sequence)
+
+    def _wheel(self, event) -> None:
+        if isinstance(event.widget, (tk.Canvas, ttk.Scale, ttk.Spinbox)) and event.widget is not self._canvas:
+            return  # the video zoom, the sliders and the spin boxes keep their own wheel
+        if self._canvas.yview() == (0.0, 1.0):
+            return
+        step = -1 if (event.num == 4 or getattr(event, "delta", 0) > 0) else 1
+        self._canvas.yview_scroll(step * 2, "units")
 
 
 class LevainPeakApp:
@@ -186,17 +234,7 @@ class LevainPeakApp:
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         try:
-            self._stream = RtspStream(load_camera_config())
-            self._stream.rotation = self._settings.rotation
-            self._stream.start()
-            self._analyzer = ContainerAnalyzer(self._stream)
-            self._analyzer.ink_cut_infrared = self._settings.ink_cut_infrared
-            self._analyzer.ink_cut_day = self._settings.ink_cut_day
-            self._analyzer.use_mark = self._settings.mark_alignment
-            self._apply_method()
-            self._analyzer.lamp_hold_seconds = self._settings.lamp_minutes * 60.0
-            self._analyzer.start()
-            self._set_message("Iniciando conexão com a câmera…")
+            self._connect_camera(load_camera_config())
         except (FileNotFoundError, ValueError) as exc:
             self._set_message(str(exc))
             self.status_value.configure(text="Configuração necessária", foreground="#a43d32")
@@ -216,10 +254,13 @@ class LevainPeakApp:
 
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill="both", expand=True)
-        monitor = ttk.Frame(self.notebook)
-        settings_tab = ttk.Frame(self.notebook, padding=20)
-        self.notebook.add(monitor, text="Monitor")
-        self.notebook.add(settings_tab, text="Configurações")
+        monitor_scroll = _ScrollFrame(self.notebook)
+        settings_scroll = _ScrollFrame(self.notebook)
+        monitor = monitor_scroll.inner
+        settings_tab = ttk.Frame(settings_scroll.inner, padding=20)
+        settings_tab.pack(fill="both", expand=True)
+        self.notebook.add(monitor_scroll, text="Monitor")
+        self.notebook.add(settings_scroll, text="Configurações")
         self._build_settings_tab(settings_tab)
 
         body = ttk.Frame(monitor, padding=(20, 0, 20, 16))
@@ -2163,7 +2204,74 @@ class LevainPeakApp:
             graph_window.destroy()
         return "break"
 
+    def _connect_camera(self, config: CameraConfig) -> None:
+        """Start reading the camera; on a later call the old stream is replaced, keeping the drawings."""
+        stream = RtspStream(config)
+        stream.rotation = self._settings.rotation
+        old = self._stream
+        self._stream = stream
+        stream.start()
+        if self._analyzer is not None:
+            self._analyzer.stream = stream
+        else:
+            self._analyzer = ContainerAnalyzer(stream)
+            self._analyzer.ink_cut_infrared = self._settings.ink_cut_infrared
+            self._analyzer.ink_cut_day = self._settings.ink_cut_day
+            self._analyzer.use_mark = self._settings.mark_alignment
+            self._apply_method()
+            self._analyzer.lamp_hold_seconds = self._settings.lamp_minutes * 60.0
+            self._analyzer.start()
+        if old is not None:
+            old.stop()
+        self._set_message("Iniciando conexão com a câmera…")
+
+    def _save_camera(self) -> None:
+        config = CameraConfig(
+            url=self._camera_url_var.get().strip(),
+            username=self._camera_user_var.get().strip(),
+            password=self._camera_password_var.get(),
+            transport=self._camera_transport_var.get(),
+            read_timeout_seconds=self._camera_timeout,
+        )
+        try:
+            save_camera_config(config)
+        except (ValueError, OSError) as exc:
+            self._camera_note.configure(text=str(exc), foreground="#a43d32")
+            return
+        self._connect_camera(config)
+        self.status_value.configure(foreground="")
+        self._camera_note.configure(text="Salvo em camera.ini; reconectando.", foreground="#59645e")
+
     def _build_settings_tab(self, parent: ttk.Frame) -> None:
+        try:
+            current = load_camera_config()
+        except (FileNotFoundError, ValueError):
+            current = CameraConfig(url="")
+        self._camera_timeout = current.read_timeout_seconds
+        camera = ttk.LabelFrame(parent, text="Câmera", padding=12)
+        camera.pack(fill="x", pady=(0, 12))
+        camera.columnconfigure(1, weight=1)
+        self._camera_url_var = tk.StringVar(value=current.url)
+        self._camera_user_var = tk.StringVar(value=current.username)
+        self._camera_password_var = tk.StringVar(value=current.password)
+        self._camera_transport_var = tk.StringVar(value=current.transport if current.transport in ("tcp", "udp") else "tcp")
+        ttk.Label(camera, text="URL (rtsp://…)").grid(row=0, column=0, sticky="w")
+        ttk.Entry(camera, textvariable=self._camera_url_var).grid(row=0, column=1, columnspan=3, sticky="ew", padx=6)
+        ttk.Label(camera, text="Usuário").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(camera, textvariable=self._camera_user_var, width=18).grid(row=1, column=1, sticky="w", padx=6, pady=(6, 0))
+        ttk.Label(camera, text="Senha").grid(row=1, column=2, sticky="e", pady=(6, 0))
+        ttk.Entry(camera, textvariable=self._camera_password_var, show="•", width=18).grid(
+            row=1, column=3, sticky="w", padx=6, pady=(6, 0))
+        ttk.Label(camera, text="Transporte").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Combobox(camera, textvariable=self._camera_transport_var, values=("tcp", "udp"), width=6,
+                     state="readonly").grid(row=2, column=1, sticky="w", padx=6, pady=(6, 0))
+        ttk.Button(camera, text="Salvar e reconectar", command=self._save_camera).grid(
+            row=2, column=3, sticky="w", padx=6, pady=(6, 0))
+        self._camera_note = ttk.Label(camera, text="", foreground="#59645e", wraplength=560, justify="left")
+        self._camera_note.grid(row=3, column=0, columnspan=4, sticky="w", pady=(6, 0))
+        self._build_session_settings(parent)
+
+    def _build_session_settings(self, parent: ttk.Frame) -> None:
         box = ttk.LabelFrame(parent, text="Registro da sessão", padding=12)
         box.pack(fill="x")
         ttk.Label(box, text="Gravar uma medição no CSV a cada").grid(row=0, column=0, sticky="w")
