@@ -86,3 +86,7 @@ def save_camera_config(config: CameraConfig, path: Path | None = None) -> None:
         config_path.chmod(0o600)  # it may hold the camera password
     except OSError:
         pass
+
+
+if __name__ == "__main__":  # python -m levainpeak.config: the stream URL from camera.ini, for ffplay/ffprobe
+    print(load_camera_config().stream_url())

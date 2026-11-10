@@ -36,12 +36,12 @@ The local `camera.ini` contains the RTSP URL and credentials and is ignored by G
 
 ### Testar a conexão com a câmera
 
-Se o vídeo não abre, teste o stream fora do app (troque usuário, senha e IP):
+Se o vídeo não abre, teste o stream fora do app. O comando `python -m levainpeak.config` lê o `camera.ini` (URL, usuário e senha) e imprime a URL pronta; não use em tela compartilhada, pois mostra a senha:
 
 ```sh
-ffplay -rtsp_transport tcp "rtsp://usuario:senha@IP:554/stream"   # tente udp se tcp falhar
-ffprobe -rtsp_transport tcp "rtsp://usuario:senha@IP:554/stream"  # só mostra o stream, sem janela
-nc -zv IP 554                                                      # a porta RTSP está acessível?
+ffplay -rtsp_transport tcp "$(python -m levainpeak.config)"    # tente udp se tcp falhar
+ffprobe -rtsp_transport tcp "$(python -m levainpeak.config)"   # só mostra o stream, sem janela
+nc -zv IP 554                                                  # a porta RTSP está acessível? (IP da câmera)
 python -c "import cv2; print([l for l in cv2.getBuildInformation().splitlines() if 'FFMPEG' in l])"  # deve dizer YES
 ```
 
