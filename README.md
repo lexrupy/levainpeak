@@ -34,6 +34,19 @@ python -m levainpeak.app --resume   # retoma a sessão gravada mais recentemente
 
 The local `camera.ini` contains the RTSP URL and credentials and is ignored by Git.
 
+### Testar a conexão com a câmera
+
+Se o vídeo não abre, teste o stream fora do app (troque usuário, senha e IP):
+
+```sh
+ffplay -rtsp_transport tcp "rtsp://usuario:senha@IP:554/stream"   # tente udp se tcp falhar
+ffprobe -rtsp_transport tcp "rtsp://usuario:senha@IP:554/stream"  # só mostra o stream, sem janela
+nc -zv IP 554                                                      # a porta RTSP está acessível?
+python -c "import cv2; print([l for l in cv2.getBuildInformation().splitlines() if 'FFMPEG' in l])"  # deve dizer YES
+```
+
+Se o `ffplay` abre e o app não, o problema é o OpenCV (use `opencv-python-headless` do pip) ou o `camera.ini`. Se nenhum abre, é rede, credencial ou limite de conexões da câmera (feche outros clientes e espere alguns segundos).
+
 Do not commit camera credentials, private footage, virtual environments, or generated model artifacts. See [AGENTS.md](AGENTS.md) for contribution guidance.
 
 Licensed under the [MIT License](LICENSE).
