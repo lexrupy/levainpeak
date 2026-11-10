@@ -41,6 +41,7 @@ Se o vídeo não abre, teste o stream fora do app. O comando `python -m levainpe
 ```sh
 ffplay -rtsp_transport tcp "$(python -m levainpeak.config)"    # tente udp se tcp falhar
 ffprobe -rtsp_transport tcp "$(python -m levainpeak.config)"   # só mostra o stream, sem janela
+mpv --rtsp-transport=tcp "$(python -m levainpeak.config)"                       # alternativa ao ffplay
 nc -zv IP 554                                                  # a porta RTSP está acessível? (IP da câmera)
 python -c "import cv2; print([l for l in cv2.getBuildInformation().splitlines() if 'FFMPEG' in l])"  # deve dizer YES
 ```
