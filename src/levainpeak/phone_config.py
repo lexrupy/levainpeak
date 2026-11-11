@@ -104,3 +104,33 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def save_phone_config(config: PhoneConfig, path: Path | None = None) -> None:
+    """Check and write the [phone] section, keeping anything else already in the file."""
+    parts = urlsplit(config.url.strip())
+    if parts.scheme != "https" or not parts.hostname:
+        raise ValueError("A URL do celular precisa começar com https://")
+    if len(config.token.strip()) < 16:
+        raise ValueError("O token do celular precisa ter pelo menos 16 caracteres")
+    if config.panel_url.strip() and urlsplit(config.panel_url.strip()).scheme != "https":
+        raise ValueError("O panel_url do celular precisa começar com https://")
+    config_path = path or Path.cwd() / "phone.ini"
+    parser = configparser.ConfigParser(interpolation=None)
+    if config_path.is_file():
+        parser.read(config_path, encoding="utf-8")
+    if not parser.has_section("phone"):
+        parser.add_section("phone")
+    phone = parser["phone"]
+    phone["url"] = config.url.strip()
+    phone["token"] = config.token.strip()
+    if config.panel_url.strip():
+        phone["panel_url"] = config.panel_url.strip()
+    else:
+        phone.pop("panel_url", None)
+    with config_path.open("w", encoding="utf-8") as handle:
+        parser.write(handle)
+    try:
+        config_path.chmod(0o600)  # it holds the secret token
+    except OSError:
+        pass

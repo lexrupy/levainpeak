@@ -31,7 +31,7 @@ from levainpeak.graph_data import (TEMPERATURE_SCALES, VOLUME_SCALES, prepare_gr
                                    temperature_axis, volume_scale)
 from levainpeak.graph_phases import (DECLINE, EXPONENTIAL, LATENCY, STATIONARY,
                                      graph_phase_segments)
-from levainpeak.phone_config import load_phone_config, local_link, online_link
+from levainpeak.phone_config import PhoneConfig, load_phone_config, local_link, online_link, save_phone_config
 from levainpeak.phone_push import PhonePusher, make_snapshot
 from levainpeak.rate import growth_rate, rate_series
 from levainpeak.sessions import (GEOMETRY_VERSION, PhaseTracker, SessionLog, describe_session, list_sessions, parse_ratio,
@@ -85,15 +85,52 @@ class _MenuEntry:
             self.menu.entryconfigure(self.index, state=state)
 
 
-class _SessionTitle(ttk.Label):
-    """The title of the session group: "Sessão · " and then whatever text it is given."""
+class _Tooltip:
+    """A small hint under the widget after the pointer rests on it; ``text`` may be a callable."""
 
-    def __init__(self, master, text: str = "", **options) -> None:
-        super().__init__(master, text=f"Sessão · {text}", **options)
+    def __init__(self, widget, text) -> None:
+        self.widget, self.text, self._job, self._tip = widget, text, None, None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _event=None) -> None:
+        self._hide()
+        self._job = self.widget.after(450, self._show)
+
+    def _show(self) -> None:
+        text = self.text() if callable(self.text) else self.text
+        if not text:
+            return
+        self._tip = tk.Toplevel(self.widget)
+        self._tip.wm_overrideredirect(True)
+        tk.Label(self._tip, text=text, background="#fffbe6", foreground="#202723", relief="solid",
+                 borderwidth=1, padx=5, pady=2).pack()
+        self._tip.wm_geometry(f"+{self.widget.winfo_rootx()}+{self.widget.winfo_rooty() + self.widget.winfo_height() + 4}")
+
+    def _hide(self, _event=None) -> None:
+        if self._job is not None:
+            self.widget.after_cancel(self._job)
+            self._job = None
+        if self._tip is not None:
+            self._tip.destroy()
+            self._tip = None
+
+
+class _IconButton(ttk.Button):
+    """A toolbar button that answers like the text button it replaced: ``configure(text="Encerrar sessão")``
+    swaps its icon and hint through ``states`` ({text: (icon, hint)}); an unknown text is shown as it is."""
+
+    def __init__(self, master, states: dict[str, tuple[str, str]], text: str, command, **options) -> None:
+        self.states, self.hint = states, ""
+        super().__init__(master, command=command, width=3, **options)
+        self.configure(text=text)
+        _Tooltip(self, lambda: self.hint)
 
     def configure(self, cnf=None, **options):
         if "text" in options:
-            options["text"] = f"Sessão · {options['text']}"
+            icon, self.hint = self.states.get(options["text"], (options["text"], options["text"]))
+            options["text"] = icon
         return super().configure(cnf, **options)
 
     config = configure
@@ -153,10 +190,10 @@ class LevainPeakApp:
         self.root.title("LevainPeak")
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        width = min(1180, max(760, screen_width - 80))
-        height = min(760, max(560, screen_height - 80))
+        width = min(1180, max(640, screen_width - 80))
+        height = min(760, max(440, screen_height - 80))
         self.root.geometry(f"{width}x{height}")
-        self.root.minsize(760, 560)
+        self.root.minsize(640, 440)
         self.root.configure(background="#f4f1e8")
 
         self._image: ImageTk.PhotoImage | None = None
@@ -184,6 +221,9 @@ class LevainPeakApp:
         self._outline_mode = False
         self._outline_points: list[list[int]] = []
         self._outline_drag: int | None = None
+        # A side grabbed away from its corners: (first corner, second corner, the two corners at the grab,
+        # the side's unit normal, the grab point). It slides along the normal, so it never tilts.
+        self._outline_edge_drag: tuple | None = None
         self._reposition_mode = False  # "r": the pot's drawing follows the mouse, the wheel resizes it
         self._reposition_center: tuple[float, float] | None = None
         self._reposition_scale = 1.0
@@ -246,9 +286,9 @@ class LevainPeakApp:
             self.root.after(200, self._resume_latest_session, resume_last if isinstance(resume_last, str) else None)
 
     def _build_layout(self) -> None:
-        header = ttk.Frame(self.root, padding=(20, 16))
+        header = ttk.Frame(self.root, padding=(10, 6))
         header.pack(fill="x")
-        ttk.Label(header, text="LevainPeak", font=("TkDefaultFont", 20, "bold")).pack(side="left")
+        ttk.Label(header, text="LevainPeak", font=("TkDefaultFont", 13, "bold")).pack(side="left")
         self.status_value = ttk.Label(header, text="Aguardando conexão", font=("TkDefaultFont", 10, "bold"))
         self.status_value.pack(side="right")
 
@@ -257,27 +297,44 @@ class LevainPeakApp:
         monitor_scroll = _ScrollFrame(self.notebook)
         settings_scroll = _ScrollFrame(self.notebook)
         monitor = monitor_scroll.inner
-        settings_tab = ttk.Frame(settings_scroll.inner, padding=20)
+        settings_tab = ttk.Frame(settings_scroll.inner, padding=12)
         settings_tab.pack(fill="both", expand=True)
         self.notebook.add(monitor_scroll, text="Monitor")
         self.notebook.add(settings_scroll, text="Configurações")
         self._build_settings_tab(settings_tab)
 
-        body = ttk.Frame(monitor, padding=(20, 0, 20, 16))
+        body = ttk.Frame(monitor, padding=(8, 0, 8, 6))
         body.pack(fill="both", expand=True)
-
-        video_panel = ttk.LabelFrame(body, text="Câmera", padding=8)
+        side = ttk.Frame(body)
+        side.pack(side="right", fill="y", padx=(8, 0))
+        video_panel = ttk.Frame(body)
         video_panel.pack(side="left", fill="both", expand=True)
-        self.video = tk.Canvas(
-            video_panel,
-            background="#202723",
-            highlightthickness=0,
-            width=480,
-            height=270,
-        )
-        self.video.pack(fill="both", expand=True)
+        # The picture keeps 16:9: the canvas takes the biggest such rectangle the panel leaves free above
+        # the toolbar, the rotation row and the message, and the box shrinks to it so nothing is left between.
+        video_box = ttk.Frame(video_panel, width=320, height=180)
+        video_box.pack(fill="x")
+        video_box.pack_propagate(False)
+        self.video = tk.Canvas(video_box, background="#202723", highlightthickness=0, width=480, height=270)
+        self.video.place(x=0, y=0, width=480, height=270)
+
+        def fit_video(_event: tk.Event | None = None) -> None:
+            below = sum(child.winfo_reqheight() for child in video_panel.winfo_children() if child is not video_box)
+            width = max(160, video_panel.winfo_width())
+            height = max(90, video_panel.winfo_height() - below - 6)
+            if width * 9 > height * 16:
+                width = height * 16 // 9
+            else:
+                height = width * 9 // 16
+            if (video_box.winfo_height(), self.video.winfo_width()) != (height, width):
+                video_box.configure(height=height)
+                self.video.place(x=0, y=0, width=width, height=height)
+
+        video_panel.bind("<Configure>", fit_video)
+        self._fit_video = fit_video
+        self._toolbar = ttk.Frame(video_panel)
+        self._toolbar.pack(fill="x", pady=(6, 0))
         turn_row = ttk.Frame(video_panel)
-        turn_row.pack(fill="x", pady=(6, 0))
+        turn_row.pack(fill="x", pady=(4, 0))
         ttk.Label(turn_row, text="Girar").pack(side="left")
         self._rotation_var = tk.DoubleVar(value=self._fine_part(self._settings.rotation))
         self._rotation_text = tk.StringVar(value=f"{self._settings.rotation:.1f}°")
@@ -331,14 +388,15 @@ class LevainPeakApp:
         self.video.bind("<Button-4>", self._on_mouse_wheel, add="+")
         self.video.bind("<Button-5>", self._on_mouse_wheel, add="+")
         self.root.bind("<Escape>", self._cancel_marker_mode, add="+")
+        self.root.bind("<Return>", self._confirm_current_action, add="+")
         self.root.bind("<d>", self._toggle_detail, add="+")
         self.root.bind("<r>", self._toggle_reposition, add="+")
         self.root.bind("<Escape>", self._cancel_reposition, add="+")
         self.video.bind("<Button-1>", self._confirm_reposition, add="+")
         self.video.bind("<Motion>", self._preview_reposition, add="+")
 
-        metrics = ttk.Frame(monitor, padding=(20, 0, 20, 12))
-        metrics.pack(fill="x")
+        metrics = ttk.Frame(side)
+        metrics.pack(fill="both", expand=True)
         self._metric_tiles = []
         self.metric_values = {}
         metric_data = (
@@ -350,71 +408,61 @@ class LevainPeakApp:
             ("Previsão do dobro", "Inicie uma sessão para estimar"),
         )
         for index, (title, value) in enumerate(metric_data):
-            tile = ttk.LabelFrame(metrics, text=title, padding=(10, 7))
-            label = ttk.Label(tile, text=value, anchor="nw", justify="left", wraplength=240)
+            tile = ttk.LabelFrame(metrics, text=title, padding=(8, 3))
+            label = ttk.Label(tile, text=value, anchor="nw", justify="left", wraplength=190)
             label.pack(fill="x", anchor="w")
             label.bind("<Configure>", self._fit_wraplength, add="+")
             self._metric_tiles.append(tile)
             self.metric_values[title] = label
         self._metrics_container = metrics
-        for column in range(3):
-            self._metrics_container.columnconfigure(column, weight=1, uniform="metrics")
+        self._metrics_container.columnconfigure(0, weight=1, minsize=190)
         for index, tile in enumerate(self._metric_tiles):
-            tile.grid(row=index // 3, column=index % 3, sticky="nsew", padx=4, pady=4)
-        self._reserve_metric_rows(lines=3)
+            tile.grid(row=index, column=0, sticky="nsew", pady=2)
+        self._reserve_metric_rows(lines=2)
 
-        footer = ttk.Frame(monitor, padding=(20, 0, 20, 14))
+        footer = ttk.Frame(video_panel, padding=(0, 4, 0, 0))
         footer.pack(fill="x")
-        self.instructions = ttk.Label(
-            footer,
-            text="Marcar início: passe o mouse sobre o pote e clique para confirmar.",
-            anchor="w", justify="left",
-        )
-        self.instructions.pack(fill="x", pady=(0, 2))
         # The message area always holds two lines, so a longer message never
         # pushes the rest of the window around.
         message_area = ttk.Frame(footer, height=2 * self._line_height + 2)
-        message_area.pack(fill="x", pady=(0, 6))
+        message_area.pack(fill="x")
         message_area.pack_propagate(False)
         self.message = ttk.Label(message_area, text="", anchor="nw", justify="left")
         self.message.pack(fill="both", expand=True)
+        # The status line: what the current action is and which keys finish it.
+        self.instructions = ttk.Label(footer, text="", anchor="w", justify="left", foreground="#59645e")
+        self.instructions.pack(fill="x", pady=(2, 0))
         footer.bind("<Configure>", self._wrap_footer_labels, add="+")
 
-        buttons = ttk.Frame(footer)
-        buttons.pack(fill="x")
+        items: list[tuple[tk.Widget, bool]] = []  # (widget, ends a group)
 
-        def group(title: str, row: int, column: int, columnspan: int = 1) -> ttk.LabelFrame:
-            frame = ttk.LabelFrame(buttons, text=title, padding=(8, 4))
-            frame.grid(
-                row=row, column=column, columnspan=columnspan,
-                sticky="w", padx=(0, 8), pady=(0, 4),
-            )
-            return frame
-
-        def button(frame, text, command, width=None, state="normal"):
-            widget = ttk.Button(frame, text=text, command=command, width=width, state=state)
-            widget.pack(side="left", padx=(0, 6))
+        def add(widget, hint: str | None, ends_group: bool = False):
+            if hint:
+                _Tooltip(widget, hint)
+            items.append((widget, ends_group))
             return widget
 
-        regions = group("Marcar Regiões", 0, 0)
-        level = group("Nível inicial", 0, 1)
-        files = group("Arquivos", 1, 0)
-        session = group("Sessão", 1, 1)
+        def icon_button(icon, command, hint, states=None, ends_group=False, state="normal"):
+            widget = _IconButton(self._toolbar, states or {icon: (icon, hint)}, icon, command, state=state)
+            return add(widget, None, ends_group)
+
+        def menu_button(icon, hint, ends_group=False):
+            widget = ttk.Menubutton(self._toolbar, text=icon, width=2, direction="below")
+            return add(widget, hint, ends_group)
+
         self._auto_detect = False  # the pot is found by the automatic search while the drawing is kept aside
         self._auto_detect_var = tk.BooleanVar(value=False)
-        temperature_button = ttk.Menubutton(regions, text="Temperatura ▾", width=13, direction="below")
-        temperature_menu = tk.Menu(temperature_button, tearoff=False)
-        temperature_menu.add_command(label="Marcar termômetro", command=lambda: self._toggle_roi_mode("thermometer"))
-        self.draw_thermometer_button = _MenuEntry(
-            temperature_menu, {"Termômetro": "Marcar termômetro", "Cancelar": "Cancelar marcação do termômetro"}
-        )
-        temperature_menu.add_command(label="Marcar visor", command=lambda: self._toggle_outline_mode("thermometer"))
-        self.draw_face_button = _MenuEntry(
-            temperature_menu, {"Visor": "Marcar visor", "Confirmar": "Confirmar visor"}
-        )
-        temperature_button.configure(menu=temperature_menu)
-        temperature_button.pack(side="left", padx=(0, 6))
-        vessel_button = ttk.Menubutton(regions, text="Recipiente ▾", width=13, direction="below")
+        self.draw_thermometer_button = icon_button("▭", lambda: self._toggle_roi_mode("thermometer"), "", {
+            "Termômetro": ("▭", "Marcar a região do termômetro (arraste no vídeo)"),
+            "Cancelar": ("✕", "Cancelar a marcação do termômetro (Esc)"),
+        })
+        self.draw_thermometer_button.configure(text="Termômetro")
+        self.draw_face_button = icon_button("◫", lambda: self._toggle_outline_mode("thermometer"), "", {
+            "Visor": ("◫", "Marcar o visor do termômetro (4 cantos)"),
+            "Confirmar": ("✔", "Confirmar o visor (Enter)"),
+        }, ends_group=True)
+        self.draw_face_button.configure(text="Visor")
+        vessel_button = menu_button("◯", "Recipiente: marcar pote, contorno, detecção automática")
         vessel_menu = tk.Menu(vessel_button, tearoff=False)
         vessel_menu.add_command(label="Marcar pote", command=lambda: self._toggle_roi_mode("pot"))
         self.draw_pot_button = _MenuEntry(
@@ -430,8 +478,7 @@ class LevainPeakApp:
         )
         self.auto_pot_button = _MenuEntry(vessel_menu, {})
         vessel_button.configure(menu=vessel_menu)
-        vessel_button.pack(side="left", padx=(0, 6))
-        self.bands_button = ttk.Menubutton(regions, text="Faixas ▾", width=9, direction="below")
+        self.bands_button = menu_button("▥", "Faixas de leitura da superfície", ends_group=True)
         bands_menu = tk.Menu(self.bands_button, tearoff=False)
         bands_menu.add_command(label="Desenhar faixa", command=lambda: self._toggle_roi_mode("bands"))
         bands_menu.add_command(label="Apagar faixas", command=self._clear_bands)
@@ -448,37 +495,58 @@ class LevainPeakApp:
             label="Sempre exibir as faixas", variable=self._show_bands_var, command=self._toggle_show_bands
         )
         self.bands_button.configure(menu=bands_menu)
-        self.bands_button.pack(side="left", padx=(0, 6))
-        self.marker_button = button(
-            level, "Marcar início", self._toggle_marker_mode, width=13
-        )
-        self.detail_button = button(level, "Ver detecção", self._toggle_detail, width=15)
-        # The mix time sits in the group's title; clicking it sets the time.
-        self.mix_time_button = _SessionTitle(session, text="Hora da mistura", cursor="hand2")
-        self.mix_time_button.bind("<Button-1>", lambda _e: self._set_mix_time())
-        session.configure(labelwidget=self.mix_time_button)
-        self.session_button = button(
-            session, "Iniciar sessão", self._toggle_session, width=15
-        )
-        self.pause_button = button(session, "Pausar", self._toggle_pause, width=8, state="disabled")
-        self.clear_button = button(session, "Limpar", self._clear_session, width=7)
-        self.resume_button = ttk.Menubutton(files, text="Retomar ▾", width=10, direction="below")
+        self.marker_button = icon_button("⚑", self._toggle_marker_mode, "", {
+            "Marcar início": ("⚑", "Marcar o nível inicial (clique no pote)"),
+            "Cancelar marcação": ("✕", "Cancelar a marcação (Esc)"),
+        })
+        self.marker_button.configure(text="Marcar início")
+        self.detail_button = icon_button("◉", self._toggle_detail, "", {
+            "Ver detecção": ("◉", "Ver a detecção (D)"),
+            "Ocultar detecção": ("○", "Ocultar a detecção (D)"),
+        }, ends_group=True)
+        self.detail_button.configure(text="Ver detecção")
+        self.session_button = icon_button("▶", self._toggle_session, "", {
+            "Iniciar sessão": ("▶", "Iniciar a sessão"),
+            "Encerrar sessão": ("■", "Encerrar a sessão"),
+        })
+        self.session_button.configure(text="Iniciar sessão")
+        self.pause_button = icon_button("‖", self._toggle_pause, "", {
+            "Pausar": ("‖", "Pausar o registro"),
+            "Continuar": ("▶", "Continuar o registro"),
+        }, state="disabled")
+        self.pause_button.configure(text="Pausar")
+        self.clear_button = icon_button("⌫", self._clear_session, "Limpar a sessão", ends_group=True)
+        self.resume_button = menu_button("⟲", "Retomar uma sessão salva")
         self._resume_menu = tk.Menu(self.resume_button, tearoff=False, postcommand=self._fill_resume_menu)
         self.resume_button.configure(menu=self._resume_menu)
-        self.resume_button.pack(side="left", padx=(0, 6))
-        self.open_csv_button = button(files, "CSV", self._open_session_csv, width=6)
-        self.graph_button = ttk.Menubutton(files, text="Gráfico ▾", width=9, direction="below")
-        graph_menu = tk.Menu(self.graph_button, tearoff=False)
-        graph_menu.add_command(label="Sessão atual", command=self._show_session_graph)
-        graph_menu.add_command(
-            label="Escolher uma sessão salva…", command=lambda: self._show_session_graph(choose=True)
+        self.open_csv_button = icon_button("▤", self._open_session_csv, "Abrir o CSV da sessão")
+        self.graph_button = icon_button("∿", self._show_session_graph, "Gráfico da sessão atual")
+        self.graph_pick_button = icon_button(
+            "☰", lambda: self._show_session_graph(choose=True), "Gráfico de uma sessão salva…"
         )
-        self.graph_button.configure(menu=graph_menu)
-        self.graph_button.pack(side="left", padx=(0, 6))
-        self.debug_button = button(files, "Diagnóstico", self._open_debug_view, width=11)
+        self.debug_button = icon_button("⌕", self._open_debug_view, "Diagnóstico da detecção", ends_group=True)
+        # The mix time is a clickable label at the end of the bar.
+        self.mix_time_button = ttk.Label(self._toolbar, text="Hora da mistura", cursor="hand2", foreground="#2f5d8a")
+        self.mix_time_button.bind("<Button-1>", lambda _e: self._set_mix_time())
+        add(self.mix_time_button, "Clique para definir a hora da mistura")
+
+        def reflow(event: tk.Event | None = None) -> None:
+            """Lay the bar out in as many rows as the width needs."""
+            width = max(1, self._toolbar.winfo_width())
+            row = column = x = 0
+            for widget, ends_group in items:
+                need = widget.winfo_reqwidth() + (12 if ends_group else 4)
+                if x and x + need > width:
+                    row, column, x = row + 1, 0, 0
+                widget.grid(row=row, column=column, padx=(0, 12 if ends_group else 4), pady=1, sticky="w")
+                column += 1
+                x += need
+
+        self._toolbar.bind("<Configure>", reflow, add="+")
+        self.root.after_idle(reflow)  # the first Configure may have come before the bind
 
     def _wrap_footer_labels(self, event: tk.Event) -> None:
-        wrap = max(200, event.width - 48)  # the footer has 20 px of padding per side
+        wrap = max(200, event.width - 8)
         for label in (self.instructions, self.message):
             if int(float(str(label.cget("wraplength")) or 0)) != wrap:
                 label.configure(wraplength=wrap)
@@ -499,9 +567,9 @@ class LevainPeakApp:
         original, wrap = probe.cget("text"), probe.cget("wraplength")
         probe.configure(text="\n".join(["Ag"] * lines), wraplength=9999)
         self.root.update_idletasks()
-        needed = probe.master.winfo_reqheight() + 8  # the grid pads each tile by 4 px
+        needed = probe.master.winfo_reqheight() + 4  # the grid pads each tile by 2 px
         probe.configure(text=original, wraplength=wrap)
-        for row in range(2):
+        for row in range(len(self._metric_tiles)):
             self._metrics_container.rowconfigure(row, minsize=needed)
 
     def _annotate(self, frame, measurement):
@@ -760,8 +828,30 @@ class LevainPeakApp:
             message = message.rstrip() + "…"
         self.message.configure(text=message)
 
+    def _mode_hint(self) -> str:
+        if self._reposition_mode:
+            return "Reposicionar: mova o mouse · roda redimensiona · clique confirma · Esc cancela"
+        if self._outline_mode:
+            return "Contorno: arraste os cantos ou um lado · Enter confirma · Esc cancela"
+        if self._roi_mode:
+            if self._roi_target == "bands":
+                return "Faixas: arraste para criar · clique apaga · Esc sai"
+            return "Marcar região: arraste sobre o vídeo · Esc cancela"
+        if self._marker_mode:
+            return "Nível inicial: clique no pote para marcar · Esc cancela"
+        return "D detecção · R reposicionar · roda: zoom · botão direito: menu do vídeo"
+
+    def _confirm_current_action(self, event: tk.Event | None = None) -> None:
+        if event is not None and isinstance(event.widget, (tk.Entry, ttk.Entry, ttk.Spinbox, ttk.Combobox)):
+            return  # Enter in a field belongs to the field
+        if self._outline_mode:
+            self._apply_outline()
+
     def _refresh(self) -> None:
         started = time.perf_counter()
+        hint = self._mode_hint()
+        if self.instructions.cget("text") != hint:
+            self.instructions.configure(text=hint)
         drawing_pot = self._reposition_mode or (self._outline_mode and self._outline_target == "pot") or (
             self._roi_mode and self._roi_target == "pot"
         )
@@ -1191,6 +1281,7 @@ class LevainPeakApp:
         was_active = self._outline_mode
         self._outline_mode = False
         self._outline_drag = None
+        self._outline_edge_drag = None
         if hasattr(self, "draw_outline_button"):
             self.draw_outline_button.configure(text="Contorno")
             self.draw_face_button.configure(text="Visor")
@@ -1206,7 +1297,57 @@ class LevainPeakApp:
         distance, index = min(distances)
         return index if distance <= reach else None
 
+    def _outline_edge_at(self, point: tuple[int, int]) -> tuple | None:
+        """The side of the outline under ``point`` (picture pixels), as the state ``_outline_edge_drag`` keeps."""
+        reach = max(6, round(18 / self._zoom))
+        count = len(self._outline_points)
+        best: tuple[float, int] | None = None
+        for first in range(count):
+            a = np.asarray(self._outline_points[first], dtype=np.float64)
+            b = np.asarray(self._outline_points[(first + 1) % count], dtype=np.float64)
+            side = b - a
+            length = float(np.hypot(*side))
+            if length < 1:
+                continue
+            along = float(np.clip(np.dot(np.asarray(point) - a, side) / length ** 2, 0.0, 1.0))
+            distance = float(np.hypot(*(np.asarray(point) - (a + along * side))))
+            if distance <= reach and (best is None or distance < best[0]):
+                best = (distance, first)
+        if best is None:
+            return None
+        first, second = best[1], (best[1] + 1) % count
+        a = np.asarray(self._outline_points[first], dtype=np.float64)
+        b = np.asarray(self._outline_points[second], dtype=np.float64)
+        side = b - a
+        normal = np.array([-side[1], side[0]]) / float(np.hypot(*side))
+        return first, second, (a, b), normal, point
+
+    def _move_outline_edge(self, event: tk.Event) -> None:
+        if self._outline_edge_drag is None or self._source_frame_size is None:
+            return
+        point = self._source_point(event, clamp=True)
+        if point is None:
+            return
+        first, second, (a, b), normal, start = self._outline_edge_drag
+        shift = float(np.dot(np.asarray(point, dtype=np.float64) - np.asarray(start, dtype=np.float64), normal))
+        width, height = self._source_frame_size
+        low, high = (0 - a - 0, np.array([width - 1, height - 1]) - a)  # the room left for corner ``a``
+        low_b, high_b = (0 - b, np.array([width - 1, height - 1]) - b)
+        for axis in (0, 1):  # keep both corners inside the picture
+            if normal[axis] > 1e-9:
+                shift = min(shift, high[axis] / normal[axis], high_b[axis] / normal[axis])
+                shift = max(shift, low[axis] / normal[axis], low_b[axis] / normal[axis])
+            elif normal[axis] < -1e-9:
+                shift = max(shift, high[axis] / normal[axis], high_b[axis] / normal[axis])
+                shift = min(shift, low[axis] / normal[axis], low_b[axis] / normal[axis])
+        self._outline_points[first] = [int(round(a[0] + shift * normal[0])), int(round(a[1] + shift * normal[1]))]
+        self._outline_points[second] = [int(round(b[0] + shift * normal[0])), int(round(b[1] + shift * normal[1]))]
+        self._redraw_current_frame()
+
     def _move_outline_handle(self, event: tk.Event) -> None:
+        if self._outline_edge_drag is not None:
+            self._move_outline_edge(event)
+            return
         if self._outline_drag is None or self._source_frame_size is None:
             return
         point = self._source_point(event, clamp=True)
@@ -1395,6 +1536,9 @@ class LevainPeakApp:
         if self._outline_mode:
             point = self._source_point(event)
             self._outline_drag = None if point is None else self._outline_handle_at(point)
+            self._outline_edge_drag = None
+            if point is not None and self._outline_drag is None:
+                self._outline_edge_drag = self._outline_edge_at(point)  # not on a corner: the side under the pointer
             return
         if not self._roi_mode:
             if self._zoom > 1.0 and not self._marker_mode and not self._reposition_mode:
@@ -1543,6 +1687,7 @@ class LevainPeakApp:
     def _finish_roi_draw(self, event: tk.Event) -> None:
         if self._outline_mode:
             self._outline_drag = None
+            self._outline_edge_drag = None
             return
         if self._pan_drag_start is not None:
             self._pan_drag_start = None
@@ -2244,147 +2389,143 @@ class LevainPeakApp:
 
     def _build_settings_tab(self, parent: ttk.Frame) -> None:
         try:
-            current = load_camera_config()
+            camera_now = load_camera_config()
         except (FileNotFoundError, ValueError):
-            current = CameraConfig(url="")
-        self._camera_timeout = current.read_timeout_seconds
-        camera = ttk.LabelFrame(parent, text="Câmera", padding=12)
-        camera.pack(fill="x", pady=(0, 12))
-        camera.columnconfigure(1, weight=1)
-        self._camera_url_var = tk.StringVar(value=current.url)
-        self._camera_user_var = tk.StringVar(value=current.username)
-        self._camera_password_var = tk.StringVar(value=current.password)
-        self._camera_transport_var = tk.StringVar(value=current.transport if current.transport in ("tcp", "udp") else "tcp")
-        ttk.Label(camera, text="URL (rtsp://…)").grid(row=0, column=0, sticky="w")
-        ttk.Entry(camera, textvariable=self._camera_url_var).grid(row=0, column=1, columnspan=3, sticky="ew", padx=6)
-        ttk.Label(camera, text="Usuário").grid(row=1, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(camera, textvariable=self._camera_user_var, width=18).grid(row=1, column=1, sticky="w", padx=6, pady=(6, 0))
-        ttk.Label(camera, text="Senha").grid(row=1, column=2, sticky="e", pady=(6, 0))
-        ttk.Entry(camera, textvariable=self._camera_password_var, show="•", width=18).grid(
-            row=1, column=3, sticky="w", padx=6, pady=(6, 0))
-        ttk.Label(camera, text="Transporte").grid(row=2, column=0, sticky="w", pady=(6, 0))
-        ttk.Combobox(camera, textvariable=self._camera_transport_var, values=("tcp", "udp"), width=6,
-                     state="readonly").grid(row=2, column=1, sticky="w", padx=6, pady=(6, 0))
-        ttk.Button(camera, text="Salvar e reconectar", command=self._save_camera).grid(
-            row=2, column=3, sticky="w", padx=6, pady=(6, 0))
-        self._camera_note = ttk.Label(camera, text="", foreground="#59645e", wraplength=560, justify="left")
-        self._camera_note.grid(row=3, column=0, columnspan=4, sticky="w", pady=(6, 0))
-        self._build_session_settings(parent)
+            camera_now = CameraConfig(url="")
+        try:
+            phone_now = load_phone_config()
+        except (FileNotFoundError, ValueError):
+            phone_now = PhoneConfig(url="", token="")
+        self._camera_timeout = camera_now.read_timeout_seconds
+        for column in (0, 1):
+            parent.columnconfigure(column, weight=1, uniform="settings")
+        muted = "#59645e"
 
-    def _build_session_settings(self, parent: ttk.Frame) -> None:
-        box = ttk.LabelFrame(parent, text="Registro da sessão", padding=12)
-        box.pack(fill="x")
-        ttk.Label(box, text="Gravar uma medição no CSV a cada").grid(row=0, column=0, sticky="w")
+        columns = []
+        for column in (0, 1):  # each column stacks on its own, so a tall box on one side leaves no gap on the other
+            holder = ttk.Frame(parent)
+            holder.grid(row=0, column=column, sticky="new", padx=(0, 6) if column == 0 else (6, 0))
+            columns.append(holder)
+
+        def frame(title: str, row: int, column: int) -> ttk.LabelFrame:
+            box = ttk.LabelFrame(columns[column], text=title, padding=(8, 4))
+            box.pack(fill="x", pady=(0, 6))
+            box.columnconfigure(1, weight=1)
+            return box
+
+        def entry(box, row: int, label: str, variable, hint: str = "", width: int = 12) -> ttk.Entry:
+            ttk.Label(box, text=label).grid(row=row, column=0, sticky="w", pady=1)
+            field = ttk.Entry(box, textvariable=variable, width=width)
+            field.grid(row=row, column=1, sticky="ew", padx=(6, 0), pady=1)
+            if hint:
+                _Tooltip(field, hint)
+            return field
+
+        def spin(box, row: int, label: str, variable, limits, unit: str, hint: str = "", step: int = 1) -> None:
+            name = ttk.Label(box, text=label)
+            name.grid(row=row, column=0, sticky="w", pady=1)
+            field = ttk.Spinbox(box, from_=limits[0], to=limits[1], increment=step, width=5,
+                                textvariable=variable, command=self._apply_settings)
+            field.grid(row=row, column=1, sticky="w", padx=6, pady=1)
+            field.bind("<Return>", lambda _e: self._apply_settings(), add="+")
+            field.bind("<FocusOut>", lambda _e: self._apply_settings(), add="+")
+            ttk.Label(box, text=unit).grid(row=row, column=2, sticky="w")
+            if hint:
+                _Tooltip(name, hint)
+
+        # --- left column: camera, record, video
+        camera = frame("Câmera", 0, 0)
+        self._camera_url_var = tk.StringVar(value=camera_now.url)
+        self._camera_user_var = tk.StringVar(value=camera_now.username)
+        self._camera_password_var = tk.StringVar(value=camera_now.password)
+        self._camera_transport_var = tk.StringVar(
+            value=camera_now.transport if camera_now.transport in ("tcp", "udp") else "tcp")
+        entry(camera, 0, "URL", self._camera_url_var, "rtsp://…  (se a câmera só abre com udp, troque o transporte)")
+        entry(camera, 1, "Usuário", self._camera_user_var)
+        entry(camera, 2, "Senha", self._camera_password_var)
+        ttk.Label(camera, text="Transporte").grid(row=3, column=0, sticky="w", pady=1)
+        row = ttk.Frame(camera)
+        row.grid(row=3, column=1, columnspan=2, sticky="ew", padx=(6, 0), pady=1)
+        ttk.Combobox(row, textvariable=self._camera_transport_var, values=("tcp", "udp"), width=5,
+                     state="readonly").pack(side="left")
+        ttk.Button(row, text="Salvar e reconectar", command=self._save_camera).pack(side="right")
+        self._camera_note = ttk.Label(camera, text="", foreground=muted, wraplength=300, justify="left")
+        self._camera_note.grid(row=4, column=0, columnspan=3, sticky="w")
+
+        record = frame("Registro da sessão", 1, 0)
         self._interval_var = tk.StringVar(value=str(self._settings.record_interval_seconds))
-        spinbox = ttk.Spinbox(
-            box, from_=MIN_RECORD_SECONDS, to=MAX_RECORD_SECONDS, increment=5, width=5,
-            textvariable=self._interval_var, command=self._apply_settings,
-        )
-        spinbox.grid(row=0, column=1, padx=6)
-        spinbox.bind("<Return>", lambda _e: self._apply_settings(), add="+")
-        spinbox.bind("<FocusOut>", lambda _e: self._apply_settings(), add="+")
-        ttk.Label(box, text="segundos").grid(row=0, column=2, sticky="w")
-        ttk.Label(box, text="Guardar uma foto da câmera a cada").grid(row=1, column=0, sticky="w", pady=(6, 0))
         self._snapshot_var = tk.StringVar(value=str(self._settings.snapshot_minutes))
-        snapshot_box = ttk.Spinbox(
-            box, from_=SNAPSHOT_MINUTES[0], to=SNAPSHOT_MINUTES[1], increment=1, width=5,
-            textvariable=self._snapshot_var, command=self._apply_settings,
-        )
-        snapshot_box.grid(row=1, column=1, padx=6, pady=(6, 0))
-        snapshot_box.bind("<Return>", lambda _e: self._apply_settings(), add="+")
-        snapshot_box.bind("<FocusOut>", lambda _e: self._apply_settings(), add="+")
-        ttk.Label(box, text="minutos").grid(row=1, column=2, sticky="w", pady=(6, 0))
-        self._settings_note = ttk.Label(
-            box, text=f"Entre {MIN_RECORD_SECONDS} e {MAX_RECORD_SECONDS} s. Vale já na sessão ativa.",
-            foreground="#59645e",
-        )
-        self._settings_note.grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        spin(record, 0, "Medição no CSV a cada", self._interval_var, (MIN_RECORD_SECONDS, MAX_RECORD_SECONDS),
+             "s", f"Entre {MIN_RECORD_SECONDS} e {MAX_RECORD_SECONDS} s. Vale já na sessão ativa.", step=5)
+        spin(record, 1, "Foto da câmera a cada", self._snapshot_var, SNAPSHOT_MINUTES, "min")
+        self._settings_note = ttk.Label(record, text="")  # kept: other code may write to it
 
-        phases = ttk.LabelFrame(parent, text="Fases do levain", padding=12)
-        phases.pack(fill="x", pady=(12, 0))
-        self._peak_var = tk.StringVar(value=str(self._settings.peak_minutes))
-        self._artifact_var = tk.StringVar(value=str(self._settings.artifact_minutes))
-        self._lamp_var = tk.StringVar(value=str(self._settings.lamp_minutes))
-        for row, (label, variable, limits, note) in enumerate((
-            ("Pico: leituras estáveis por", self._peak_var, PEAK_MINUTES,
-             "Quanto tempo o volume fica parado no topo até o app dizer \"Em pico\"."),
-            ("Artefato: volta em até", self._artifact_var, ARTIFACT_MINUTES,
-             "Uma mudança que volta ao nível anterior dentro desse tempo (lâmpada, pote retirado) é descartada;"
-             " uma queda que não volta passa a valer depois dele."),
-            ("Lâmpada: segurar o volume por", self._lamp_var, LAMP_MINUTES,
-             "Quando o brilho do quadro muda de repente (a lâmpada liga ou desliga), o volume fica no nível de"
-             " antes por esse tempo, porque a superfície é lida errado enquanto a luz muda. 0 desliga."),
-        )):
-            ttk.Label(phases, text=label).grid(row=row * 2, column=0, sticky="w")
-            box_ = ttk.Spinbox(
-                phases, from_=limits[0], to=limits[1], increment=1, width=5,
-                textvariable=variable, command=self._apply_settings,
-            )
-            box_.grid(row=row * 2, column=1, padx=6)
-            box_.bind("<Return>", lambda _e: self._apply_settings(), add="+")
-            box_.bind("<FocusOut>", lambda _e: self._apply_settings(), add="+")
-            ttk.Label(phases, text="minutos").grid(row=row * 2, column=2, sticky="w")
-            ttk.Label(phases, text=note, foreground="#59645e", wraplength=520, justify="left").grid(
-                row=row * 2 + 1, column=0, columnspan=3, sticky="w", pady=(2, 8)
-            )
-
-        video = ttk.LabelFrame(parent, text="Vídeo", padding=12)
-        video.pack(fill="x", pady=(12, 0))
-        ttk.Label(video, text="Brilho fora das regiões marcadas").grid(row=0, column=0, sticky="w")
+        video = frame("Vídeo", 2, 0)
+        ttk.Label(video, text="Brilho fora das regiões").grid(row=0, column=0, sticky="w")
         self._overlay_var = tk.IntVar(value=self._settings.overlay_brightness)
         self._overlay_value = ttk.Label(video, text=f"{self._settings.overlay_brightness}%", width=5)
         slider = ttk.Scale(
-            video, from_=MIN_OVERLAY_BRIGHTNESS, to=MAX_OVERLAY_BRIGHTNESS, orient="horizontal", length=220,
+            video, from_=MIN_OVERLAY_BRIGHTNESS, to=MAX_OVERLAY_BRIGHTNESS, orient="horizontal",
             variable=self._overlay_var,
             command=lambda value: self._overlay_value.configure(text=f"{int(float(value))}%"),
         )
-        slider.grid(row=0, column=1, padx=8)
+        slider.grid(row=0, column=1, sticky="ew", padx=6)
         slider.bind("<ButtonRelease-1>", lambda _e: self._apply_settings(), add="+")
         slider.bind("<KeyRelease>", lambda _e: self._apply_settings(), add="+")
         self._overlay_value.grid(row=0, column=2, sticky="w")
-        ttk.Label(
-            video, foreground="#59645e",
-            text=f"{MAX_OVERLAY_BRIGHTNESS}% não escurece nada. O escurecimento só aparece depois de marcar o pote ou o visor.",
-        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        _Tooltip(slider, f"{MAX_OVERLAY_BRIGHTNESS}% não escurece nada; só age depois de marcar o pote ou o visor.")
 
-        phone = ttk.LabelFrame(parent, text="Celular (Google Sheets)", padding=12)
-        phone.pack(fill="x", pady=(12, 0))
+        # --- right column: phases, phone
+        phases = frame("Fases do levain", 0, 1)
+        self._peak_var = tk.StringVar(value=str(self._settings.peak_minutes))
+        self._artifact_var = tk.StringVar(value=str(self._settings.artifact_minutes))
+        self._lamp_var = tk.StringVar(value=str(self._settings.lamp_minutes))
+        spin(phases, 0, "Pico: estável por", self._peak_var, PEAK_MINUTES, "min",
+             "Quanto tempo o volume fica parado no topo até o app dizer \"Em pico\".")
+        spin(phases, 1, "Artefato: volta em", self._artifact_var, ARTIFACT_MINUTES, "min",
+             "Uma mudança que volta ao nível anterior dentro desse tempo (lâmpada, pote retirado) é descartada; "
+             "uma queda que não volta passa a valer depois dele.")
+        spin(phases, 2, "Lâmpada: segurar por", self._lamp_var, LAMP_MINUTES, "min",
+             "Quando o brilho muda de repente (a lâmpada liga ou desliga), o volume fica no nível de antes por "
+             "esse tempo. 0 desliga.")
+
+        phone = frame("Celular (Google Sheets)", 1, 1)
         self._phone_enabled_var = tk.BooleanVar(value=self._settings.phone_enabled)
-        ttk.Checkbutton(
-            phone, text="Enviar os dados para o celular",
-            variable=self._phone_enabled_var, command=self._apply_settings,
-        ).grid(row=0, column=0, columnspan=3, sticky="w")
-        ttk.Label(phone, text="Enviar um pacote a cada").grid(row=1, column=0, sticky="w", pady=(8, 0))
-        self._phone_interval_var = tk.StringVar(value=str(self._settings.phone_interval_seconds))
-        phone_spinbox = ttk.Spinbox(
-            phone, from_=MIN_PHONE_SECONDS, to=MAX_PHONE_SECONDS, increment=30, width=5,
-            textvariable=self._phone_interval_var, command=self._apply_settings,
-        )
-        phone_spinbox.grid(row=1, column=1, padx=6, pady=(8, 0))
-        phone_spinbox.bind("<Return>", lambda _e: self._apply_settings(), add="+")
-        phone_spinbox.bind("<FocusOut>", lambda _e: self._apply_settings(), add="+")
-        ttk.Label(phone, text="segundos").grid(row=1, column=2, sticky="w", pady=(8, 0))
         self._phone_snapshot_var = tk.BooleanVar(value=self._settings.phone_snapshot)
-        ttk.Checkbutton(
-            phone, text="Incluir uma imagem do pote em cada pacote",
-            variable=self._phone_snapshot_var, command=self._apply_settings,
-        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
-        self._phone_status = ttk.Label(phone, text="", foreground="#59645e", wraplength=560, justify="left")
-        self._phone_status.grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 0))
-        buttons = ttk.Frame(phone)
-        buttons.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
-        ttk.Button(buttons, text="Copiar link do painel local", command=self._copy_local_link).pack(side="left")
-        ttk.Button(buttons, text="Copiar link do painel online", command=self._copy_online_link).pack(
-            side="left", padx=(8, 0)
+        self._phone_interval_var = tk.StringVar(value=str(self._settings.phone_interval_seconds))
+        self._phone_url_var = tk.StringVar(value=phone_now.url)
+        self._phone_token_var = tk.StringVar(value=phone_now.token)
+        self._phone_panel_var = tk.StringVar(value=phone_now.panel_url)
+        checks = ttk.Frame(phone)
+        checks.grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Checkbutton(checks, text="Enviar para o celular", variable=self._phone_enabled_var,
+                        command=self._apply_settings).pack(side="left")
+        ttk.Checkbutton(checks, text="com imagem", variable=self._phone_snapshot_var,
+                        command=self._apply_settings).pack(side="left", padx=(10, 0))
+        spin(phone, 1, "Pacote a cada", self._phone_interval_var, (MIN_PHONE_SECONDS, MAX_PHONE_SECONDS), "s", step=30)
+        entry(phone, 2, "URL (/exec)", self._phone_url_var, "URL do app da web do Google Apps Script (https://…/exec)")
+        entry(phone, 3, "Token", self._phone_token_var, "Mesmo valor da propriedade TOKEN do script (16+ caracteres)")
+        entry(phone, 4, "Painel (opcional)", self._phone_panel_var, "Onde o painel está publicado, por exemplo no GitHub Pages")
+        row = ttk.Frame(phone)
+        row.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(3, 0))
+        ttk.Button(row, text="Salvar celular", command=self._save_phone).pack(side="left")
+        ttk.Button(row, text="Link local", width=9, command=self._copy_local_link).pack(side="left", padx=(6, 0))
+        ttk.Button(row, text="Link online", width=10, command=self._copy_online_link).pack(side="left", padx=(6, 0))
+        self._phone_status = ttk.Label(phone, text="", foreground=muted, wraplength=300, justify="left")
+        self._phone_status.grid(row=6, column=0, columnspan=2, sticky="w")
+        ttk.Button(phone, text="Limpar planilha", command=self._clear_phone_data).grid(row=6, column=2, sticky="e")
+
+    def _save_phone(self) -> None:
+        config = PhoneConfig(
+            url=self._phone_url_var.get(), token=self._phone_token_var.get(), panel_url=self._phone_panel_var.get(),
         )
-        ttk.Button(buttons, text="Limpar dados do celular", command=self._clear_phone_data).pack(
-            side="left", padx=(8, 0)
-        )
-        ttk.Label(
-            phone, foreground="#59645e", wraplength=560, justify="left",
-            text="Precisa do phone.ini (modelo: phone.ini.example) e do script no Google Sheets. "
-                 "O painel roda com: cd painel && python -m http.server 8000",
-        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        try:
+            save_phone_config(config)
+        except (ValueError, OSError) as exc:
+            messagebox.showerror("Celular", str(exc))
+            return
+        self._phone_applied = None  # the sender starts again with the new address and token
+        self._apply_phone_settings()
 
     def _apply_settings(self) -> None:
         try:
