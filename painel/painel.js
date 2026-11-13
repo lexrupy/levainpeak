@@ -7,7 +7,7 @@
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 60 * 1000;
 const AGES_MS = 30 * 1000;
-const VERSAO_PAINEL = '2026-11-13.6'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
+const VERSAO_PAINEL = '2026-11-13.7'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
 const QUADROS_MAX = 20; // imagens recebidas que o aparelho guarda para a animação
 const FPS_OPCOES = [1, 2, 3, 5, 10, 15]; // quadros por segundo no seletor; o aparelho lembra a escolha
 
@@ -356,12 +356,29 @@ function guardarQuadro(snapshot, sessao) {
 // Versões antigas do painel podiam guardar imagens de uma sessão na lista da outra. Uma vez por aparelho,
 // descarta as imagens e as respostas guardadas: elas voltam inteiras da planilha (as últimas de cada sessão).
 const CACHE_DE_IMAGENS = 2;
-function renovarCacheDeImagens() {
-  if (store.get('cache-imagens') === CACHE_DE_IMAGENS) return;
+function apagarCacheDeImagens() { // não mexe na conexão (endereço e token), na sessão escolhida nem no fps
   try {
     Object.keys(localStorage).filter((k) => k.startsWith('quadros') || k.startsWith('ultimo')).forEach((k) => localStorage.removeItem(k));
   } catch (erro) { /* sem acesso ao armazenamento */ }
+}
+
+function renovarCacheDeImagens() {
+  if (store.get('cache-imagens') === CACHE_DE_IMAGENS) return;
+  apagarCacheDeImagens();
   store.set('cache-imagens', CACHE_DE_IMAGENS);
+}
+
+// Botão "Limpar cache" da conexão: esquece as imagens e as respostas guardadas e busca tudo de novo.
+function limparCache() {
+  apagarCacheDeImagens();
+  quadros = [];
+  quadroAtual = 0;
+  ultimo = null;
+  clearInterval(relogio);
+  relogio = null;
+  $('imagem-area').hidden = true;
+  $('con-aviso').textContent = 'Cache limpo; buscando de novo.';
+  load();
 }
 
 // Tira do aparelho as imagens de sessões que a planilha já não guarda.
@@ -550,6 +567,7 @@ function setupConnection() {
     if (!u || !t) { $('con-aviso').textContent = 'Preencha o endereço e o token primeiro.'; return; }
     copyText(`${location.origin}${location.pathname}#u=${encodeURIComponent(u)}&t=${encodeURIComponent(t)}`, null);
   });
+  $('con-limpar-cache').addEventListener('click', limparCache);
   $('con-salvar').addEventListener('click', () => {
     const u = $('con-url').value.trim();
     const t = $('con-token').value.trim();
