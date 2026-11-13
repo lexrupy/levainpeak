@@ -7,7 +7,7 @@
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 60 * 1000;
 const AGES_MS = 30 * 1000;
-const VERSAO_PAINEL = '2026-11-13.5'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
+const VERSAO_PAINEL = '2026-11-13.6'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
 const QUADROS_MAX = 20; // imagens recebidas que o aparelho guarda para a animação
 const FPS_OPCOES = [1, 2, 3, 5, 10, 15]; // quadros por segundo no seletor; o aparelho lembra a escolha
 
@@ -353,6 +353,17 @@ function guardarQuadro(snapshot, sessao) {
   if (referencia) $('imagem').style.aspectRatio = `${referencia.r}`; // a área da imagem mantém a forma: sem pulos
 }
 
+// Versões antigas do painel podiam guardar imagens de uma sessão na lista da outra. Uma vez por aparelho,
+// descarta as imagens e as respostas guardadas: elas voltam inteiras da planilha (as últimas de cada sessão).
+const CACHE_DE_IMAGENS = 2;
+function renovarCacheDeImagens() {
+  if (store.get('cache-imagens') === CACHE_DE_IMAGENS) return;
+  try {
+    Object.keys(localStorage).filter((k) => k.startsWith('quadros') || k.startsWith('ultimo')).forEach((k) => localStorage.removeItem(k));
+  } catch (erro) { /* sem acesso ao armazenamento */ }
+  store.set('cache-imagens', CACHE_DE_IMAGENS);
+}
+
 // Tira do aparelho as imagens de sessões que a planilha já não guarda.
 function limparQuadrosAntigos(nomes) {
   try {
@@ -551,6 +562,7 @@ function setupConnection() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  renovarCacheDeImagens();
   setupConnection();
   $('atualizar').addEventListener('click', load);
   ligarQuadros();
