@@ -7,7 +7,7 @@
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 60 * 1000;
 const AGES_MS = 30 * 1000;
-const VERSAO_PAINEL = '2026-11-13.4'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
+const VERSAO_PAINEL = '2026-11-13.5'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
 const QUADROS_MAX = 20; // imagens recebidas que o aparelho guarda para a animação
 const FPS_OPCOES = [1, 2, 3, 5, 10, 15]; // quadros por segundo no seletor; o aparelho lembra a escolha
 
@@ -378,7 +378,7 @@ function prepararQuadros() {
   $('quadros-ctrl').hidden = !varios;
   $('quadros-slider').max = Math.max(0, quadros.length - 1);
   $('quadros-play').textContent = pausado ? 'Reproduzir' : 'Pausar';
-  $('quadros-fps').value = String(fps);
+  $('quadros-fps').textContent = `${fps} fps`;
   clearInterval(relogio);
   relogio = null;
   if (varios && !pausado) {
@@ -391,11 +391,8 @@ function prepararQuadros() {
 
 function ligarQuadros() {
   $('quadros-play').addEventListener('click', () => { pausado = !pausado; prepararQuadros(); });
-  $('quadros-fps').innerHTML = FPS_OPCOES.map((n) => `<option value="${n}">${n} fps</option>`).join('');
-  $('quadros-fps').addEventListener('change', (evento) => {
-    const escolhido = Number(evento.target.value);
-    if (!FPS_OPCOES.includes(escolhido)) return;
-    fps = escolhido;
+  $('quadros-fps').addEventListener('click', () => { // cada toque passa para o próximo (1, 2, 3, 5, 10, 15 e volta ao 1)
+    fps = FPS_OPCOES[(FPS_OPCOES.indexOf(fps) + 1) % FPS_OPCOES.length];
     store.set('fps', fps);
     prepararQuadros();
   });
