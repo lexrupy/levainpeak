@@ -7,7 +7,7 @@
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 60 * 1000;
 const AGES_MS = 30 * 1000;
-const VERSAO_PAINEL = '2026-11-13.9'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
+const VERSAO_PAINEL = '2026-11-13.10'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
 const QUADROS_MAX = 20; // imagens recebidas que o aparelho guarda para a animação
 const FPS_OPCOES = [1, 2, 3, 5, 10, 15]; // quadros por segundo no seletor; o aparelho lembra a escolha
 

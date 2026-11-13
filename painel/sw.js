@@ -1,7 +1,7 @@
 // Guarda a "casca" do painel para ele abrir mesmo sem conexão. Os dados vêm do
 // Apps Script (outra origem) e não passam por aqui; o painel guarda a última
 // resposta no localStorage.
-const CACHE = 'levainpeak-painel-v20';
+const CACHE = 'levainpeak-painel-v21';
 const CASCA = ['./', 'index.html', 'painel.css', 'painel.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', (evento) => {
@@ -20,5 +20,6 @@ self.addEventListener('activate', (evento) => {
 self.addEventListener('fetch', (evento) => {
   const url = new URL(evento.request.url);
   if (url.origin !== location.origin) return;
-  evento.respondWith(fetch(evento.request).catch(() => caches.match(evento.request)));
+  // 'no-cache': pergunta ao servidor se mudou, em vez de reaproveitar por 10 min o que o Pages marca como fresco.
+  evento.respondWith(fetch(evento.request, { cache: 'no-cache' }).catch(() => caches.match(evento.request)));
 });
