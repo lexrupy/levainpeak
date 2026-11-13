@@ -7,7 +7,7 @@
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 60 * 1000;
 const AGES_MS = 30 * 1000;
-const VERSAO_PAINEL = '2026-11-13.8'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
+const VERSAO_PAINEL = '2026-11-13.9'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
 const QUADROS_MAX = 20; // imagens recebidas que o aparelho guarda para a animação
 const FPS_OPCOES = [1, 2, 3, 5, 10, 15]; // quadros por segundo no seletor; o aparelho lembra a escolha
 
@@ -511,6 +511,7 @@ function openConnection() {
   $('con-token').type = 'password';
   $('con-mostrar').textContent = 'Mostrar';
   $('con-aviso').textContent = '';
+  travarConexao(true); // abre travado: só um toque em Editar libera, para não mudar sem querer
   showVersions(cfg);
   $('conexao').showModal();
 }
@@ -529,6 +530,14 @@ async function showVersions(cfg) {
   } catch (erro) {
     linha.textContent = `${painel} · script da planilha: sem conexão`;
   }
+}
+
+// Os campos da conexão ficam só para leitura (dá para copiar) até o toque em Editar.
+function travarConexao(travar) {
+  $('con-url').readOnly = travar;
+  $('con-token').readOnly = travar;
+  $('con-editar').hidden = !travar;
+  $('con-salvar').hidden = travar;
 }
 
 function closeConnection() {
@@ -559,6 +568,7 @@ function setupConnection() {
     copyText(`${location.origin}${location.pathname}#u=${encodeURIComponent(u)}&t=${encodeURIComponent(t)}`, null);
   });
   $('con-limpar-cache').addEventListener('click', limparCache);
+  $('con-editar').addEventListener('click', () => { travarConexao(false); $('con-url').focus(); });
   $('con-salvar').addEventListener('click', () => {
     const u = $('con-url').value.trim();
     const t = $('con-token').value.trim();

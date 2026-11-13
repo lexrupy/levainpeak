@@ -127,7 +127,7 @@ figcaption { color: var(--suave); font-size: 0.85rem; margin-bottom: 6px; }
 #imagem-area img { width: 100%; height: auto; max-height: 70vh; object-fit: contain; background: var(--linha); border-radius: 8px; display: block; }
 #imagem-area figcaption { margin: 6px 0 0; }
 
-#configurar { display: grid; gap: 10px; }
+#configurar { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 #configurar label { display: grid; gap: 4px; font-size: 0.85rem; color: var(--suave); }
 #configurar input {
   font: inherit;
@@ -137,6 +137,9 @@ figcaption { color: var(--suave); font-size: 0.85rem; margin-bottom: 6px; }
   border-radius: 8px;
   padding: 10px;
   min-height: 44px;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 code { font-size: 0.9em; }
 
@@ -150,14 +153,17 @@ dialog#conexao {
   border: 1px solid var(--linha);
   border-radius: 14px;
   padding: 16px;
+  box-sizing: border-box;
+  overflow-x: hidden; /* nada da conexão alarga a tela */
 }
 dialog#conexao::backdrop { background: rgba(0, 0, 0, 0.45); }
-#conexao-form { display: grid; gap: 10px; }
+#conexao-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+#conexao-form p, #conexao-form button { overflow-wrap: anywhere; }
 #conexao-form label { display: grid; gap: 4px; font-size: 0.85rem; color: var(--suave); }
-#conexao-form .linha { display: flex; gap: 8px; align-items: center; }
+#conexao-form .linha { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 #conexao-form .linha.fim { justify-content: flex-end; }
 #conexao-form input {
-  flex: 1;
+  flex: 1 1 8rem;
   min-width: 0;
   font: inherit;
   color: var(--texto);
@@ -184,3 +190,4 @@ dialog#conexao::backdrop { background: rgba(0, 0, 0, 0.45); }
 .troca button[aria-pressed="true"] { background: var(--papel); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18); }
 .troca small { display: block; font-weight: 400; font-size: 0.7rem; color: var(--suave); }
 .troca span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#conexao-form input[readonly] { color: var(--suave); background: var(--linha); } /* travado até tocar em Editar */
