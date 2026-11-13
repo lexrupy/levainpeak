@@ -35,6 +35,13 @@ cada push que muda `painel/` atualiza o site sozinho, em cerca de 1 minuto. É H
 - Tema claro e escuro automáticos. Funciona como página comum; "adicionar à tela inicial" cria um atalho.
   O modo instalável com cache offline só vale em `localhost` ou HTTPS (o `http://<ip>` da rede não permite).
 
+## Duas sessões ao mesmo tempo
+
+A planilha guarda até duas sessões, cada uma pelo nome que o app do PC envia (dois PCs, ou duas instâncias do app).
+Com duas, o painel mostra um seletor no topo para trocar entre elas, com há quanto tempo cada uma enviou. Uma terceira
+sessão toma o lugar da que está há mais tempo sem enviar; uma parada há mais de 72 h sai sozinha. "Limpar planilha" no
+app do PC apaga só a sessão daquele app. Depois de atualizar o `Code.gs`, crie uma nova versão da implantação.
+
 ## Segurança
 
 Os arquivos desta pasta não contêm segredo. O token só existe no `localStorage` de cada aparelho e na propriedade

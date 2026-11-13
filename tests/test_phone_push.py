@@ -207,7 +207,7 @@ def test_clearing_asks_the_receiver_and_then_sends_the_current_session_again(rec
     assert sender.push_once()
     done, message = sender.clear_remote()
     assert done and message == "9 linhas apagadas"
-    assert receiver.packets[-1] == {"token": TOKEN, "acao": "limpar"}
+    assert receiver.packets[-1] == {"token": TOKEN, "acao": "limpar", "session": "Bradok"}  # only its own session
     assert sender.push_once()
     assert len(receiver.packets[-1]["points"]) == 5
 

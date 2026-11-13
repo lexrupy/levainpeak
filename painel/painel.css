@@ -177,3 +177,10 @@ dialog#conexao::backdrop { background: rgba(0, 0, 0, 0.45); }
 #grafico .taxa { fill: none; stroke: var(--ok); stroke-width: 2; stroke-linejoin: round; }
 #grafico .taxa-zero { stroke: var(--suave); stroke-width: 1; stroke-dasharray: 3 3; }
 #grafico .taxa-titulo { fill: var(--ok); font-size: 10px; }
+
+/* Troca entre duas sessões que chegam à planilha ao mesmo tempo. */
+.troca { display: flex; gap: 4px; margin: 0 0 12px; padding: 3px; background: var(--linha); border-radius: 12px; }
+.troca button { flex: 1; min-width: 0; padding: 6px 8px; border: 0; border-radius: 9px; background: transparent; font: inherit; line-height: 1.2; }
+.troca button[aria-pressed="true"] { background: var(--papel); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18); }
+.troca small { display: block; font-weight: 400; font-size: 0.7rem; color: var(--suave); }
+.troca span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

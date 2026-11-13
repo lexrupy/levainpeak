@@ -208,13 +208,19 @@ class PhonePusher:
             return self._push_once()
 
     def clear_remote(self) -> tuple[bool, str]:
-        """Ask the receiver to empty the spreadsheet. Returns (done, message for the user).
+        """Ask the receiver to empty this session's data (all of it when there is no session yet).
+        Returns (done, message for the user).
 
         The next cycle sends the current session again, so the sheet restarts
         with it. (The receiver also clears by itself when the session changes.)
         """
         with self._send_lock:
-            body = json.dumps({"token": self._config.token, "acao": "limpar"}).encode("utf-8")
+            request: dict = {"token": self._config.token, "acao": "limpar"}
+            csv_path = self._get_session_csv()
+            if csv_path is not None and csv_path.is_file():
+                # Only this session: the sheet may hold another one, sent by another PC.
+                request["session"] = read_new_points(csv_path, None, limit=1)[1]
+            body = json.dumps(request).encode("utf-8")
             try:
                 answer = self._post(body)
             except Exception as exc:  # noqa: BLE001 - described, never re-raised with the URL

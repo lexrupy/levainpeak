@@ -7,7 +7,7 @@
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 60 * 1000;
 const AGES_MS = 30 * 1000;
-const VERSAO_PAINEL = '2026-11-07.2'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
+const VERSAO_PAINEL = '2026-11-13.1'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
 const QUADROS_MAX = 20; // imagens recebidas que o aparelho guarda para a animação
 const FPS_OPCOES = [1, 2, 3]; // quadros por segundo; o botão passa de um para o outro e o aparelho lembra
 
@@ -192,6 +192,7 @@ function drawChart(chart) {
 
 // ---------------------------------------------------------------- tela
 
+let slotAtual = store.get('slot') || null; // qual das (até duas) sessões da planilha o painel mostra
 let ultimo = null; // última resposta (para atualizar só as idades a cada 30 s)
 let ultimoFoiDoCache = false;
 
@@ -203,6 +204,7 @@ function render(dados, doCache) {
 
   $('configurar').hidden = true;
   $('painel').hidden = false;
+  desenharSessoes(dados.sessoes, dados.slot);
   $('sessao').textContent = aoVivo.sessao || (chart && chart.nome) || 'LevainPeak';
 
   const volume = aoVivo.volume_pct;
@@ -240,8 +242,26 @@ function render(dados, doCache) {
   renderAges();
 }
 
+// Com duas sessões na planilha, um seletor para trocar entre elas; com uma só, nada aparece.
+function desenharSessoes(sessoes, slot) {
+  const caixa = $('sessoes');
+  const lista = Array.isArray(sessoes) ? sessoes : [];
+  caixa.hidden = lista.length < 2;
+  if (lista.length < 2) { caixa.textContent = ''; return; }
+  caixa.innerHTML = lista.map((s) => `<button type="button" data-slot="${s.slot}" aria-pressed="${s.slot === slot}"><span>${esc(s.nome)}</span><small>${esc(ageText(ageMinutes(s.atualizado_em)))}</small></button>`).join('');
+  caixa.querySelectorAll('button').forEach((botao) => botao.addEventListener('click', () => {
+    slotAtual = Number(botao.dataset.slot);
+    store.set('slot', slotAtual);
+    quadros = [];
+    const guardado = store.get(`ultimo${slotAtual}`);
+    if (guardado) render(guardado, true); // mostra já o que se tem dessa sessão, até a resposta nova chegar
+    load();
+  }));
+}
+
 function renderAges() {
   if (!ultimo) return;
+  desenharSessoes(ultimo.sessoes, ultimo.slot);
   const aoVivo = ultimo.ao_vivo || {};
   const idade = ageMinutes(aoVivo.atualizado_em);
   const limite = (((aoVivo.live && aoVivo.live.intervalo_s) || 240) * 3) / 60; // 3 ciclos sem dados
@@ -277,15 +297,24 @@ let pausado = window.matchMedia && window.matchMedia('(prefers-reduced-motion: r
 
 function guardarQuadro(snapshot, sessao) {
   if (!snapshot || !snapshot.jpeg_b64 || !snapshot.t) return;
-  let guardado = store.get('quadros');
-  if (!guardado || guardado.sessao !== sessao || !Array.isArray(guardado.itens)) guardado = { sessao, itens: [] };
+  const chave = `quadros-${sessao}`; // uma lista por sessão: trocar de sessão não apaga as imagens da outra
+  let guardado = store.get(chave);
+  if (!guardado || !Array.isArray(guardado.itens)) guardado = { sessao, itens: [] };
   if (!guardado.itens.some((item) => item.t === snapshot.t)) {
     guardado.itens.push({ t: snapshot.t, b: snapshot.jpeg_b64 });
     guardado.itens.sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
     guardado.itens = guardado.itens.slice(-QUADROS_MAX);
-    while (!store.set('quadros', guardado) && guardado.itens.length > 2) guardado.itens = guardado.itens.slice(Math.ceil(guardado.itens.length / 2));
+    while (!store.set(chave, guardado) && guardado.itens.length > 2) guardado.itens = guardado.itens.slice(Math.ceil(guardado.itens.length / 2));
   }
   quadros = guardado.itens;
+}
+
+// Tira do aparelho as imagens de sessões que a planilha já não guarda.
+function limparQuadrosAntigos(nomes) {
+  try {
+    localStorage.removeItem('quadros'); // formato antigo, uma lista só
+    Object.keys(localStorage).filter((k) => k.startsWith('quadros-') && !nomes.includes(k.slice(8))).forEach((k) => localStorage.removeItem(k));
+  } catch (erro) { /* sem acesso ao armazenamento */ }
 }
 
 function mostrarQuadro(indice) {
@@ -340,10 +369,10 @@ function showWarning(texto) {
 async function load() {
   const cfg = readConfig();
   if (!cfg) { showSetup(); return; }
-  const guardado = store.get('ultimo');
+  const guardado = store.get(`ultimo${slotAtual || ''}`);
   const snap = guardado && guardado.snapshot && guardado.snapshot.t ? guardado.snapshot.t : '';
   try {
-    const url = `${cfg.u}?token=${encodeURIComponent(cfg.t)}&o=painel&snap=${encodeURIComponent(snap)}`;
+    const url = `${cfg.u}?token=${encodeURIComponent(cfg.t)}&o=painel&snap=${encodeURIComponent(snap)}${slotAtual ? `&slot=${slotAtual}` : ''}`;
     const resposta = await fetch(url, { cache: 'no-store' });
     const dados = await resposta.json();
     if (!dados.ok) {
@@ -357,7 +386,9 @@ async function load() {
     const sessao = (dados.ao_vivo && dados.ao_vivo.live && dados.ao_vivo.live.sessao) || '';
     (dados.quadros || []).forEach((quadro) => guardarQuadro(quadro, sessao));
     delete dados.quadros;
-    store.set('ultimo', dados);
+    if (dados.slot && dados.slot !== slotAtual) { slotAtual = dados.slot; store.set('slot', slotAtual); } // o escolhido sumiu: vem o padrão
+    store.set(`ultimo${slotAtual || ''}`, dados);
+    limparQuadrosAntigos((dados.sessoes || []).map((s) => s.nome));
     showWarning('');
     render(dados, false);
   } catch (erro) {
