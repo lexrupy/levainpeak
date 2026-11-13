@@ -7,9 +7,9 @@
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 60 * 1000;
 const AGES_MS = 30 * 1000;
-const VERSAO_PAINEL = '2026-11-13.1'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
+const VERSAO_PAINEL = '2026-11-13.4'; // sobe a cada mudança do painel, junto com o CACHE do sw.js
 const QUADROS_MAX = 20; // imagens recebidas que o aparelho guarda para a animação
-const FPS_OPCOES = [1, 2, 3]; // quadros por segundo; o botão passa de um para o outro e o aparelho lembra
+const FPS_OPCOES = [1, 2, 3, 5, 10, 15]; // quadros por segundo no seletor; o aparelho lembra a escolha
 
 const store = {
   get(key) {
@@ -295,18 +295,62 @@ let relogio = null;
 let fps = FPS_OPCOES.includes(store.get('fps')) ? store.get('fps') : 1;
 let pausado = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+// Largura e altura de um JPEG em base64, lidas do cabeçalho (sem decodificar a imagem). null se não achar.
+function tamanhoJpeg(b64) {
+  try {
+    const bytes = atob(b64.slice(0, 16384));
+    let i = 2;
+    while (i + 9 < bytes.length) {
+      if (bytes.charCodeAt(i) !== 0xFF) { i++; continue; }
+      const marcador = bytes.charCodeAt(i + 1);
+      if (marcador >= 0xC0 && marcador <= 0xCF && ![0xC4, 0xC8, 0xCC].includes(marcador)) {
+        return { h: (bytes.charCodeAt(i + 5) << 8) | bytes.charCodeAt(i + 6), w: (bytes.charCodeAt(i + 7) << 8) | bytes.charCodeAt(i + 8) };
+      }
+      i += 2 + ((bytes.charCodeAt(i + 2) << 8) | bytes.charCodeAt(i + 3));
+    }
+  } catch (erro) { /* base64 cortado: sem tamanho */ }
+  return null;
+}
+
+// Os quadros da forma que a maioria tem (proporção largura/altura, com 4% de folga). Um quadro de forma
+// diferente é erro ou o pote foi reposicionado: não entra na animação, e a página não muda de tamanho por causa dele.
+// Se a forma nova persistir, ela vira a maioria sozinha (empate: vale a mais recente).
+function quadrosDaForma(itens) {
+  const parecidos = (a, b) => Math.abs(a / b - 1) <= 0.04;
+  const comForma = itens.filter((item) => item.r);
+  if (comForma.length < 2) return itens;
+  let melhor = null;
+  let votos = 0;
+  comForma.forEach((item) => {
+    const n = comForma.filter((outro) => parecidos(outro.r, item.r)).length;
+    if (n >= votos) { melhor = item; votos = n; } // >=: no empate fica o mais recente (a lista é cronológica)
+  });
+  return itens.filter((item) => !item.r || parecidos(item.r, melhor.r));
+}
+
 function guardarQuadro(snapshot, sessao) {
   if (!snapshot || !snapshot.jpeg_b64 || !snapshot.t) return;
   const chave = `quadros-${sessao}`; // uma lista por sessão: trocar de sessão não apaga as imagens da outra
   let guardado = store.get(chave);
   if (!guardado || !Array.isArray(guardado.itens)) guardado = { sessao, itens: [] };
+  // Quadros guardados por uma versão antiga do painel não têm a proporção: mede agora, para valerem na limpeza.
+  guardado.itens.forEach((item) => {
+    if (item.r === undefined) {
+      const medido = tamanhoJpeg(item.b);
+      item.r = medido && medido.h ? medido.w / medido.h : 0;
+    }
+  });
   if (!guardado.itens.some((item) => item.t === snapshot.t)) {
-    guardado.itens.push({ t: snapshot.t, b: snapshot.jpeg_b64 });
+    const tamanho = tamanhoJpeg(snapshot.jpeg_b64);
+    guardado.itens.push({ t: snapshot.t, b: snapshot.jpeg_b64, r: tamanho && tamanho.h ? tamanho.w / tamanho.h : 0 });
     guardado.itens.sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
     guardado.itens = guardado.itens.slice(-QUADROS_MAX);
     while (!store.set(chave, guardado) && guardado.itens.length > 2) guardado.itens = guardado.itens.slice(Math.ceil(guardado.itens.length / 2));
   }
-  quadros = guardado.itens;
+  store.set(chave, guardado); // também grava a proporção dos quadros que já estavam guardados
+  quadros = quadrosDaForma(guardado.itens);
+  const referencia = quadros.filter((item) => item.r).pop();
+  if (referencia) $('imagem').style.aspectRatio = `${referencia.r}`; // a área da imagem mantém a forma: sem pulos
 }
 
 // Tira do aparelho as imagens de sessões que a planilha já não guarda.
@@ -334,7 +378,7 @@ function prepararQuadros() {
   $('quadros-ctrl').hidden = !varios;
   $('quadros-slider').max = Math.max(0, quadros.length - 1);
   $('quadros-play').textContent = pausado ? 'Reproduzir' : 'Pausar';
-  $('quadros-fps').textContent = `${fps} fps`;
+  $('quadros-fps').value = String(fps);
   clearInterval(relogio);
   relogio = null;
   if (varios && !pausado) {
@@ -347,15 +391,21 @@ function prepararQuadros() {
 
 function ligarQuadros() {
   $('quadros-play').addEventListener('click', () => { pausado = !pausado; prepararQuadros(); });
-  $('quadros-fps').addEventListener('click', () => {
-    fps = FPS_OPCOES[(FPS_OPCOES.indexOf(fps) + 1) % FPS_OPCOES.length];
+  $('quadros-fps').innerHTML = FPS_OPCOES.map((n) => `<option value="${n}">${n} fps</option>`).join('');
+  $('quadros-fps').addEventListener('change', (evento) => {
+    const escolhido = Number(evento.target.value);
+    if (!FPS_OPCOES.includes(escolhido)) return;
+    fps = escolhido;
     store.set('fps', fps);
     prepararQuadros();
   });
+  // Arrastar a barra percorre os quadros e pausa. O valor é lido antes de prepararQuadros(), que devolve a
+  // barra ao quadro de antes.
   $('quadros-slider').addEventListener('input', (evento) => {
+    const alvo = Number(evento.target.value);
     pausado = true;
     prepararQuadros();
-    mostrarQuadro(Number(evento.target.value));
+    mostrarQuadro(alvo);
   });
 }
 
@@ -369,12 +419,14 @@ function showWarning(texto) {
 async function load() {
   const cfg = readConfig();
   if (!cfg) { showSetup(); return; }
-  const guardado = store.get(`ultimo${slotAtual || ''}`);
+  const pedido = slotAtual; // a sessão que este pedido busca: se o usuário trocar enquanto espera, a resposta é descartada
+  const guardado = store.get(`ultimo${pedido || ''}`);
   const snap = guardado && guardado.snapshot && guardado.snapshot.t ? guardado.snapshot.t : '';
   try {
-    const url = `${cfg.u}?token=${encodeURIComponent(cfg.t)}&o=painel&snap=${encodeURIComponent(snap)}${slotAtual ? `&slot=${slotAtual}` : ''}`;
+    const url = `${cfg.u}?token=${encodeURIComponent(cfg.t)}&o=painel&snap=${encodeURIComponent(snap)}${pedido ? `&slot=${pedido}` : ''}`;
     const resposta = await fetch(url, { cache: 'no-store' });
     const dados = await resposta.json();
+    if (slotAtual !== pedido) return; // trocou de sessão no meio: esta resposta é da outra
     if (!dados.ok) {
       const falha = new Error(dados.erro || 'resposta inválida');
       falha.tipo = /token/i.test(falha.message) ? 'recusado' : (/desconhecido/i.test(falha.message) ? 'desatualizado' : 'erro');
