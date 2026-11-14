@@ -29,5 +29,4 @@ runs/
 .DS_Store
 .idea/
 .vscode/
-.envrc
 data/settings.json
