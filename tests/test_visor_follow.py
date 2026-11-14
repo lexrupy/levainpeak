@@ -32,3 +32,24 @@ def test_a_picture_with_nothing_like_it_scores_low():
 
 def test_a_blank_area_gives_no_reference():
     assert make_visor_reference(np.full((600, 800, 3), 60, np.uint8), (320, 215, 440, 265), None) is None
+
+
+def test_rotate_visor_follows_the_picture():
+    import cv2
+    import numpy as np
+    from levainpeak.stream import rotate_frame
+    from levainpeak.visor_follow import rotate_visor
+
+    frame = np.zeros((200, 300, 3), np.uint8)
+    cv2.rectangle(frame, (100, 40), (140, 60), (255, 255, 255), -1)
+    box = (100, 40, 140, 60)
+    quad = ((100, 40), (140, 40), (140, 60), (100, 60))
+    for old, new in ((0, 20), (0, 90), (10, 100.5), (90, 0), (0, -180)):
+        start = rotate_frame(frame, old)
+        roi, quad_now = rotate_visor(box, quad, 0, old, (300, 200))
+        roi_new, quad_new = rotate_visor(roi, quad_now, old, new, (start.shape[1], start.shape[0]))
+        ys, xs = np.nonzero(rotate_frame(frame, new)[:, :, 0] > 128)
+        centre = ((roi_new[0] + roi_new[2]) / 2, (roi_new[1] + roi_new[3]) / 2)
+        assert abs(centre[0] - xs.mean()) < 3 and abs(centre[1] - ys.mean()) < 3
+        roi_box, _ = rotate_visor(roi, None, old, new, (start.shape[1], start.shape[0]))
+        assert abs((roi_box[0] + roi_box[2]) / 2 - xs.mean()) < 3

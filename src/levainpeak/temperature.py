@@ -48,6 +48,7 @@ class TemperatureInspection:
     digits: tuple[int | None, ...] = ()
     occupancy: tuple[tuple[float, ...], ...] = ()  # per cell, segments a..g, 0..1
     reading: float | None = None
+    layout_used: bool = False  # the cells were the remembered ones, not found in this picture
 
 
 def read_temperature(
@@ -56,9 +57,10 @@ def read_temperature(
     infrared: bool | None = None,
     face_quad: tuple[tuple[int, int], ...] | None = None,
     ink_cut: float | None = None,
+    layout=None,
 ) -> float | None:
     """Read a Celsius value from a manually selected seven-segment display."""
-    return inspect_temperature(frame, roi, infrared, face_quad, ink_cut).reading
+    return inspect_temperature(frame, roi, infrared, face_quad, ink_cut, layout).reading
 
 
 def rectify_face(frame: np.ndarray, quad) -> np.ndarray | None:
@@ -87,8 +89,13 @@ def inspect_temperature(
     infrared: bool | None = None,
     face_quad: tuple[tuple[int, int], ...] | None = None,
     ink_cut: float | None = None,
+    layout=None,
 ) -> TemperatureInspection:
     """Run the temperature read and keep what each stage produced.
+
+    ``layout`` is where the three digits were found on this drawn face before (see ``digit_layout``):
+    while the picture has not moved they stay put, so they are tried first and the search for them
+    is only the fallback.
 
     ``infrared`` selects the capture profile; None decides from the picture.
     ``face_quad`` is the LCD face drawn by the user; it replaces the search for
@@ -102,7 +109,7 @@ def inspect_temperature(
         if face is None:
             return TemperatureInspection()
         use_infrared = is_infrared(face) if infrared is None else infrared
-        return _inspect_face(face, cv2.cvtColor(face, cv2.COLOR_BGR2GRAY), use_infrared, drawn=True, ink_cut=ink_cut)
+        return _inspect_face(face, cv2.cvtColor(face, cv2.COLOR_BGR2GRAY), use_infrared, drawn=True, ink_cut=ink_cut, layout=layout)
     if frame is None or roi is None:
         return TemperatureInspection()
     height, width = frame.shape[:2]
@@ -251,7 +258,7 @@ def _face_candidates(gray: np.ndarray) -> list[np.ndarray]:
 
 def _inspect_face(
     display: np.ndarray, gray: np.ndarray, infrared: bool, drawn: bool = False,
-    ink_cut: float | None = None,
+    ink_cut: float | None = None, layout=None,
 ) -> TemperatureInspection:
     """Binarize the LCD face, locate the three digits and read them."""
     # Otsu often selects the bright LCD background on these reflective
@@ -278,8 +285,10 @@ def _inspect_face(
     # the cells are cut at the gaps between digits, or fitted to the ink when the
     # digits touch.
     strategies = (_glyph_cells, _fit_digit_cells) if drawn else (_digit_cell_boxes,)
+    if drawn and layout is not None:
+        strategies = (lambda image: _boxes_from_layout(layout, image), *strategies)
     first: TemperatureInspection | None = None
-    for find_cells in strategies:
+    for position, find_cells in enumerate(strategies):
         boxes = find_cells(binary)
         if boxes is None:
             continue
@@ -292,10 +301,13 @@ def _inspect_face(
         if all(digit is not None for digit in digits):
             value = digits[0] * 10 + digits[1] + digits[2] / 10
             reading = float(value) if -10 <= value <= 60 else None
-        result = TemperatureInspection(display, gray, binary, tuple(boxes), cells, digits, occupancy, reading)
-        if reading is not None:
+        remembered = drawn and layout is not None and position == 0
+        result = TemperatureInspection(
+            display, gray, binary, tuple(boxes), cells, digits, occupancy, reading, layout_used=remembered
+        )
+        if reading is not None and (not drawn or _plausible_cells(boxes)):
             return result
-        first = first or result
+        first = first or result  # cells that no digit fits in (a digit cut in two) are the last resort
     return first or TemperatureInspection(display, gray, binary)
 
 
@@ -337,6 +349,49 @@ def _flat_field_ink(gray: np.ndarray, cut: float = 0.3) -> np.ndarray:
     flat = plain - cv2.GaussianBlur(plain, (0, 0), 14)
     relative = cv2.GaussianBlur(flat / (float(flat.std()) + 1e-6), (0, 0), 1.2)
     return (relative < -cut).astype(np.uint8) * 255
+
+
+MIN_CELL_ASPECT, MAX_CELL_ASPECT = 0.28, 0.80  # width over height of a seven-segment digit's cell
+
+
+def _plausible_cells(boxes) -> bool:
+    """Cells as wide as a digit is: much narrower ones are slices of digits split between cells."""
+    return all(
+        bottom > top and MIN_CELL_ASPECT <= (right - left) / (bottom - top) <= MAX_CELL_ASPECT
+        for left, top, right, bottom in boxes
+    )
+
+
+def digit_layout(inspection: TemperatureInspection):
+    """Where the digit cells sit on the face, as fractions of its size (None when nothing was found)."""
+    if inspection.binary is None or len(inspection.cell_boxes) != 3:
+        return None
+    height, width = inspection.binary.shape
+    if not _plausible_cells(inspection.cell_boxes):
+        return None
+    return tuple(
+        (left / width, top / height, right / width, bottom / height)
+        for left, top, right, bottom in inspection.cell_boxes
+    )
+
+
+def layouts_agree(first, second, tolerance: float = 0.03) -> bool:
+    return all(abs(a - b) <= tolerance for box_a, box_b in zip(first, second, strict=True) for a, b in zip(box_a, box_b, strict=True))
+
+
+def median_layout(layouts):
+    return tuple(
+        tuple(float(np.median([layout[cell][side] for layout in layouts])) for side in range(4))
+        for cell in range(3)
+    )
+
+
+def _boxes_from_layout(layout, binary: np.ndarray) -> list[tuple[int, int, int, int]]:
+    height, width = binary.shape
+    return [
+        (round(left * width), round(top * height), round(right * width), round(bottom * height))
+        for left, top, right, bottom in layout
+    ]
 
 
 def _fit_digit_cells(binary: np.ndarray) -> list[tuple[int, int, int, int]] | None:
@@ -553,6 +608,7 @@ _STRONG_SEGMENT = 0.5
 _DARK_SEGMENT = 0.12
 _FRAGILE_SEGMENTS = frozenset("d")
 _MIN_SEPARATION = 0.04
+_HORIZONTAL_MARGIN = 0.12  # how far the bars of a 3 stand above the always-off lower-left bar
 _MAX_BEST_SCORE = 1.5
 
 
@@ -614,6 +670,15 @@ def _classify_digit(glyph: np.ndarray) -> int | None:
         ] or _SHAPES
         match = min(candidates, key=lambda item: _distance(occupancy, item[1], names))
     digit, shape = match
+    if digit in (1, 7):
+        # Normalised to the strongest segment, the three horizontal bars of a 3 can fall under the lit
+        # threshold when the right bars are much brighter, and the digit reads as a 1 or a 7. A 1 has them
+        # all dark: all three standing clear above the lower-left bar (off in 1, 3 and 7) say it is a 3.
+        level = dict(zip(names, occupancy, strict=True))
+        if all(level[name] >= max(0.15, level["e"] + _HORIZONTAL_MARGIN) for name in "agd") and (
+            level["b"] >= _LIT_THRESHOLD and level["c"] >= _LIT_THRESHOLD
+        ):
+            return 3
     best = _distance(occupancy, shape, names)
     if best > _MAX_BEST_SCORE:
         return None

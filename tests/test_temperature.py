@@ -326,3 +326,48 @@ def test_a_dark_lower_right_bar_is_a_two_even_when_noise_lights_the_upper_left()
         x0, y0, x1, y1 = _SEGMENTS[name]
         glyph[int(80 * y0):max(int(80 * y0) + 1, int(80 * y1)), int(40 * x0):max(int(40 * x0) + 1, int(40 * x1))] = int(255 * strength)
     assert _classify_digit(glyph) in (2, None)  # never an 8: it needs the bar that is off
+
+
+@pytest.mark.parametrize("scale", [0.3, 0.4, 0.5])
+def test_a_three_with_thin_horizontal_bars_is_not_read_as_a_one(scale):
+    from levainpeak.temperature import _classify_digit
+
+    glyph = np.zeros((80, 40), np.uint8)
+    for name, (x0, y0, x1, y1) in DRAW.items():
+        if name not in _DIGITS[3]:
+            continue
+        if name in "adg":
+            centre, half = (y0 + y1) / 2, (y1 - y0) / 2 * scale
+            y0, y1 = centre - half, centre + half
+        glyph[int(y0 * 80):max(int(y1 * 80), int(y0 * 80) + 1), int(x0 * 40):int(x1 * 40)] = 255
+    assert _classify_digit(glyph) == 3
+
+
+def test_a_real_one_stays_a_one():
+    from levainpeak.temperature import _classify_digit
+
+    glyph = np.zeros((80, 40), np.uint8)
+    glyph[8:72, 32:39] = 255
+    assert _classify_digit(glyph) == 1
+
+
+def test_remembered_digit_layout_is_tried_first_and_reads_the_same():
+    from levainpeak.temperature import digit_layout, inspect_temperature
+
+    frame, _ = render_display("25.6")
+    height, width = frame.shape[:2]
+    quad = ((30, 30), (width - 31, 30), (width - 31, height - 31), (30, height - 31))
+    first = inspect_temperature(frame, None, infrared=False, face_quad=quad)
+    assert first.reading == pytest.approx(25.6) and not first.layout_used
+    layout = digit_layout(first)
+    assert layout is not None
+    again = inspect_temperature(frame, None, infrared=False, face_quad=quad, layout=layout)
+    assert again.reading == pytest.approx(25.6) and again.layout_used
+
+
+def test_a_layout_of_slivers_is_not_remembered():
+    from levainpeak.temperature import TemperatureInspection, digit_layout
+
+    binary = np.zeros((100, 300), np.uint8)
+    slivers = TemperatureInspection(binary=binary, cell_boxes=((0, 0, 20, 100), (40, 0, 60, 100), (80, 0, 100, 100)))
+    assert digit_layout(slivers) is None

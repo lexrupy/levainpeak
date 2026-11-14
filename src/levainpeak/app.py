@@ -43,6 +43,7 @@ from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, 
                                  ARTIFACT_MINUTES, LAMP_MINUTES, MARK_SHAPES, PEAK_MINUTES, ROTATIONS, SNAPSHOT_MINUTES, Settings, load_settings, save_settings)
 from levainpeak.stream import RtspStream
 from levainpeak.timelapse import TimelapseWindow, recent_sessions
+from levainpeak.visor_follow import rotate_visor
 
 FINE_TURN_DEGREES = 15.0  # the slider's reach either way; whole quarter turns come from the menu
 from levainpeak.vision import (MAX_SURFACE_BANDS, MIN_SURFACE_BANDS, ContainerMeasurement,
@@ -269,6 +270,7 @@ class LevainPeakApp:
         self._phase = "Aguardando sessão"
         self._paused = False  # the session is open but nothing is logged (the fermenter is being handled)
         self._mix_time: datetime | None = None
+        self._graph_followed = None  # the session file the open chart follows as the current one
         self._line_height = tkfont.nametofont("TkDefaultFont").metrics("linespace")
         self._build_layout()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -529,17 +531,21 @@ class LevainPeakApp:
         self.mix_time_button = ttk.Label(self._toolbar, text="Hora da mistura", cursor="hand2", foreground="#2f5d8a")
         self.mix_time_button.bind("<Button-1>", lambda _e: self._set_mix_time())
         add(self.mix_time_button, "Clique para definir a hora da mistura")
+        self.ratio_button = ttk.Label(self._toolbar, text="Proporção", cursor="hand2", foreground="#2f5d8a")
+        self.ratio_button.bind("<Button-1>", lambda _e: self._set_ratio())
+        add(self.ratio_button, "Clique para mudar a proporção isca : água : farinha da sessão")
 
         def reflow(event: tk.Event | None = None) -> None:
             """Lay the bar out in as many rows as the width needs."""
             width = max(1, self._toolbar.winfo_width())
-            row = column = x = 0
-            for widget, ends_group in items:
+            row = x = 0
+            for column, (widget, ends_group) in enumerate(items):
                 need = widget.winfo_reqwidth() + (12 if ends_group else 4)
                 if x and x + need > width:
-                    row, column, x = row + 1, 0, 0
+                    row, x = row + 1, 0
+                # A column of its own for each widget: columns are shared by every row, so a wide label
+                # that wrapped to the start of a row would widen the cell of the button above it.
                 widget.grid(row=row, column=column, padx=(0, 12 if ends_group else 4), pady=1, sticky="w")
-                column += 1
                 x += need
 
         self._toolbar.bind("<Configure>", reflow, add="+")
@@ -1034,11 +1040,17 @@ class LevainPeakApp:
                 self._persist_marker()
         self._last_container_box = current
 
+    def _marker_base(self):
+        """What the mark is placed on: the reading, or the outline read as empty (the hand knows better)."""
+        if self._measurement is not None:
+            return self._measurement
+        return self._analyzer.empty_pot if self._analyzer is not None else None
+
     def _toggle_marker_mode(self) -> None:
         if self._marker_mode:
             self._cancel_marker_mode()
             return
-        if self._measurement is None:
+        if self._marker_base() is None:
             self._set_message("Aguarde a detecção do pote antes de marcar o nível inicial.")
             return
         if self._roi_mode:
@@ -1388,7 +1400,7 @@ class LevainPeakApp:
         if degrees == 0 and round(self._settings.rotation / 90) != 0 and not messagebox.askyesno(
             "Imagem sem girar",
             "Tirar a volta de 90° da imagem?\n"
-            "O pote e o visor ficam onde estão na tela, e talvez precisem de ajuste.",
+            "O visor acompanha a imagem; o pote fica onde está na tela e talvez precise de ajuste.",
             parent=self.root,
         ):
             return
@@ -1400,17 +1412,19 @@ class LevainPeakApp:
         if messagebox.askyesno(
             "Zerar o ângulo",
             f"Voltar a imagem de {self._settings.rotation:.1f}° para 0°?\n"
-            "O pote e o visor ficam onde estão na tela, e talvez precisem de ajuste.",
+            "O visor acompanha a imagem; o pote fica onde está na tela e talvez precise de ajuste.",
             parent=self.root,
         ):
             self._set_rotation(0)
 
-    def _set_rotation(self, value: float) -> None:
+    def _set_rotation(self, value: float, turn_visor: bool = True) -> None:
         degrees = Settings(rotation=value).clamped().rotation
         self._rotation_var.set(self._fine_part(degrees))
         if degrees == self._settings.rotation:
             return
         self._rotation_text.set(f"{degrees:.1f}°")
+        if turn_visor:
+            self._turn_visor(self._settings.rotation, degrees)
         self._settings = replace(self._settings, rotation=degrees).clamped()
         if self._stream is not None:
             self._stream.rotation = self._settings.rotation
@@ -1423,6 +1437,22 @@ class LevainPeakApp:
             save_settings(self._settings)
         except OSError:
             logging.exception("Falha ao salvar a rotação da imagem")
+
+    def _turn_visor(self, old: float, new: float) -> None:
+        """The visor area and corners turn with the picture, so they stay on the thermometer."""
+        if self._temperature_roi is None or self._source_frame_size is None:
+            return
+        self._temperature_roi, self._temperature_quad = rotate_visor(
+            self._temperature_roi, self._temperature_quad, old, new, self._source_frame_size
+        )
+        if self._session_log.active:
+            try:
+                self._session_log.save_regions(
+                    self._manual_pot_roi, self._temperature_roi, outline=self._pot_outline,
+                    face_quad=self._temperature_quad,
+                )
+            except OSError:
+                logging.exception("Falha ao salvar o visor girado")
 
     def _choose_mark_shape(self) -> None:
         self._settings = replace(self._settings, mark_shape=self._shape_var.get()).clamped()
@@ -1818,10 +1848,10 @@ class LevainPeakApp:
         return source_x, source_y
 
     def _preview_marker(self, event: tk.Event) -> None:
-        if not self._marker_mode or self._measurement is None:
+        measurement = self._marker_base()
+        if not self._marker_mode or measurement is None:
             return
         point = self._source_point(event)
-        measurement = self._measurement
         if point is None:
             self._hide_marker_preview()
             return
@@ -1851,7 +1881,7 @@ class LevainPeakApp:
     def _set_marker_from_click(self, event: tk.Event) -> None:
         if not self._marker_mode:
             return
-        measurement = self._measurement
+        measurement = self._marker_base()
         point = self._source_point(event)
         if measurement is None or point is None:
             self._set_message("Aguarde a detecção do pote antes de marcar o nível inicial.")
@@ -1868,6 +1898,10 @@ class LevainPeakApp:
         self._baseline_locked = False
         self._persist_marker()
         self._capture_pot_reference()
+        if measurement.empty and measurement.volume_below_profile:  # read at the mark, not as an empty pot
+            index = min(max(source_y - measurement.top, 0), len(measurement.volume_below_profile) - 1)
+            measurement = replace(measurement, empty=False, surface_y=int(source_y), confidence=0.2,
+                                  volume_fraction=measurement.volume_below_profile[index])
         self._measurement = set_initial_marker(
             measurement, source_y, shift=self._analyzer.volume_shift if self._analyzer else 0.0, manual=True
         )
@@ -2172,7 +2206,7 @@ class LevainPeakApp:
             self._phase = "Aguardando sessão"
             self.metric_values["Estado do levain"].configure(text=self._phase)
             self._set_message(f"Registro salvo em {path}.")
-            self._session_baseline = None
+            self._forget_session_data()
             return
         if self._measurement is None:
             empty = self._analyzer is not None and self._analyzer.empty_pot is not None
@@ -2182,8 +2216,10 @@ class LevainPeakApp:
             )
             return
         try:
-            if self._mix_time is None:
-                self._mix_time = datetime.now().astimezone()
+            if self._mix_time is None:  # always asked: it never carries over from a session before
+                self._mix_time = self._ask_mix_time(datetime.now().astimezone())
+                if self._mix_time is None:
+                    return
             suggested_name = f"Levain {self._mix_time.strftime('%d/%m %H:%M')}"
             name = simpledialog.askstring(
                 "Nome da sessão", "Dê um nome para esta sessão:",
@@ -2230,6 +2266,8 @@ class LevainPeakApp:
         self.mix_time_button.configure(
             text=f"Mistura: {self._mix_time.strftime('%d/%m %H:%M')}"
         )
+        self._update_ratio_label()
+        self._follow_graph_to(self._session_log.path)
         self.metric_values["Sessão"].configure(
             text=self._session_summary()
         )
@@ -2237,6 +2275,59 @@ class LevainPeakApp:
         self._update_double_forecast(time.monotonic())
         self._record_session(time.monotonic(), force=True)
         self._set_message(f"Sessão ‘{self._session_name}’ ativa. Dados registrados em {self._session_log.path}.")
+
+    def _forget_session_data(self) -> None:
+        """After a session ends, what was typed or measured for it does not carry to the next.
+
+        Kept: the pot, the thermometer and its digits (the camera's view). Gone: the mix time, the name,
+        the ratio, the mark, the level it started from, the forecast and the last temperature."""
+        self._mix_time = None
+        self._session_name = ""
+        self._session_baseline = None
+        self._manual_marker_y = None
+        self._marker_automatic = True
+        self._baseline_locked = False
+        self._last_known_temperature = None
+        self._forecast_saved_at = 0.0
+        self._forecast_prediction = None
+        self._reset_tracking()
+        if self._analyzer is not None:
+            self._analyzer.forget_session()
+        self.mix_time_button.configure(text="Hora da mistura")
+        self._update_ratio_label()
+        self._update_temperature_label()
+        self._update_double_forecast(time.monotonic())
+
+    def _update_ratio_label(self) -> None:
+        ratio = self._session_log.ratio if self._session_log.active else None
+        self.ratio_button.configure(
+            text="Proporção" if ratio is None else "Proporção: " + ":".join(f"{part:g}" for part in ratio)
+        )
+
+    def _set_ratio(self) -> None:
+        if not self._session_log.active:
+            self._set_message("A proporção é pedida ao iniciar a sessão; depois dá para mudar aqui.")
+            return
+        current = self._session_log.ratio or (1.0, 1.0, 1.0)
+        entered = simpledialog.askstring(
+            "Proporção", "Proporção isca : água : farinha:",
+            initialvalue="{:g}:{:g}:{:g}".format(*current), parent=self.root,
+        )
+        if entered is None:
+            return
+        ratio = parse_ratio(entered)
+        if ratio is None:
+            self._set_message("Proporção inválida. Use o formato 1:2:3.")
+            return
+        try:
+            self._session_log.save_ratio(ratio)
+        except OSError:
+            logging.exception("Falha ao salvar a proporção na sessão")
+            self._set_message("Não foi possível salvar a proporção.")
+            return
+        self._update_ratio_label()
+        self._update_double_forecast(time.monotonic())
+        self._set_message("Proporção alterada para " + ":".join(f"{part:g}" for part in ratio) + ".")
 
     def _open_session_csv(self) -> None:
         path = self._session_log.path
@@ -2299,6 +2390,18 @@ class LevainPeakApp:
             self._graph_window.after(10_000, update_graph)
 
         self._graph_window.after(10_000, update_graph)
+
+    def _follow_graph_to(self, path) -> None:
+        """An open chart that was showing the previous current session moves to the new one."""
+        previous, self._graph_followed = self._graph_followed, path
+        window = getattr(self, "_graph_window", None)
+        if window is None or not window.winfo_exists() or path is None:
+            return
+        if previous is not None and getattr(self, "_graph_path", None) != previous:
+            return  # the chart shows a saved session the user picked: leave it
+        self._graph_path = path
+        window.title(f"Evolução da sessão · {path.stem}")
+        self._refresh_session_graph()
 
     def _cycle_graph_scale(self, series: str) -> str:
         """Next scale mode for the volume or the temperature, saved and redrawn at once."""
@@ -3164,7 +3267,7 @@ class LevainPeakApp:
                 except OSError:
                     logging.exception("Falha ao salvar a proporção na sessão")
         if self._session_log.rotation is not None:  # the angle its pot, visor and mark were drawn at
-            self._set_rotation(self._session_log.rotation)
+            self._set_rotation(self._session_log.rotation, turn_visor=False)  # its regions are loaded below
         else:  # a session from before the angle was kept: it is taken to be at the one in use now
             try:
                 self._session_log.save_rotation(self._settings.rotation)
@@ -3262,6 +3365,8 @@ class LevainPeakApp:
         self.mix_time_button.configure(
             text="Hora da mistura" if self._mix_time is None else f"Mistura: {self._mix_time.strftime('%d/%m %H:%M')}"
         )
+        self._update_ratio_label()
+        self._follow_graph_to(self._session_log.path)
         self.auto_pot_button.configure(state="normal" if self._manual_pot_roi else "disabled")
         self._set_message(f"Sessão retomada; as próximas medições serão acrescentadas em {self._session_log.path}.")
 
@@ -3317,6 +3422,7 @@ class LevainPeakApp:
         self.draw_pot_button.configure(text="Pote")
         self.auto_pot_button.configure(state="disabled")
         self.mix_time_button.configure(text="Hora da mistura")
+        self._update_ratio_label()
         self._set_message("Sessão fechada; a tela está limpa. Marque o pote e inicie outra, ou retome uma salva.")
 
     def _toggle_pause(self) -> None:
@@ -3508,8 +3614,8 @@ class LevainPeakApp:
         note = {"última conhecida": "salva", "antes do crescimento": "pré-subida"}.get(note, note)
         return f"{predicted_at.strftime('%d/%m às %H:%M')}\n{elapsed_text}\n{basis}" + (f" · {note}" if note else "")
 
-    def _set_mix_time(self) -> None:
-        default_time = self._mix_time or datetime.now().astimezone()
+    def _ask_mix_time(self, default_time: datetime) -> datetime | None:
+        """Ask for the mix time; None when cancelled or not valid (the reason is shown)."""
         entered = simpledialog.askstring(
             "Hora da mistura",
             "Informe data e hora da mistura (DD/MM/AAAA HH:MM):",
@@ -3517,16 +3623,21 @@ class LevainPeakApp:
             parent=self.root,
         )
         if entered is None:
-            return
+            return None
         try:
             mix_time = datetime.strptime(entered.strip(), "%d/%m/%Y %H:%M").astimezone()
         except ValueError:
             self._set_message("Formato inválido. Use DD/MM/AAAA HH:MM, por exemplo 30/10/2026 08:15.")
-            return
+            return None
         if mix_time > datetime.now().astimezone():
             self._set_message("A hora da mistura não pode estar no futuro.")
-            return
+            return None
+        return mix_time
 
+    def _set_mix_time(self) -> None:
+        mix_time = self._ask_mix_time(self._mix_time or datetime.now().astimezone())
+        if mix_time is None:
+            return
         self._mix_time = mix_time
         if self._session_log.active:
             self._session_log.set_mix_time(mix_time)

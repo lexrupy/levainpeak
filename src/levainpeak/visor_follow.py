@@ -71,3 +71,42 @@ def carry_visor(reference: VisorReference, dx: float, dy: float):
     roi = (round(left + dx), round(top + dy), round(right + dx), round(bottom + dy))
     quad = None if reference.quad is None else tuple((round(x + dx), round(y + dy)) for x, y in reference.quad)
     return roi, quad
+
+
+def _turn_point(x: float, y: float, degrees: float, width: float, height: float) -> tuple[float, float]:
+    """A point after ``rotate_frame(frame, degrees)`` on a width x height picture (clockwise)."""
+    turns = round(degrees / 90)
+    for _ in range(turns % 4):
+        x, y, width, height = height - y, x, height, width
+    rest = np.radians(degrees - turns * 90)
+    cx, cy = width / 2, height / 2
+    dx, dy = x - cx, y - cy
+    return cx + dx * np.cos(rest) - dy * np.sin(rest), cy + dx * np.sin(rest) + dy * np.cos(rest)
+
+
+def rotate_visor(roi, quad, old_degrees: float, new_degrees: float, size: tuple[int, int]):
+    """The area and face corners after the picture goes from one angle to another.
+
+    ``size`` is the picture's size at ``old_degrees``. The corners turn with the picture; the
+    area is the box around the turned corners (or around the turned area when there are none).
+    """
+    width, height = size
+    old_turns = round(old_degrees / 90)
+    new_turns = round(new_degrees / 90)
+    old_fine, new_fine = old_degrees - old_turns * 90, new_degrees - new_turns * 90
+    quarter_w, quarter_h = width, height  # the picture at the old angle, minus its small angle
+
+    def move(x: float, y: float) -> tuple[float, float]:
+        x, y = _turn_point(x, y, -old_fine, width, height)  # take the small angle off
+        x, y = _turn_point(x, y, (new_turns - old_turns) * 90, quarter_w, quarter_h)
+        turned_w, turned_h = (quarter_w, quarter_h) if (new_turns - old_turns) % 2 == 0 else (quarter_h, quarter_w)
+        return _turn_point(x, y, new_fine, turned_w, turned_h)
+
+    if quad is not None:
+        quad = tuple((round(x), round(y)) for x, y in (move(px, py) for px, py in quad))
+        xs, ys = [p[0] for p in quad], [p[1] for p in quad]
+        return (min(xs), min(ys), max(xs), max(ys)), quad
+    left, top, right, bottom = roi
+    moved = [move(x, y) for x, y in ((left, top), (right, top), (right, bottom), (left, bottom))]
+    xs, ys = [p[0] for p in moved], [p[1] for p in moved]
+    return (round(min(xs)), round(min(ys)), round(max(xs)), round(max(ys))), None

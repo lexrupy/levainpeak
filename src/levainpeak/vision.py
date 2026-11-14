@@ -437,6 +437,8 @@ def _outline_edges(
 def _empty_outline_measurement(outline_edges) -> ContainerMeasurement:
     top, left_edges, right_edges = outline_edges
     bottom = top + len(left_edges)
+    area = np.square(np.maximum(1.0, right_edges - left_edges).astype(np.float32))
+    below = tuple(float(v) for v in (np.cumsum(area[::-1])[::-1] / max(float(area.sum()), 1e-6)))
     return ContainerMeasurement(
         left=int(left_edges.min()),
         right=int(np.ceil(right_edges.max())),
@@ -446,6 +448,7 @@ def _empty_outline_measurement(outline_edges) -> ContainerMeasurement:
         volume_fraction=0.0,
         confidence=0.0,
         empty=True,
+        volume_below_profile=below,  # so a mark can still be placed by hand on a pot read as empty
         edge_profile=tuple((int(a), int(b)) for a, b in zip(left_edges, right_edges, strict=True)),
     )
 

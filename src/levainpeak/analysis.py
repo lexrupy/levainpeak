@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 import time
@@ -24,7 +25,7 @@ from levainpeak.filters import LampWatch, OutlierGate
 from levainpeak.target import find_plus
 from levainpeak.profiles import DAY, INFRARED, CaptureProfile, ProfileSelector
 from levainpeak.stream import RtspStream
-from levainpeak.temperature import read_temperature
+from levainpeak.temperature import digit_layout, inspect_temperature, layouts_agree, median_layout
 from levainpeak.vision import ContainerMeasurement, measure_container
 
 MIN_TEMPERATURE_C = 0.0
@@ -37,6 +38,9 @@ BIG_TEMPERATURE_CONFIRMATIONS = 900
 
 MAX_PLUS_SLIDE = 200  # px the mark alone may move the drawing sideways
 MAX_PLUS_CORRECTION = 25  # px the "+" may correct the edges' height by; more is a false find
+LAYOUT_READS = 3  # confirmed readings with the digits in one place before it is remembered
+LAYOUT_MISSES = 4  # reads the remembered place failed before the digits are looked for again
+FULL_POT_FRACTION = 0.85  # of the pot filled at the last reading: no surface found after it means full, not empty
 
 
 class ContainerAnalyzer:
@@ -75,6 +79,9 @@ class ContainerAnalyzer:
         self._visor_region: tuple | None = None  # the area and corners the references were taken for
         self._visor_candidate: tuple | None = None
         self._last_visor_follow = 0.0
+        self._digit_layout = None  # where the digits sit on the drawn face, once readings have agreed on it
+        self._layout_candidates: list = []
+        self._layout_misses = 0
         self.visor_aligned: tuple | None = None  # (area, corners) after following the thermometer
         self.follow_visor = True
         self.lamp_hold_seconds = 600.0  # how long the volume is held after the lamp changes the picture
@@ -156,6 +163,21 @@ class ContainerAnalyzer:
         if self._temperature_updated_at is None:
             return None
         return time.monotonic() - self._temperature_updated_at
+
+    def forget_session(self) -> None:
+        """A session ended: what belonged to it (the series, the temperature trusted, the mark) goes.
+
+        Where the pot, the thermometer and its digits sit stays: that is the camera's view, not the session's."""
+        self.reset_join()
+        self.anchor_temperature = None
+        self.anchor_volume = None
+        self.marker_y = None
+        self.reference_base = None
+        self._temperature_c = None
+        self._temperature_updated_at = None
+        self._previous_reading = None
+        for gate in self._temperature_gates.values():
+            gate.reset()
 
     def reset_join(self) -> None:
         """Forget the series of the previous session: a new one starts from what is read."""
@@ -494,6 +516,18 @@ class ContainerAnalyzer:
                 measurement = None
             # An empty pot is not a measurement: the session sees "no pot" as before,
             # and the window shows the pot as empty.
+            if measurement is not None and measurement.empty:
+                last = self._last_stable_measurement
+                if last is not None and last.volume_fraction >= FULL_POT_FRACTION:
+                    # The levain was near the brim and no surface is left inside the outline: it reached
+                    # the top, the pot is full, not empty.
+                    measurement = replace(measurement, empty=False, surface_y=measurement.top, volume_fraction=1.0,
+                                          confidence=0.3)
+                elif self.marker_y is not None and measurement.volume_below_profile:
+                    # A hand-placed mark says there is levain: "empty" is not for us to say. Read at the mark.
+                    index = int(np.clip(self.marker_y - measurement.top, 0, len(measurement.volume_below_profile) - 1))
+                    measurement = replace(measurement, empty=False, surface_y=int(self.marker_y),
+                                          volume_fraction=measurement.volume_below_profile[index], confidence=0.2)
             self.empty_pot = measurement if measurement is not None and measurement.empty else None
             if self.empty_pot is not None:
                 measurement = None
@@ -537,6 +571,9 @@ class ContainerAnalyzer:
                 self._last_temperature_quad = temperature_quad
                 self._temperature_c = None
                 self._temperature_updated_at = None
+                self._digit_layout = None  # the face is somewhere else (or drawn again): find the digits again
+                self._layout_candidates.clear()
+                self._layout_misses = 0
                 self._last_temperature_read = 0.0
                 self._last_temperature_success = 0.0
                 for gate in self._temperature_gates.values():
@@ -550,13 +587,16 @@ class ContainerAnalyzer:
             if temperature_roi is not None and now - self._last_temperature_read >= 2.0:
                 self._last_temperature_read = now
                 try:
-                    reading = read_temperature(
+                    inspection = inspect_temperature(
                         frame, temperature_roi, infrared=self.profile.infrared,
                         face_quad=temperature_quad,
                         ink_cut=self.ink_cut_infrared if self.profile.infrared else self.ink_cut_day,
+                        layout=self._digit_layout,
                     )
+                    reading = inspection.reading
                 except cv2.error:
                     reading = None
+                    inspection = None
                 if reading is not None and not MIN_TEMPERATURE_C <= reading <= MAX_TEMPERATURE_C:
                     reading = None
                 # A reading counts only when the previous read agrees with it,
@@ -573,9 +613,39 @@ class ContainerAnalyzer:
                     if repeated and gate.accept(reading):
                         self._temperature_c = reading
                         self._temperature_updated_at = now
+                        self._learn_digit_layout(inspection)
+                    elif self._digit_layout is not None and inspection is not None and not inspection.layout_used:
+                        self._note_layout_miss()  # the remembered cells did not read: the search had to
+                elif self._digit_layout is not None:
+                    self._note_layout_miss()
                 # When the display cannot be read, the last good reading stays.
             self._publish((frame_number, measurement, self._temperature_c), key)
             self._stop.wait(self.interval_seconds)
+
+    def _learn_digit_layout(self, inspection) -> None:
+        """After a few confirmed readings with the digits in the same place, remember where they are."""
+        if inspection is None:
+            return
+        if self._digit_layout is not None:
+            self._layout_misses = 0
+            return
+        layout = digit_layout(inspection)
+        if layout is None:
+            return
+        self._layout_candidates.append(layout)
+        del self._layout_candidates[:-LAYOUT_READS]
+        if len(self._layout_candidates) == LAYOUT_READS and all(
+            layouts_agree(self._layout_candidates[0], other) for other in self._layout_candidates[1:]
+        ):
+            self._digit_layout = median_layout(self._layout_candidates)
+            logging.info("Posição dos dígitos do termômetro fixada.")
+
+    def _note_layout_miss(self) -> None:
+        self._layout_misses += 1
+        if self._layout_misses >= LAYOUT_MISSES:  # the picture moved: look for the digits again
+            self._digit_layout = None
+            self._layout_candidates.clear()
+            self._layout_misses = 0
 
     def _stabilize_measurement(
         self, measurement: ContainerMeasurement | None
