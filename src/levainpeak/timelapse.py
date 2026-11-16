@@ -6,7 +6,7 @@ import json
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 import cv2
 import numpy as np
@@ -19,6 +19,7 @@ MAX_FPS = 30
 DEFAULT_FPS = 25
 CACHE_FRAMES = 24
 RECENT_SESSIONS = 10
+EXCLUDED_DIR = "excluidas"  # beside the frames; the *.jpg glob does not look inside it
 
 
 def session_photos(session_path: Path | None) -> list[Path]:
@@ -99,6 +100,7 @@ class TimelapseWindow:
         self._zoom = 1.0  # kept from one frame to the next, and between sessions
         self._center = (0.5, 0.5)
         self._drag: tuple[int, int] | None = None
+        self._excluded: list[tuple[list[Path], Path, Path, int]] = []  # (session frames, original, moved to, position)
         self.open = True
 
         self.window = tk.Toplevel(parent, class_="Pythontkfloating")  # the i3 rule floats this class
@@ -121,6 +123,10 @@ class TimelapseWindow:
         self.canvas.bind("<Button-1>", self._pressed)
         self.canvas.bind("<B1-Motion>", self._dragged)
         self.canvas.bind("<Double-Button-1>", self._reset_view)
+        self.canvas.bind("<Button-3>", self._context_menu)
+        self._popup = tk.Menu(self.window, tearoff=0)
+        self._popup.add_command(label="Excluir este quadro", command=self.exclude_current)
+        self._popup.add_command(label="Desfazer última exclusão", command=self.undo_exclusion)
         for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
             self.canvas.bind(sequence, self._wheel)
 
@@ -146,7 +152,7 @@ class TimelapseWindow:
             row, from_=MIN_FPS, to=MAX_FPS, width=4, textvariable=self._fps, takefocus=0,
             command=self.window.focus_set,
         ).pack(side="left")
-        self._loop = tk.BooleanVar(value=False)
+        self._loop = tk.BooleanVar(value=True)
         ttk.Checkbutton(row, text="Repetir", variable=self._loop, takefocus=0).pack(side="left", padx=(12, 0))
         self._label = tk.StringVar()
         ttk.Label(row, textvariable=self._label, anchor="e").pack(side="right")
@@ -171,6 +177,60 @@ class TimelapseWindow:
         self._index = 0
         self.go_to(len(self._photos) - 1)
         self.window.focus_set()
+
+    def _context_menu(self, event: tk.Event) -> None:
+        self.window.focus_set()
+        self._popup.entryconfigure(0, state="normal" if self._photos else "disabled")
+        self._popup.entryconfigure(1, state="normal" if self._excluded else "disabled")
+        try:
+            self._popup.tk_popup(event.x_root, event.y_root)
+        finally:
+            self._popup.grab_release()
+
+    def exclude_current(self) -> None:
+        """After confirmation, take the shown frame out of the time-lapse by moving it to `excluidas/`."""
+        if not self._photos:
+            return
+        self._stop()
+        path = self._photos[self._index]
+        taken = photo_time(path)
+        stamp = f"{taken:%d/%m %H:%M}" if taken else path.stem
+        if not messagebox.askyesno(
+            "Excluir quadro",
+            f"Excluir o quadro de {stamp} do time-lapse?\n\n"
+            f"O arquivo vai para a pasta '{EXCLUDED_DIR}' ao lado das fotos (dá para recuperar).",
+            parent=self.window,
+        ):
+            return
+        target = path.parent / EXCLUDED_DIR / path.name
+        try:
+            target.parent.mkdir(exist_ok=True)
+            path.replace(target)
+        except OSError as error:
+            messagebox.showerror("Excluir quadro", f"Não foi possível mover o arquivo:\n{error}", parent=self.window)
+            return
+        self._excluded.append((self._photos, path, target, self._index))
+        del self._photos[self._index]  # the same list the session menu holds
+        self._cache.pop(path, None)
+        self._slider.configure(to=max(0, len(self._photos) - 1))
+        self._index = min(self._index, max(0, len(self._photos) - 1))
+        self._slider.set(self._index)
+        self._show()
+
+    def undo_exclusion(self) -> None:
+        if not self._excluded:
+            return
+        photos, path, target, position = self._excluded[-1]
+        try:
+            target.replace(path)
+        except OSError as error:
+            messagebox.showerror("Desfazer", f"Não foi possível restaurar o arquivo:\n{error}", parent=self.window)
+            return
+        self._excluded.pop()
+        photos.insert(min(position, len(photos)), path)
+        if photos is self._photos:
+            self._slider.configure(to=len(photos) - 1)
+            self.go_to(position)
 
     def lift(self) -> None:
         self.window.lift()
