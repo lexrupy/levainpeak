@@ -2198,7 +2198,9 @@ class LevainPeakApp:
                 parent=self.root,
             ):
                 return
+            live = {**self._live_state, "sessao": self._session_name or self._live_state.get("sessao", "")}
             path = self._session_log.stop()
+            self._tell_phone_session_ended(path, live)
             self._set_paused(False)
             self.pause_button.configure(state="disabled")
             self.session_button.configure(text="Iniciar sessão")
@@ -2275,6 +2277,20 @@ class LevainPeakApp:
         self._update_double_forecast(time.monotonic())
         self._record_session(time.monotonic(), force=True)
         self._set_message(f"Sessão ‘{self._session_name}’ ativa. Dados registrados em {self._session_log.path}.")
+
+    def _tell_phone_session_ended(self, csv_path: Path | None, live: dict) -> None:
+        """One last bundle marked as finished, off the Tk thread."""
+        pusher = self._phone_pusher
+        if pusher is None or csv_path is None:
+            return
+
+        def work() -> None:
+            try:
+                pusher.end_session(csv_path, live)
+            except Exception:  # noqa: BLE001 - the session is already saved; the phone just keeps its last state
+                logging.exception("Falha ao avisar o celular que a sessão terminou")
+
+        threading.Thread(target=work, name="phone-end", daemon=True).start()
 
     def _forget_session_data(self) -> None:
         """After a session ends, what was typed or measured for it does not carry to the next.

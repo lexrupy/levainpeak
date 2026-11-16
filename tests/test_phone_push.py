@@ -207,7 +207,7 @@ def test_clearing_asks_the_receiver_and_then_sends_the_current_session_again(rec
     assert sender.push_once()
     done, message = sender.clear_remote()
     assert done and message == "9 linhas apagadas"
-    assert receiver.packets[-1] == {"token": TOKEN, "acao": "limpar", "session": "Bradok"}  # only its own session
+    assert receiver.packets[-1] == {"token": TOKEN, "acao": "limpar"}  # no session: the receiver empties every slot
     assert sender.push_once()
     assert len(receiver.packets[-1]["points"]) == 5
 
@@ -273,3 +273,29 @@ def test_a_paused_session_sends_no_picture_to_the_sheet():
 
     app = SimpleNamespace(_stream=SimpleNamespace(snapshot=lambda: (0, None)), _measurement=object(), _paused=True)
     assert LevainPeakApp._phone_snapshot(app) is None
+
+
+def test_ending_a_session_sends_one_last_bundle_marked_as_finished(receiver, tmp_path):
+    csv_path = tmp_path / "s.csv"
+    append_rows(csv_path, 0, 5)
+    active = [csv_path]
+    sender = PhonePusher(
+        PhoneConfig(receiver.url, TOKEN), lambda: {"fase": "Crescendo"}, lambda: active[0],
+        interval_seconds=1, first_delay=0.0, retry_delays=(0.01,),
+    )
+    assert sender.push_once()
+    active[0] = None  # the session ended on the PC
+    assert sender.end_session(csv_path, {"sessao": "Bradok", "fase": "Crescendo"})
+    live = receiver.packets[-1]["live"]
+    assert live["encerrada"] is True and live["fase"] == "Encerrada" and live["sessao"] == "Bradok"
+    assert receiver.packets[-1]["session"] == "s" and "snapshot" not in receiver.packets[-1]
+
+
+def test_without_a_session_nothing_is_sent(receiver):
+    sender = PhonePusher(
+        PhoneConfig(receiver.url, TOKEN), lambda: {"fase": "Aguardando sessão"}, lambda: None,
+        interval_seconds=1, first_delay=0.0, retry_delays=(0.01,),
+    )
+    before = len(receiver.packets)
+    assert sender.push_once() is False
+    assert len(receiver.packets) == before

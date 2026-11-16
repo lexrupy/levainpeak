@@ -269,6 +269,9 @@ function renderAges() {
   if (idade === null) {
     subtitulo.textContent = 'Sem dados ainda.';
     subtitulo.className = '';
+  } else if (aoVivo.encerrada || (aoVivo.live && aoVivo.live.encerrada)) {
+    subtitulo.textContent = `Sessão encerrada ${ageText(idade)}`;
+    subtitulo.className = '';
   } else if (idade > limite) {
     subtitulo.textContent = `Sem dados novos ${ageText(idade)} — o app do PC parou de enviar?`;
     subtitulo.className = 'velho';

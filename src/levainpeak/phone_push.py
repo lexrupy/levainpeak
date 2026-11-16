@@ -207,8 +207,14 @@ class PhonePusher:
         with self._send_lock:
             return self._push_once()
 
+    def end_session(self, csv_path: Path, live: dict) -> bool:
+        """Tell the receiver this session is over: a last bundle (any points not yet sent, the chart)
+        whose live state is marked ``encerrada``, so the phone stops saying the PC "stopped sending"."""
+        with self._send_lock:
+            return self._push_once(closing=(csv_path, live))
+
     def clear_remote(self) -> tuple[bool, str]:
-        """Ask the receiver to empty this session's data (all of it when there is no session yet).
+        """Ask the receiver to empty the whole sheet (every session it holds, as the button says).
         Returns (done, message for the user).
 
         The next cycle sends the current session again, so the sheet restarts
@@ -216,10 +222,6 @@ class PhonePusher:
         """
         with self._send_lock:
             request: dict = {"token": self._config.token, "acao": "limpar"}
-            csv_path = self._get_session_csv()
-            if csv_path is not None and csv_path.is_file():
-                # Only this session: the sheet may hold another one, sent by another PC.
-                request["session"] = read_new_points(csv_path, None, limit=1)[1]
             body = json.dumps(request).encode("utf-8")
             try:
                 answer = self._post(body)
@@ -247,13 +249,19 @@ class PhonePusher:
             live["leituras_iguais"] = self._equal_updates
         return live
 
-    def _push_once(self) -> bool:
-        snapshot = self._get_snapshot() if self._get_snapshot is not None else None
-        session_csv = self._get_session_csv()
+    def _push_once(self, closing: tuple[Path, dict] | None = None) -> bool:
+        snapshot = self._get_snapshot() if self._get_snapshot is not None and closing is None else None
+        session_csv = closing[0] if closing else self._get_session_csv()
+        if session_csv is None:
+            return False  # no session: a packet without a name would land on whichever session sent last
         if session_csv != self._csv_sent:  # a new session: send it whole, the receiver drops the old one
             self._csv_sent, self._after = session_csv, None
             self._last_reading, self._equal_updates = None, 0
-        live = self._with_repeats(dict(self._get_live() or {}))
+        if closing:
+            live = {**closing[1], "fase": "Encerrada", "encerrada": True,
+                    "encerrada_em": datetime.now().astimezone().isoformat(timespec="seconds")}
+        else:
+            live = self._with_repeats(dict(self._get_live() or {}))
         packet, newest = build_packet(
             self._config, live, session_csv,
             after=self._after, snapshot=snapshot,
@@ -277,6 +285,8 @@ class PhonePusher:
                     self._status.last_error = None
                     self._status.cycles += 1
                     self._status.points_sent += len(packet.get("points", []))
+                    if closing:
+                        self._csv_sent = None  # the next session starts from the beginning
                 return True
             error = str(answer.get("erro") or "resposta inesperada")
             if "token" in error:
