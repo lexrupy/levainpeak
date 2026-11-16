@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=LevainPeak
+Comment=Monitor de levain por câmera RTSP
+Exec=@PROJECT_DIR@/.venv/bin/python -m levainpeak.app
+Path=@PROJECT_DIR@
+Icon=@PROJECT_DIR@/painel/icon-512.png
+Terminal=false
+Categories=Utility;
+StartupWMClass=levainpeak
