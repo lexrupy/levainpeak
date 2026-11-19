@@ -8,6 +8,9 @@ import functools
 import json
 import math
 import logging
+import os
+import subprocess
+import sys
 import threading
 import time
 import tkinter as tk
@@ -37,7 +40,7 @@ from levainpeak.phone_config import PhoneConfig, load_phone_config, local_link, 
 from levainpeak.phone_push import PhonePusher, make_snapshot
 from levainpeak.rate import growth_rate, rate_series
 from levainpeak.sessions import (GEOMETRY_VERSION, PhaseTracker, SessionLog, describe_session, list_sessions, parse_ratio,
-                                 find_session_csv, latest_session_csv)
+                                 find_session_csv, latest_session_csv, open_sessions)
 from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, INK_CUT_DAY,
                                  INK_CUT_INFRARED, MAX_OVERLAY_BRIGHTNESS,
                                  MAX_PHONE_SECONDS, MAX_RECORD_SECONDS, MIN_OVERLAY_BRIGHTNESS,
@@ -286,8 +289,11 @@ class LevainPeakApp:
         self._apply_phone_settings()
         self._tick_phone_status()
         self.root.after(40, self._refresh)
+        self._children: list[subprocess.Popen] = []
         if resume_last:
             self.root.after(200, self._resume_latest_session, resume_last if isinstance(resume_last, str) else None)
+        else:
+            self.root.after(400, self._offer_open_sessions)
 
     def _build_layout(self) -> None:
         header = ttk.Frame(self.root, padding=(10, 6))
@@ -2184,7 +2190,7 @@ class LevainPeakApp:
         if self._debug_window is not None and self._debug_window.open:
             self._debug_window.close()
         if self._session_log.active:
-            self._session_log.stop()
+            self._session_log.suspend()  # closing the window does not end the session: the next start offers it
         if self._analyzer is not None:
             self._analyzer.stop()
         if self._stream is not None:
@@ -3388,6 +3394,96 @@ class LevainPeakApp:
             menu.add_command(label="Nenhuma sessão em aberto", state="disabled")
         menu.add_separator()
         menu.add_command(label="Abrir um arquivo…", command=self._resume_from_file)
+
+    def _offer_open_sessions(self) -> None:
+        """At start: the newest sessions left open (a crash, a killed window) can be taken up again, one window each."""
+        if self._session_log.active:
+            return
+        entries = open_sessions(self._session_log.directory, limit=4)
+        if not entries:
+            return
+        chosen = self._ask_open_sessions(entries)
+        if not chosen:
+            return
+        first, rest = chosen[0], chosen[1:]
+        for path in rest:  # each of the others in a window of its own, detached from this one
+            self._launch_window_for(path)
+        self._resume_from(first)
+
+    def _ask_open_sessions(self, entries) -> list[Path]:
+        """A dialog with a check box per open session; the paths ticked, or [] when cancelled."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Sessões em aberto")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        body = ttk.Frame(dialog, padding=12)
+        body.pack(fill="both", expand=True)
+        ttk.Label(
+            body, text="Foram encontradas sessões que não foram encerradas.\nEscolha quais abrir:", justify="left",
+        ).pack(anchor="w", pady=(0, 8))
+        ticks = []
+        for number, entry in enumerate(entries, start=1):
+            var = tk.BooleanVar(value=True)
+            ticks.append((var, entry.path))
+            where = f"  ·  câmera {entry.camera}" if entry.camera else ""
+            ttk.Checkbutton(body, text=f"{number}.  {entry.label}{where}", variable=var).pack(anchor="w", pady=1)
+        note = ttk.Label(body, text="Cada sessão a mais abre numa janela própria.", foreground="#59645e")
+        note.pack(anchor="w", pady=(8, 0))
+        answer: list[Path] = []
+
+        def accept() -> None:
+            picked = [path for var, path in ticks if var.get()]
+            clash = self._shared_a9_camera(entries, picked)
+            if clash and not messagebox.askyesno(
+                "Mesma câmera",
+                f"Mais de uma sessão usa a câmera A9 “{clash}”, que aceita uma conexão por vez: "
+                "as imagens vão se alternar entre as janelas.\n\nAbrir mesmo assim?",
+                parent=dialog,
+            ):
+                return
+            answer.extend(picked)
+            dialog.destroy()
+
+        buttons = ttk.Frame(body)
+        buttons.pack(anchor="e", pady=(12, 0))
+        ttk.Button(buttons, text="Cancelar", command=dialog.destroy).pack(side="right")
+        ttk.Button(buttons, text="Abrir", command=accept).pack(side="right", padx=(0, 6))
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        dialog.bind("<Escape>", lambda _e: dialog.destroy())
+        dialog.grab_set()
+        self.root.wait_window(dialog)
+        return answer
+
+    def _shared_a9_camera(self, entries, picked: list[Path]) -> str:
+        """The name of an A9 camera more than one of the picked sessions reads, or ""."""
+        kinds = {c.name: c.kind for c in self._cameras}
+        seen: set[str] = set()
+        for entry in entries:
+            if entry.path in picked and entry.camera and kinds.get(entry.camera) == "a9":
+                if entry.camera in seen:
+                    return entry.camera
+                seen.add(entry.camera)
+        return ""
+
+    def _launch_window_for(self, path: Path) -> None:
+        """Another LevainPeak window that resumes ``path``. It is detached (its own process group), so closing
+        this window does not close it, and closing it does not close this one."""
+        command = [sys.executable, "-m", "levainpeak.app", "--resume", path.stem]
+        try:
+            self._children.append(subprocess.Popen(
+                command, cwd=os.getcwd(), start_new_session=True,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            ))
+            self.root.after(30000, self._reap_children)
+        except OSError as exc:
+            logging.exception("Falha ao abrir outra janela")
+            self._set_message(f"Não foi possível abrir outra janela para {path.stem}: {exc}")
+
+    def _reap_children(self) -> None:
+        """Collect the windows that have closed, so they do not stay as zombies while this one runs."""
+        self._children = [child for child in self._children if child.poll() is None]
+        if self._children:
+            self.root.after(30000, self._reap_children)
 
     def _confirm_resume(self, path: Path) -> None:
         if self._session_log.active:

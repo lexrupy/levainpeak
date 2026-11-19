@@ -30,9 +30,15 @@ def parse_ratio(text: str) -> tuple[float, float, float] | None:
     return ratio if min(ratio) > 0 else None
 
 
+def session_csvs(directory: Path | None = None) -> list[Path]:
+    """The session files of a folder. A session is named by its start time (no dot); a copy kept beside it,
+    such as ``<session>.antes_do_ajuste.csv``, is a backup, not a session."""
+    return [path for path in (directory or Path("data/sessions")).glob("*.csv") if "." not in path.stem]
+
+
 def latest_session_csv(directory: Path | None = None) -> Path | None:
     """The most recently written session CSV, or None when there is none."""
-    files = (directory or Path("data/sessions")).glob("*.csv")
+    files = session_csvs(directory)
     return max(files, key=lambda path: path.stat().st_mtime, default=None)
 
 
@@ -90,8 +96,47 @@ def describe_session(path: Path) -> SessionEntry:
 
 def list_sessions(directory: Path | None = None, limit: int = 20) -> list[SessionEntry]:
     """The newest ``limit`` saved sessions, newest first (by the time in the file name)."""
-    files = sorted((directory or Path("data/sessions")).glob("*.csv"), key=lambda path: path.name, reverse=True)
+    files = sorted(session_csvs(directory), key=lambda path: path.name, reverse=True)
     return [describe_session(path) for path in files[:limit]]
+
+
+def _process_start(pid: int) -> str:
+    """When the process began (Linux: field 22 of /proc/<pid>/stat), so a reused pid is told apart; "" if unknown."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        return stat.rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return ""
+
+
+def _lock_path(csv_path: Path) -> Path:
+    return csv_path.with_suffix(".lock")
+
+
+def session_is_running(csv_path: Path) -> bool:
+    """True while another live LevainPeak process holds the session (its .lock names a process still running)."""
+    try:
+        pid_text, _, began = _lock_path(csv_path).read_text(encoding="utf-8").partition(" ")
+        pid = int(pid_text)
+    except (OSError, ValueError):
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass  # alive, owned by someone else
+    now = _process_start(pid)
+    return not (began.strip() and now and now != began.strip())  # same pid, other process: the lock is stale
+
+
+def open_sessions(directory: Path | None = None, limit: int = 4) -> list[SessionEntry]:
+    """Among the newest ``limit`` sessions, those that were not ended, are not running in another window and
+    have readings to continue from: what a crash or a killed window left behind."""
+    return [
+        entry for entry in list_sessions(directory, limit)
+        if not entry.ended and entry.last is not None and not session_is_running(entry.path)
+    ]
 
 
 def find_session_csv(name: str, directory: Path | None = None) -> Path | None:
@@ -99,7 +144,7 @@ def find_session_csv(name: str, directory: Path | None = None) -> Path | None:
     the newest whose name contains it."""
     wanted = name.strip().casefold()
     exact, partial = [], []
-    for path in (directory or Path("data/sessions")).glob("*.csv"):
+    for path in session_csvs(directory):
         try:
             called = str(json.loads(path.with_suffix(".json").read_text(encoding="utf-8")).get("session_name") or "")
         except (OSError, ValueError, AttributeError):
@@ -197,6 +242,7 @@ class SessionLog:
             "phase", "session_name",
         ]
         self._file.flush()
+        self._take_lock()
         self._last_write_time = None
         self._last_phase = None
         return self.session_id
@@ -469,6 +515,7 @@ class SessionLog:
             os.replace(temporary_path, path)
         self._file = path.open("a", newline="", encoding="utf-8")
         self._writer = csv.writer(self._file)
+        self._take_lock()
         self._last_write_time = None
         self._last_phase = last.get("phase")
         self.recent = []
@@ -601,6 +648,22 @@ class SessionLog:
     def set_mix_time(self, mix_time: datetime) -> None:
         self.mix_time = mix_time
 
+    def _take_lock(self) -> None:
+        """Say this process is running the session, so another window does not offer it as left open."""
+        if self.path is None:
+            return
+        try:
+            _lock_path(self.path).write_text(f"{os.getpid()} {_process_start(os.getpid())}", encoding="utf-8")
+        except OSError:
+            pass
+
+    def _release_lock(self) -> None:
+        if self.path is not None:
+            try:
+                _lock_path(self.path).unlink()
+            except OSError:
+                pass
+
     def _mark_ended(self, ended: datetime | None) -> None:
         """Write (or, with None, clear) the end of the session in its file."""
         if self.metadata_path is None or (ended is None and not self.metadata_path.exists()):
@@ -618,10 +681,21 @@ class SessionLog:
         except OSError:
             pass
 
+    def suspend(self) -> Path | None:
+        """Close the files but leave the session open (not ended): the window is closing, the levain is not done.
+        The next start offers it again."""
+        if self._file is not None:
+            self._file.close()
+            self._release_lock()
+        self._file = None
+        self._writer = None
+        return self.path
+
     def stop(self) -> Path | None:
         if self._file is not None:
             self._file.close()
             self._mark_ended(datetime.now().astimezone())
+            self._release_lock()
         self._file = None
         self._writer = None
         return self.path
