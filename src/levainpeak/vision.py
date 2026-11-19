@@ -305,6 +305,13 @@ def set_initial_volume_reference(
     )
 
 
+def show_marker(measurement: ContainerMeasurement, marker_y: int, *, manual: bool = True) -> ContainerMeasurement:
+    """Draw the mark at ``marker_y`` and leave the initial volume and growth as they are (a resumed session
+    keeps the level it began at; the mark is only where that level is shown)."""
+    y = int(np.clip(marker_y, measurement.top, measurement.bottom - 1))
+    return replace(measurement, marker_y=y, marker_manual=manual)
+
+
 def draw_measurement(
     frame: np.ndarray, measurement: ContainerMeasurement, *, detail: bool = False,
     faint_box: bool = False, outline: tuple[tuple[int, int], ...] | None = None,

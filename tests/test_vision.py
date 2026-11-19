@@ -181,3 +181,18 @@ def test_a_mark_at_the_surface_reads_one_even_when_the_series_is_shifted():
     )
     marked = set_initial_marker(measurement, 40, shift=shift)
     assert abs(marked.growth_factor - 1.0) < 1e-9
+
+
+def test_a_resumed_session_draws_its_mark_without_changing_its_level():
+    from levainpeak.vision import ContainerMeasurement, set_initial_volume_reference, show_marker
+
+    measurement = ContainerMeasurement(
+        left=50, right=350, top=40, bottom=260, surface_y=150, volume_fraction=0.5, confidence=0.9,
+        volume_below_profile=(0.0, 0.2, 0.4, 0.6),
+    )
+    kept = set_initial_volume_reference(measurement, 0.25)
+    assert kept.marker_y is None  # no mark is drawn from the level alone
+    shown = show_marker(kept, 120)
+    assert shown.marker_y == 120 and shown.marker_manual
+    assert shown.initial_volume_fraction == 0.25 and shown.growth_factor == kept.growth_factor
+    assert show_marker(kept, 9999).marker_y == 259  # kept inside the pot

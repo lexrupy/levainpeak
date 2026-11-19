@@ -52,7 +52,7 @@ from levainpeak.visor_follow import rotate_visor
 
 FINE_TURN_DEGREES = 15.0  # the slider's reach either way; whole quarter turns come from the menu
 from levainpeak.vision import (MAX_SURFACE_BANDS, MIN_SURFACE_BANDS, ContainerMeasurement,
-                               draw_measurement, inner_span, set_initial_marker,
+                               draw_measurement, inner_span, set_initial_marker, show_marker,
                                set_initial_volume_reference)
 
 GRAPH_BORDER = 10
@@ -955,6 +955,10 @@ class LevainPeakApp:
                             self._measurement = set_initial_volume_reference(
                                 self._measurement, self._session_baseline
                             )
+                            if self._manual_marker_y is not None:  # the level is kept, its mark is still drawn
+                                self._measurement = show_marker(
+                                    self._measurement, self._manual_marker_y, manual=not self._marker_automatic
+                                )
                     self._update_session(self._measurement)
                     self._update_measurement_labels()
                     analysis_changed = True
@@ -3612,8 +3616,11 @@ class LevainPeakApp:
             if first_levels and len(volumes) >= 9:
                 # The level the session began at, as the graph takes it: the first stored one or the level the
                 # readings settled at, whichever is lower. Recomputing it from the mark at each resume drifted.
-                settled = min(float(np.median(volumes[i:i + 9])) for i in range(len(volumes) - 8))
-                self._session_baseline = min(first_levels[0], settled)
+                if self._session_log.manual_marker_y is None:
+                    settled = min(float(np.median(volumes[i:i + 9])) for i in range(len(volumes) - 8))
+                    self._session_baseline = min(first_levels[0], settled)
+                # With a mark the level is the one last stored, where the mark is drawn: a dense dough
+                # (a ball) first flattens, and that dip is not the level it began at.
                 self._phase_tracker.set_baseline(self._session_baseline)
                 self._baseline_locked = True
             if last_temperature is not None:
