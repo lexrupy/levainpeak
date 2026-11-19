@@ -1,6 +1,27 @@
-[camera]
+# Uma seção [camera:Nome] por câmera; [cameras] active diz qual abre ao iniciar.
+# Também dá para cadastrar pela aba Configurações (Câmera → Nova). Este arquivo guarda senhas: não vai pro git.
+# kind: rtsp | a9 | uvc      model: anotação livre
+[cameras]
+active = Bancada
+
+[camera:Bancada]
+kind = rtsp
+model = Intelbras
 url = rtsp://192.168.0.10:554/stream
 username = admin
 password =
 transport = tcp
 read_timeout_seconds = 10
+
+[camera:A9]
+kind = a9
+model = AUSEK AS-A8
+ip = 192.168.0.100
+port = 20190
+did =
+secret =
+
+[camera:Webcam]
+kind = uvc
+model = Webcam USB
+device = 0

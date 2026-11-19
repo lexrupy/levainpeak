@@ -23,7 +23,9 @@ import numpy as np
 from PIL import Image, ImageTk
 
 from levainpeak.analysis import ContainerAnalyzer
-from levainpeak.config import CameraConfig, load_camera_config, save_camera_config
+from levainpeak.config import (
+    CAMERA_KINDS, KIND_LABELS, CameraConfig, load_camera_config, load_cameras, save_cameras,
+)
 from levainpeak.debug_view import DebugWindow
 from levainpeak.floating import FloatingWindowControls
 from levainpeak.forecast import DoublingForecaster
@@ -41,7 +43,7 @@ from levainpeak.settings import (DEFAULT_INK_CUT_DAY, DEFAULT_INK_CUT_INFRARED, 
                                  MAX_PHONE_SECONDS, MAX_RECORD_SECONDS, MIN_OVERLAY_BRIGHTNESS,
                                  MIN_PHONE_SECONDS, MIN_RECORD_SECONDS,
                                  ARTIFACT_MINUTES, LAMP_MINUTES, MARK_SHAPES, PEAK_MINUTES, ROTATIONS, SNAPSHOT_MINUTES, Settings, load_settings, save_settings)
-from levainpeak.stream import RtspStream
+from levainpeak.stream import FrameSource, open_stream
 from levainpeak.timelapse import TimelapseWindow, recent_sessions
 from levainpeak.visor_follow import rotate_visor
 
@@ -199,7 +201,7 @@ class LevainPeakApp:
 
         self._image: ImageTk.PhotoImage | None = None
         self._video_image_item: int | None = None
-        self._stream: RtspStream | None = None
+        self._stream: FrameSource | None = None
         self._analyzer: ContainerAnalyzer | None = None
         self._measurement: ContainerMeasurement | None = None
         self._last_displayed_frame_number = 0
@@ -2243,6 +2245,7 @@ class LevainPeakApp:
                 self._settings.phone_enabled, self._settings.phone_interval_seconds, self._settings.phone_snapshot
             )
             self._session_log.save_rotation(self._settings.rotation)
+            self._session_log.save_camera(self._camera_active)
             self._session_log.volume_offset = 0.0
             if self._analyzer is not None:
                 self._analyzer.reset_join()
@@ -2470,7 +2473,7 @@ class LevainPeakApp:
 
     def _connect_camera(self, config: CameraConfig) -> None:
         """Start reading the camera; on a later call the old stream is replaced, keeping the drawings."""
-        stream = RtspStream(config)
+        stream = open_stream(config)
         stream.rotation = self._settings.rotation
         old = self._stream
         self._stream = stream
@@ -2489,28 +2492,150 @@ class LevainPeakApp:
             old.stop()
         self._set_message("Iniciando conexão com a câmera…")
 
-    def _save_camera(self) -> None:
-        config = CameraConfig(
+    def _camera_from_form(self) -> CameraConfig:
+        try:
+            port, device = int(self._camera_port_var.get() or 0), int(self._camera_device_var.get() or 0)
+        except ValueError as exc:
+            raise ValueError("Porta e índice precisam ser números inteiros.") from exc
+        kind = next((k for k, label in KIND_LABELS.items() if label == self._camera_kind_var.get()), "rtsp")
+        return CameraConfig(
             url=self._camera_url_var.get().strip(),
             username=self._camera_user_var.get().strip(),
             password=self._camera_password_var.get(),
             transport=self._camera_transport_var.get(),
             read_timeout_seconds=self._camera_timeout,
+            name=self._camera_name_var.get().strip(),
+            kind=kind,
+            model=self._camera_model_var.get().strip(),
+            ip=self._camera_ip_var.get().strip(),
+            port=port or 20190,
+            did=self._camera_did_var.get().strip(),
+            secret=self._camera_secret_var.get().strip(),
+            device=device,
         )
+
+    def _fill_camera_form(self, camera: CameraConfig) -> None:
+        self._camera_name_var.set(camera.name)
+        self._camera_kind_var.set(KIND_LABELS.get(camera.kind, KIND_LABELS["rtsp"]))
+        self._camera_model_var.set(camera.model)
+        self._camera_url_var.set(camera.url)
+        self._camera_user_var.set(camera.username)
+        self._camera_password_var.set(camera.password)
+        self._camera_transport_var.set(camera.transport if camera.transport in ("tcp", "udp") else "tcp")
+        self._camera_ip_var.set(camera.ip)
+        self._camera_port_var.set(str(camera.port))
+        self._camera_did_var.set(camera.did)
+        self._camera_secret_var.set(camera.secret)
+        self._camera_device_var.set(str(camera.device))
+        self._camera_timeout = camera.read_timeout_seconds
+        self._show_camera_kind()
+
+    def _show_camera_kind(self, _event: tk.Event | None = None) -> None:
+        kind = next((k for k, label in KIND_LABELS.items() if label == self._camera_kind_var.get()), "rtsp")
+        for widget_kind, widgets in self._camera_kind_rows.items():
+            for widget in widgets:
+                (widget.grid if widget_kind == kind else widget.grid_remove)()
+
+    def _refresh_camera_choices(self) -> None:
+        self._camera_picker.configure(values=[c.name for c in self._cameras])
+        self._camera_picker_var.set(self._camera_active)
+
+    def _pick_camera(self, _event: tk.Event | None = None) -> None:
+        chosen = next((c for c in self._cameras if c.name == self._camera_picker_var.get()), None)
+        if chosen is None:
+            return
+        self._camera_active = chosen.name
+        self._fill_camera_form(chosen)
+        self._camera_note.configure(text="Use Salvar e conectar para trocar a câmera.", foreground="#59645e")
+
+    def _new_camera(self) -> None:
+        names = {c.name for c in self._cameras}
+        number = len(names) + 1
+        while f"Câmera {number}" in names:
+            number += 1
+        self._camera_picker_var.set("")
+        self._fill_camera_form(CameraConfig(name=f"Câmera {number}"))
+        self._camera_note.configure(text="Preencha e use Salvar e conectar.", foreground="#59645e")
+
+    def _remove_camera(self) -> None:
+        name = self._camera_picker_var.get()
+        left = [c for c in self._cameras if c.name != name]
+        if name not in {c.name for c in self._cameras}:
+            return
+        if not left:
+            self._camera_note.configure(text="É preciso manter ao menos uma câmera.", foreground="#a43d32")
+            return
+        if not messagebox.askyesno("Remover câmera", f"Remover a câmera “{name}” da lista?"):
+            return
+        self._cameras = left
+        self._camera_active = left[0].name
         try:
-            save_camera_config(config)
+            save_cameras(self._cameras, self._camera_active)
         except (ValueError, OSError) as exc:
             self._camera_note.configure(text=str(exc), foreground="#a43d32")
             return
+        self._refresh_camera_choices()
+        self._fill_camera_form(left[0])
+        self._connect_camera(left[0])
+        if self._session_log.active:  # the session now reads this camera
+            try:
+                self._session_log.save_camera(left[0].name)
+            except OSError:
+                logging.exception("Falha ao salvar a câmera na sessão")
+        self._camera_note.configure(text=f"“{name}” removida; conectada a “{left[0].name}”.", foreground="#59645e")
+
+    def _follow_session_camera(self) -> None:
+        """A resumed session goes back to the camera it was read from, without touching camera.ini's default."""
+        wanted = self._session_log.camera
+        if wanted is None:  # a session from before the camera was kept: it is taken to be the one in use now
+            try:
+                self._session_log.save_camera(self._camera_active)
+            except OSError:
+                logging.exception("Falha ao salvar a câmera na sessão")
+            return
+        if wanted == self._camera_active:
+            return
+        camera = next((c for c in self._cameras if c.name == wanted), None)
+        if camera is None:
+            self._set_message(f"A câmera “{wanted}” da sessão não está mais em camera.ini; usando “{self._camera_active}”.")
+            return
+        self._camera_active = camera.name
+        self._refresh_camera_choices()
+        self._fill_camera_form(camera)
+        self._connect_camera(camera)
+
+    def _save_camera(self) -> None:
+        try:
+            config = self._camera_from_form()
+            config.validate()
+            previous = self._camera_picker_var.get()  # the name it had, so a rename replaces instead of adding
+            cameras = [c for c in self._cameras if c.name != previous]
+            if any(c.name == config.name for c in cameras):
+                raise ValueError(f"Já existe uma câmera chamada “{config.name}”.")
+            index = next((i for i, c in enumerate(self._cameras) if c.name == previous), len(cameras))
+            cameras.insert(index, config)
+            save_cameras(cameras, config.name)
+        except (ValueError, OSError) as exc:
+            self._camera_note.configure(text=str(exc), foreground="#a43d32")
+            return
+        self._cameras, self._camera_active = cameras, config.name
+        self._refresh_camera_choices()
         self._connect_camera(config)
+        if self._session_log.active:  # the session now reads this camera
+            try:
+                self._session_log.save_camera(config.name)
+            except OSError:
+                logging.exception("Falha ao salvar a câmera na sessão")
         self.status_value.configure(foreground="")
-        self._camera_note.configure(text="Salvo em camera.ini; reconectando.", foreground="#59645e")
+        self._camera_note.configure(text=f"Salvo em camera.ini; conectando a “{config.name}”.", foreground="#59645e")
 
     def _build_settings_tab(self, parent: ttk.Frame) -> None:
         try:
-            camera_now = load_camera_config()
+            self._cameras, self._camera_active = load_cameras()
+            camera_now = next(c for c in self._cameras if c.name == self._camera_active)
         except (FileNotFoundError, ValueError):
             camera_now = CameraConfig(url="")
+            self._cameras, self._camera_active = [], ""
         try:
             phone_now = load_phone_config()
         except (FileNotFoundError, ValueError):
@@ -2554,22 +2679,62 @@ class LevainPeakApp:
 
         # --- left column: camera, record, video
         camera = frame("Câmera", 0, 0)
-        self._camera_url_var = tk.StringVar(value=camera_now.url)
-        self._camera_user_var = tk.StringVar(value=camera_now.username)
-        self._camera_password_var = tk.StringVar(value=camera_now.password)
-        self._camera_transport_var = tk.StringVar(
-            value=camera_now.transport if camera_now.transport in ("tcp", "udp") else "tcp")
-        entry(camera, 0, "URL", self._camera_url_var, "rtsp://…  (se a câmera só abre com udp, troque o transporte)")
-        entry(camera, 1, "Usuário", self._camera_user_var)
-        entry(camera, 2, "Senha", self._camera_password_var)
-        ttk.Label(camera, text="Transporte").grid(row=3, column=0, sticky="w", pady=1)
-        row = ttk.Frame(camera)
-        row.grid(row=3, column=1, columnspan=2, sticky="ew", padx=(6, 0), pady=1)
-        ttk.Combobox(row, textvariable=self._camera_transport_var, values=("tcp", "udp"), width=5,
-                     state="readonly").pack(side="left")
-        ttk.Button(row, text="Salvar e reconectar", command=self._save_camera).pack(side="right")
+        for var in ("name", "kind", "model", "url", "user", "password", "transport", "ip", "port", "did",
+                    "secret", "device", "picker"):
+            setattr(self, f"_camera_{var}_var", tk.StringVar())
+        ttk.Label(camera, text="Câmera").grid(row=0, column=0, sticky="w", pady=1)
+        picker = ttk.Frame(camera)
+        picker.grid(row=0, column=1, columnspan=2, sticky="ew", padx=(6, 0), pady=1)
+        self._camera_picker = ttk.Combobox(picker, textvariable=self._camera_picker_var, state="readonly", width=14)
+        self._camera_picker.pack(side="left", fill="x", expand=True)
+        self._camera_picker.bind("<<ComboboxSelected>>", self._pick_camera)
+        ttk.Button(picker, text="Nova", width=5, command=self._new_camera).pack(side="left", padx=(4, 0))
+        ttk.Button(picker, text="Remover", width=8, command=self._remove_camera).pack(side="left", padx=(4, 0))
+        entry(camera, 1, "Nome", self._camera_name_var, "Como a câmera aparece na lista")
+        ttk.Label(camera, text="Tipo").grid(row=2, column=0, sticky="w", pady=1)
+        kind_box = ttk.Combobox(camera, textvariable=self._camera_kind_var, state="readonly",
+                                values=[KIND_LABELS[k] for k in CAMERA_KINDS], width=12)
+        kind_box.grid(row=2, column=1, columnspan=2, sticky="ew", padx=(6, 0), pady=1)
+        kind_box.bind("<<ComboboxSelected>>", self._show_camera_kind)
+        entry(camera, 3, "Modelo", self._camera_model_var, "Só uma anotação: qual é esta câmera (ex.: AUSEK AS-A8)")
+
+        def kind_entry(row: int, label: str, variable, hint: str = "") -> list:
+            name = ttk.Label(camera, text=label)
+            name.grid(row=row, column=0, sticky="w", pady=1)
+            field = ttk.Entry(camera, textvariable=variable, width=12)
+            field.grid(row=row, column=1, columnspan=2, sticky="ew", padx=(6, 0), pady=1)
+            if hint:
+                _Tooltip(field, hint)
+            return [name, field]
+
+        transport_label = ttk.Label(camera, text="Transporte")
+        transport_label.grid(row=7, column=0, sticky="w", pady=1)
+        transport_box = ttk.Combobox(camera, textvariable=self._camera_transport_var, values=("tcp", "udp"),
+                                     width=5, state="readonly")
+        transport_box.grid(row=7, column=1, sticky="w", padx=(6, 0), pady=1)
+        self._camera_kind_rows = {
+            "rtsp": (
+                kind_entry(4, "URL", self._camera_url_var,
+                           "rtsp://…  (se a câmera só abre com udp, troque o transporte)")
+                + kind_entry(5, "Usuário", self._camera_user_var)
+                + kind_entry(6, "Senha", self._camera_password_var)
+                + [transport_label, transport_box]
+            ),
+            "a9": (
+                kind_entry(4, "IP", self._camera_ip_var, "IP da câmera na rede local")
+                + kind_entry(5, "Porta", self._camera_port_var, "Padrão 20190")
+                + kind_entry(6, "DID", self._camera_did_var, "Identificador do aparelho (PPHWA9…)")
+                + kind_entry(7, "Segredo", self._camera_secret_var, "paired_auth_secret da descoberta na LAN")
+            ),
+            "uvc": kind_entry(4, "Índice", self._camera_device_var, "N de /dev/videoN (0 é a primeira)"),
+        }
+        save_row = ttk.Frame(camera)
+        save_row.grid(row=8, column=0, columnspan=3, sticky="e", pady=(2, 0))
+        ttk.Button(save_row, text="Salvar e conectar", command=self._save_camera).pack(side="right")
         self._camera_note = ttk.Label(camera, text="", foreground=muted, wraplength=300, justify="left")
-        self._camera_note.grid(row=4, column=0, columnspan=3, sticky="w")
+        self._camera_note.grid(row=9, column=0, columnspan=3, sticky="w")
+        self._fill_camera_form(camera_now)
+        self._refresh_camera_choices()
 
         record = frame("Registro da sessão", 1, 0)
         self._interval_var = tk.StringVar(value=str(self._settings.record_interval_seconds))
@@ -3282,6 +3447,7 @@ class LevainPeakApp:
                     self._session_log.save_ratio(named)
                 except OSError:
                     logging.exception("Falha ao salvar a proporção na sessão")
+        self._follow_session_camera()
         if self._session_log.rotation is not None:  # the angle its pot, visor and mark were drawn at
             self._set_rotation(self._session_log.rotation, turn_visor=False)  # its regions are loaded below
         else:  # a session from before the angle was kept: it is taken to be at the one in use now

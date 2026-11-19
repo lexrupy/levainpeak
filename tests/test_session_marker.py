@@ -127,3 +127,20 @@ def test_the_thermometer_face_corners_are_saved_and_come_back_on_resume(tmp_path
     resumed.resume(path)
     assert resumed.face_quad == quad and resumed.pot_outline == outline
     resumed.stop()
+
+
+def test_the_camera_is_saved_with_the_session_and_a_change_mid_session_persists(tmp_path):
+    log = SessionLog(tmp_path)
+    log.start(name="teste")
+    log.save_camera("A9")
+    log.save_marker(790)
+    path = log.path
+    log.record(0.0, _row(0.3), "Crescendo")
+    log.save_camera("Bancada")  # the camera is changed while the session runs
+    log.stop()
+    saved = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+    assert saved["camera"] == "Bancada" and saved["marker_y"] == 790  # nothing else lost
+    resumed = SessionLog(tmp_path)
+    resumed.resume(path)
+    assert resumed.camera == "Bancada"
+    resumed.stop()

@@ -44,6 +44,7 @@ class SessionEntry:
     last: datetime | None  # the last reading's time
     ended: bool
     label: str  # for the resume menu
+    camera: str = ""  # the camera of camera.ini it read; empty when not known
 
 
 def _last_timestamp(path: Path) -> datetime | None:
@@ -64,11 +65,12 @@ def _last_timestamp(path: Path) -> datetime | None:
 
 def describe_session(path: Path) -> SessionEntry:
     """A saved session as the resume menu shows it: its name, when it ran and whether it was ended."""
-    name, ended = "", False
+    name, ended, camera = "", False, ""
     try:
         metadata = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
         name = str(metadata.get("session_name") or "").strip()
         ended = bool(metadata.get("ended"))
+        camera = str(metadata.get("camera") or "").strip()
     except (OSError, ValueError, AttributeError):
         pass
     try:
@@ -83,7 +85,7 @@ def describe_session(path: Path) -> SessionEntry:
         if last is not None:
             span += f" → {last:%H:%M}" if last.date() == started.date() else f" → {last:%d/%m %H:%M}"
     label = " · ".join(part for part in (name, span, "encerrada" if ended else "") if part)
-    return SessionEntry(path, name, started, last, ended, label)
+    return SessionEntry(path, name, started, last, ended, label, camera)
 
 
 def list_sessions(directory: Path | None = None, limit: int = 20) -> list[SessionEntry]:
@@ -128,6 +130,7 @@ class SessionLog:
         self.snapshot_seconds = 600.0
         self.ratio: tuple[float, float, float] | None = None  # starter:water:flour; None: not told
         self.rotation: float | None = None  # None: not known (a session from before it was kept)
+        self.camera: str | None = None  # name in camera.ini the session reads; None: not known (an older session)
         self.phone: dict | None = None  # {enabled, interval_seconds, snapshot}; None: the global setting applies
         self.last_forecast: dict | None = None  # {"at": ISO time of the doubling, "basis": text}
         self._last_snapshot_time: float | None = None
@@ -286,6 +289,20 @@ class SessionLog:
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
+    def save_camera(self, name: str) -> None:
+        """Which camera of camera.ini this session reads, so a resume goes back to it."""
+        self.camera = name.strip() or None
+        if self.metadata_path is None:
+            return
+        try:
+            payload = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+        payload["camera"] = self.camera
+        self.metadata_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
     def save_rotation(self, degrees: float) -> None:
         """The picture's angle the regions of this session were drawn at: they only fit the pot at that angle."""
         self.rotation = float(degrees)
@@ -416,6 +433,8 @@ class SessionLog:
                 if isinstance(saved_ratio, list) and len(saved_ratio) == 3 and min(saved_ratio) > 0
                 else None
             )
+            camera = raw.get("camera")
+            self.camera = camera.strip() or None if isinstance(camera, str) else None
             angle = raw.get("rotation")
             self.rotation = None if angle is None else float(angle)
             phone = raw.get("phone")
